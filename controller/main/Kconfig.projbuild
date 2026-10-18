@@ -13,11 +13,4 @@ menu "Cottage thermostat BENCH servo tester"
         string "Temporary bench access point SSID"
         default "CottageThermoBench"
 
-    config THERMO_AP_PASSWORD
-        string "Temporary bench access point WPA2 password (CHANGE before flash)"
-        default "REPLACE-ME-NOW"
-        help
-            Temporary lab credential only, not a production security design.
-            For bench use change the password in idf.py menuconfig.
-
 endmenu
