@@ -1,3 +1,4 @@
 cmake_minimum_required(VERSION 3.16)
+set(EXTRA_COMPONENT_DIRS "${CMAKE_CURRENT_LIST_DIR}/../shared/thermo")
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
-project(cottage_thermo_servo_bench)
+project(cottage_thermo_controller VERSION 0.2.0)

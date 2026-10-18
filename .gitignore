@@ -24,3 +24,7 @@
 .idea/
 .DS_Store
 __pycache__/
+
+# Optional browser-test dependencies
+**/node_modules/
+**/test-results/

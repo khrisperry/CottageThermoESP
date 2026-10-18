@@ -48,3 +48,10 @@
 ## End-of-session handoff template
 
 Update this file with: date, branch/commit SHA, hardware board and wiring, firmware versions, new measurements, test results, unresolved failures, and next command to run. Never replace factual unknowns with assumptions.
+
+## 2026-10-18 software milestone
+
+- v0.2.0: shared thermostat engine, paired controller web/API, NVS settings/maps/schedules, simulation default, conservative bench output interlocks, separate simulation/live stores, source freshness, weekly Detroit schedule, events and six-hour RAM sample export.
+- Buildable ESP32-S3 room client with browser UI and SHT31/SHT4x driver. Physical LCD/touch adapter remains pending exact board and wiring.
+- Shaft coupon **102** confirmed perfect fit by user; available torque, real knob travel and coupling remain next-weekend tests.
+- No active exploration, encoder truth, MQTT Discovery, OTA rollback or predictive/preheat behavior is claimed. See LOCAL_VALIDATION.md for current implementation and remaining work.

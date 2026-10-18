@@ -1,72 +1,62 @@
-# CottageThermoESP controller — AtomS3 Lite servo BENCH test
+# Controller v0.2.0 — thermostat development and servo bench
 
-**Hardware now selected for the FIRST PROTOTYPE:** M5Stack **AtomS3 Lite** (ESP32-S3FN8 / 8 MB flash). Servo PWM signal on rear header **G38 = GPIO38**. This is an experimental, **UNBUILT / UNFLASHED starter**; it has not been verified on the physical board.
+ESP-IDF **6.0.1**, ESP32-S3, M5Stack AtomS3 Lite (8 MB flash), servo signal **G38/GPIO38**. Build defaults simulate automatic thermostat movement. No measurements or placeholder calibration map are installed.
 
-**BENCH ONLY:** Test with the servo horn removed first, then with an inert dummy load. Do NOT connect this experimental servo controller or printed parts to an operating gas furnace.
+## Build on Windows
 
-## What it does
-
-- Starts **open, password-free** Wi-Fi access point `CottageThermoBench` at **192.168.4.1**. There is no password field to configure.
-- The web page issues explicit TS90MD servo **50 Hz PWM pulse widths from 1100 to 1900 µs**. **1500 µs** is a starting point with servo horn detached, **not** a measured middle angle. Move in small steps.
-- PWM remains **disabled until you click Command PWM**. No servo sweep, automatic homing, or last PWM restoration at startup.
-- **Stop PWM** disables the signal. That is not a physical brake; an unpowered/uncommanded servo may still be back-driven. The very first command can cause an abrupt movement.
-- Reports the configured signal GPIO and last commanded pulse (not the servo's measured angle). There is not yet any encoder.
-- This first prototype has no station-mode Wi-Fi, Home Assistant, OTA, smooth motion, Wi-Fi or web authentication, servo-current feedback or mechanical safety verification. Anyone nearby who joins the open test access point can issue motor commands; **use only in a supervised bench setting**.
-
-## AtomS3 Lite wiring
-
-The official AtomS3 Lite rear header explicitly includes **G38** (GPIO38), **GND**, **5V**, **3V3** and other GPIOs. Confirm orientation using the actual board silkscreen, not wire position.
-
-| Source | Servo lead / destination |
-|---|---|
-| AtomS3 Lite rear **G38 / GPIO38** | Servo **signal** wire, commonly orange/yellow (3.3 V PWM logic) |
-| AtomS3 Lite rear **GND** | External servo supply **negative/GND**, shared with servo ground (brown/black) |
-| Separate **regulated 5 V servo supply**, adequately rated for TS90MD stall/start current | Servo **red / +5 V** wire |
-| AtomS3 Lite **USB-C** | USB power, flashing, and USB Serial/JTAG monitor |
-
-**Do not connect servo power to GPIO38 or the board's 3.3 V pin.** Prefer a separate appropriately rated 5 V supply for initial testing rather than drawing servo motor surge current from the AtomS3 Lite's rear 5V rail or USB. Tie the supply ground to AtomS3 GND; otherwise PWM cannot have a reliable reference. Verify the actual TS90MD wire colors before connecting. Keep all power wiring insulated.
-
-The board GPIO provides a **3.3 V logic signal**, not a 5 V servo power supply. If the servo does not reliably recognize this signal, troubleshoot electrical levels with measurements rather than driving 5 V into GPIO38.
-
-## Windows / VSCode ESP-IDF local build
-
-From the configured ESP-IDF PowerShell terminal:
+In the VSCode ESP-IDF PowerShell terminal, from your existing repository:
 
 ```powershell
-cd C:\Users\kperry\Documents\GitHub
-git clone https://github.com/khrisperry/CottageThermoESP.git
-cd .\CottageThermoESP\controller
-
-idf.py set-target esp32s3
-idf.py menuconfig
-idf.py build
-idf.py -p COMxx flash monitor
+cd C:\Users\kperry\Documents\GitHub\CottageThermoESP
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tools\build-local.ps1
 ```
 
-If you already cloned the repo, replace `git clone` with `git pull` inside the `CottageThermoESP` folder.
+This builds both projects without flashing. To build just the controller:
 
-There is **no Wi-Fi password** in this build. The access point is open by default. In **menuconfig → Cottage thermostat BENCH servo tester**, verify the servo signal default is **GPIO38**; leave it unchanged unless you intentionally rewire it. `sdkconfig.defaults` enables the USB Serial/JTAG console and configures the chip's 8 MB flash by default. Existing local `sdkconfig` files may still contain an obsolete `CONFIG_THERMO_AP_PASSWORD` line; it is ignored after this change.
+```powershell
+cd controller
+idf.py build
+idf.py -p COM13 flash monitor
+```
 
-Replace `COMxx` with the COM port for the AtomS3 Lite as shown in Windows Device Manager. The board has native USB-C flashing/serial; no separate USB-UART dongle should be needed.
+COM13 was the controller port in the latest supplied build log; confirm it still belongs to the AtomS3 Lite before flashing. For a fresh checkout run `idf.py set-target esp32s3` first. An existing correct `sdkconfig` is retained; new options take their defaults. Do not erase flash/NVS to update firmware. IDF downloads the pinned `espressif/cjson` component during the first build; IDF 6 removed the built-in JSON component.
 
-### If Windows cannot flash automatically
+## First use
 
-M5Stack documents a manual download-mode procedure: **hold the board's reset button approximately 2 seconds until the internal green LED illuminates, then release**. The green light turns off and it enters download mode. Try flashing again. After flash, reset/power-cycle if it remains in download mode. Consult the [M5Stack AtomS3 Lite documentation](https://docs.m5stack.com/en/core/AtomS3-Lite).
+1. Connect to **CottageThermoBench**, open Wi-Fi, no password. Open **http://192.168.4.1** manually (DNS captive-portal interception is not implemented).
+2. Copy the **Pairing API token** printed in the USB monitor into the page. Token is generated once and stored in NVS. The open Wi-Fi remains password-free; API access is paired separately.
+3. The first boot is **Hold**, no map, unknown physical position, PWM off. Review status and settings without enabling motion.
+4. For software testing, enter a synthetic map **only in the simulation build**, synchronize a virtual starting dial level, submit a simulation temperature, then select Thermostat. Simulated movement is visible in events. One temperature report expires after 90 seconds.
+5. For the actual servo test: remove the horn/load, use Hold mode, **Arm unloaded bench output**, then send **1500 µs** followed by small manual pulse changes. **Raw PWM is physical even in a simulation build.** It is separately armed; the normal thermostat engine remains simulated. Stop PWM clears synchronization and disables the signal. No return to zero.
 
-If `idf.py monitor` is blank, verify that the USB console setting `CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y` is present in the generated `controller/sdkconfig`; if you previously generated a conflicting configuration, use `idf.py menuconfig` to select USB Serial/JTAG console explicitly.
+No synthetic map is shipped. **Simulation and live bench maps/settings use different NVS keys**, so a simulated map cannot silently become a live calibration when you change the build option. Session arming and synchronization never persist. Neither an NVS record nor a pulse command is proof of physical position.
 
-### First web test
+## Implemented behavior
 
-1. Disconnect servo horn or coupling and verify the servo is mechanically unloaded.
-2. Power AtomS3 Lite by USB, servo from separate 5V supply with common ground.
-3. Connect a phone/laptop to **CottageThermoBench** (an **open Wi-Fi network**, no password).
-4. Open **http://192.168.4.1**. It is a password-free test SoftAP and does not use your existing home network.
-5. Use **Refresh status** to confirm `servo_gpio: 38` and `pwm_active: false`.
-6. Enter **1500**, click **Command PWM**, then test 1490 / 1510 / 1470 / 1530 and record actual motion.
-7. Click **Stop PWM**. The servo is no longer driven or holding torque. Test power loss/restoration with an isolated fixture **only**.
+- Persistent target, mode, map, schedule, source preference and movement limits in a schema-validated NVS record. Writes happen only on changed settings, not per sample or movement. Invalid old records fall back to Hold with an empty map; they are not erased automatically.
+- Hold leaves the current mechanical setting; Manual disables PWM and invalidates synchronization. Direct dial mode accepts fractional levels only within the measured map. No normal command supports level 0.
+- Thermostat maps desired °F to empirically measured Williams dial levels. The Williams thermostat performs heat cycling. Room-temperature error is **not** used to repeatedly wind the dial higher/lower.
+- Thermostat moves require a valid map, fresh temperature and session synchronization. Direct dial requests require a valid map and session synchronization. Default maximum step **0.25 dial level**, minimum dwell **5 minutes**, level deadband **0.1**. No extrapolation beyond measured points. Both servo directions are supported.
+- Primary **room** probe report, optional **switchbot** secondary. Valid range 32–110°F, TTL **90 seconds**. Secondary disabled by default. If both enabled sources are fresh and disagree by more than **5°F**, thermostat movement pauses. Unsupported sources (including Kids/Keg) are rejected.
+- A weekly schedule with up to **14** entries; Detroit local time with DST. Latest entry carries across days/week boundaries. Unknown time blocks scheduled motion. Entering a manual target disables the schedule; explicitly re-enable it to resume.
+- Optional station Wi-Fi (`idf.py menuconfig` → Cottage thermostat); AP remains available. LAN mode uses NTP; AP-only boot requires the UI's **Set clock from this device** for scheduling.
+- Last 64 events in RAM, one-minute serial samples, six-hour CSV sample ring in RAM. History clears on reboot. Unix timestamp 0 means clock unavailable; `nan` means no valid reading/command. No passive data is represented as a trained model or measured servo angle.
 
-### Known limitations
+## Wiring
 
-This example purposely has no closed-loop feedback, no automatic position or travel calibration, no servo power gating, no explicit ramp, no torque/stall detection, and no mechanically verified retention. The direct-drive furnace assembly and all unattended gas-appliance controls must undergo separate review and testing; **do not install this bench build on the furnace**.
+| AtomS3 Lite / supply | Servo |
+|---|---|
+| G38 / GPIO38 | Signal (3.3 V logic) |
+| GND | Servo ground and external supply negative |
+| Separate regulated 5 V supply, sized for actual stall/start current | Servo positive |
+| USB-C | AtomS3 power, flash, monitor |
 
-For the overall plan see [../docs/PROJECT_SPEC.md](../docs/PROJECT_SPEC.md), [../docs/PROTOTYPE_01.md](../docs/PROTOTYPE_01.md).
+Do not supply motor current from a GPIO/3.3 V pin. Stop PWM is not a brake or guaranteed free rotation; test actual servo behavior.
+
+## Later physical thermostat bench mode
+
+`idf.py menuconfig` → Cottage thermostat → **Enable physical output from thermostat engine**. Default OFF. Rebuild/flash, enter the measured bench map, explicitly arm and synchronize the observed current position. This enables bounded **attended inert-fixture** movement; it still has no encoder, stall detection or verified appliance coupling. Arming expires after **15 minutes**, disables PWM and clears synchronization. Reboot starts PWM off regardless of saved mode/target.
+
+Hardware-dependent gates remain actual travel/endpoints/torque, coupling, independent angle feedback, board wiring and installation validation. MQTT Discovery, OTA/rollback, active learning, weather/occupancy context and ETA preheat are future modules; they are not hidden behind dummy responses.
+
+For the exact API see [../docs/API.md](../docs/API.md); for pre-visit steps see [../docs/LOCAL_VALIDATION.md](../docs/LOCAL_VALIDATION.md).

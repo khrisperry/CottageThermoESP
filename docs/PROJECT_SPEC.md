@@ -109,3 +109,9 @@ Two distinct models:
 - Exact ESP32/controller board, GPIO, servo voltage/current and bracket fastening points not yet selected.
 - Temperature ratings, manufacturer approval, installed mechanical fail-safe, absolute encoder placement and actual gas furnace behavior remain unverified.
 - **Do not declare this safe for unattended occupancy or freeze-protection until all relevant reviews, tests and independent safeguards are completed.**
+
+## 11. Implementation update — 2026-10-18
+
+User authorized hardware-independent thermostat/controller work before next-weekend mechanical proof. v0.2.0 implements the map-based engine, persistent settings, weekly schedules, primary/secondary temperature API, paired web controls, simulated automatic output and explicitly armed physical bench commands. Simulation/live maps use separate NVS keys; no fictional calibration ships. The room-client project compiles independently with SHT31/SHT4x support and a browser thermostat; physical LCD/touch integration remains pending exact board/wiring.
+
+This advances the software phases without declaring mechanical proof, measured physical position, installation readiness, trained recovery prediction, MQTT Discovery, OTA or active calibration complete. Current source/build/API behavior is documented in controller/README.md, touchscreen/README.md, API.md and LOCAL_VALIDATION.md. Initial P0 bench instructions above describe the earlier prototype; the v0.2.0 controller now requires a pairing token and explicit bench arm before raw PWM.

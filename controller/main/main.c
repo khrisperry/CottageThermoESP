@@ -1,272 +1,424 @@
-/*
- * CottageThermoESP — minimal TS90MD servo BENCH tester
- *
- * ESP-IDF 6.x / ESP32-S3. NOT a furnace controller.
- * Never attach a test controller to an operating gas appliance.
- * Servo PWM starts DISABLED and commands are accepted only via HTTP POST.
- * This is not a position sensor: displayed µs = last COMMAND, not actual angle.
- */
-#include <stdbool.h>
-#include <stdint.h>
+/* Controller foundation. Automatic output defaults to simulation. */
+#include <math.h>
+#include <assert.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-
+#include <time.h>
+#include <sys/time.h>
+#include "esp_sntp.h"
 #include "driver/gpio.h"
 #include "driver/ledc.h"
-#include "esp_err.h"
 #include "esp_event.h"
 #include "esp_http_server.h"
 #include "esp_log.h"
 #include "esp_netif.h"
+#include "esp_random.h"
+#include "esp_timer.h"
 #include "esp_wifi.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
+#include "freertos/task.h"
 #include "nvs_flash.h"
+#include "nvs.h"
+#include "cJSON.h"
+#include "thermo.h"
 
-static const char *TAG = "cottage_bench";
-
-#define SERVO_MIN_US         1100
-#define SERVO_MAX_US         1900
-#define SERVO_PERIOD_US     20000
-#define SERVO_FREQ_HZ          50
-#define SERVO_PWM_BITS         13
-#define SERVO_PWM_TIMER   LEDC_TIMER_0
-#define SERVO_PWM_CHAN    LEDC_CHANNEL_0
-#define SERVO_PWM_MODE    LEDC_LOW_SPEED_MODE
-
-static bool s_ledc_timer_ready = false;
-static bool s_pwm_active = false;
-static int s_last_command_us = -1;
-
-static uint32_t pulse_to_duty(int us)
+static const char *TAG="thermostat";
+#ifdef CONFIG_THERMO_LIVE_BENCH
+#define CONFIG_KEY "bench_config"
+#else
+#define CONFIG_KEY "sim_config"
+#endif
+static th_state_t state;
+static SemaphoreHandle_t lock;
+static nvs_handle_t store;
+static char token[33];
+static bool pwm, timer_ready, armed;
+static uint64_t armed_until;
+static int last_pulse=-1;
+static char last_reason[64];
+typedef struct { uint64_t ms; char text[96]; } event_t;
+static event_t events[64];
+static unsigned event_count;
+typedef struct {
+    uint64_t uptime_ms; time_t unix_s;
+    float temperature_f,target_f,level;
+    th_source_t source;
+} history_t;
+static history_t history[360];
+static unsigned history_count;
+extern const unsigned char ui_start[] asm("_binary_ui_html_start");
+extern const unsigned char ui_end[] asm("_binary_ui_html_end");
+static uint64_t now_ms(void) { return esp_timer_get_time()/1000; }
+static void event(const char *text)
 {
-    // 13-bit LEDC @ 50Hz; all math in integers, avoid overflow.
-    return (uint32_t)(((uint64_t)us * (1U << SERVO_PWM_BITS)) / SERVO_PERIOD_US);
+    event_t *e=&events[event_count++%64];
+    e->ms=now_ms(); snprintf(e->text,sizeof(e->text),"%s",text);
+    ESP_LOGI(TAG,"%s",text);
 }
-
-static esp_err_t servo_command_us(int us)
+static esp_err_t pulse(int us)
 {
-    if (us < SERVO_MIN_US || us > SERVO_MAX_US) {
-        return ESP_ERR_INVALID_ARG;
+    if (us<1100 || us>1900) return ESP_ERR_INVALID_ARG;
+    if (!timer_ready) {
+        ledc_timer_config_t t={.speed_mode=LEDC_LOW_SPEED_MODE,.duty_resolution=LEDC_TIMER_13_BIT,
+            .timer_num=LEDC_TIMER_0,.freq_hz=50,.clk_cfg=LEDC_AUTO_CLK};
+        esp_err_t err=ledc_timer_config(&t);
+        if (err!=ESP_OK) return err;
+        timer_ready=true;
     }
-
-    // This is intentionally deferred until the FIRST explicit web command.
-    if (!s_ledc_timer_ready) {
-        ledc_timer_config_t t = {
-            .speed_mode = SERVO_PWM_MODE,
-            .duty_resolution = LEDC_TIMER_13_BIT,
-            .timer_num = SERVO_PWM_TIMER,
-            .freq_hz = SERVO_FREQ_HZ,
-            .clk_cfg = LEDC_AUTO_CLK,
-        };
-        esp_err_t err = ledc_timer_config(&t);
-        if (err != ESP_OK) return err;
-        s_ledc_timer_ready = true;
+    ledc_channel_config_t c={.gpio_num=CONFIG_THERMO_SERVO_GPIO,.speed_mode=LEDC_LOW_SPEED_MODE,
+        .channel=LEDC_CHANNEL_0,.timer_sel=LEDC_TIMER_0,.duty=(uint32_t)((uint64_t)us*8192/20000)};
+    esp_err_t err=ledc_channel_config(&c);
+    if (err==ESP_OK) { pwm=true; last_pulse=us; }
+    return err;
+}
+static void release(void)
+{
+    if (pwm) {
+        esp_err_t err=ledc_stop(LEDC_LOW_SPEED_MODE,LEDC_CHANNEL_0,0);
+        if (err!=ESP_OK) ESP_LOGE(TAG,"PWM stop: %s",esp_err_to_name(err));
     }
-
-    // Reconfigure channel per command to also resume after ledc_stop().
-    ledc_channel_config_t c = {
-        .gpio_num = CONFIG_THERMO_SERVO_GPIO,
-        .speed_mode = SERVO_PWM_MODE,
-        .channel = SERVO_PWM_CHAN,
-        .intr_type = LEDC_INTR_DISABLE,
-        .timer_sel = SERVO_PWM_TIMER,
-        .duty = pulse_to_duty(us),
-        .hpoint = 0,
-    };
-    esp_err_t err = ledc_channel_config(&c);
-    if (err != ESP_OK) return err;
-
-    s_last_command_us = us;
-    s_pwm_active = true;
-    ESP_LOGI(TAG, "BENCH PWM COMMAND: %d us (not measured position)", us);
-    return ESP_OK;
+    pwm=false; armed=false; th_release(&state);
 }
-
-static void servo_release_pwm(void)
+static esp_err_t json_send(httpd_req_t *r,cJSON *j)
 {
-    if (s_ledc_timer_ready) {
-        // Disable servo command signal; this is NOT a mechanical brake.
-        ESP_ERROR_CHECK(ledc_stop(SERVO_PWM_MODE, SERVO_PWM_CHAN, 0));
+    if (!j) return httpd_resp_send_err(r,HTTPD_500_INTERNAL_SERVER_ERROR,"Out of memory");
+    char *s=cJSON_PrintUnformatted(j); cJSON_Delete(j);
+    if (!s) return httpd_resp_send_err(r,HTTPD_500_INTERNAL_SERVER_ERROR,"Out of memory");
+    httpd_resp_set_type(r,"application/json"); httpd_resp_set_hdr(r,"Cache-Control","no-store");
+    esp_err_t err=httpd_resp_sendstr(r,s); free(s); return err;
+}
+static bool authorized(httpd_req_t *r)
+{
+    char supplied[48]={0};
+    if (httpd_req_get_hdr_value_str(r,"X-Thermo-Token",supplied,sizeof(supplied))!=ESP_OK) return false;
+    unsigned diff=strlen(supplied)^strlen(token);
+    for (unsigned i=0;i<32;++i) diff|=(unsigned char)supplied[i]^(unsigned char)token[i];
+    return diff==0;
+}
+static cJSON *body(httpd_req_t *r)
+{
+    if (r->content_len<=0 || r->content_len>4096) return NULL;
+    char *s=calloc(1,r->content_len+1); if (!s) return NULL;
+    int at=0;
+    while (at<r->content_len) {
+        int n=httpd_req_recv(r,s+at,r->content_len-at);
+        if (n<=0) {free(s);return NULL;} at+=n;
     }
-    s_pwm_active = false;
-    ESP_LOGI(TAG, "BENCH PWM DISABLED: servo may be back-driven");
+    cJSON *j=cJSON_ParseWithLengthOpts(s,r->content_len+1,NULL,true); free(s);
+    if (!cJSON_IsObject(j)) {cJSON_Delete(j);return NULL;} return j;
 }
-
-static const char s_html[] =
-    "<!doctype html><html lang='en'><head>"
-    "<meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'>"
-    "<title>CottageThermo Servo Bench</title>"
-    "<style>body{font:16px system-ui,sans-serif;max-width:570px;margin:32px auto;padding:0 15px;"
-    "background:#f7f7f9;color:#18212f}main{background:white;padding:24px;border-radius:14px;"
-    "box-shadow:0 2px 16px #0001}button,input{font:inherit;padding:12px;border-radius:8px;margin:6px 4px 6px 0}"
-    "input{width:120px;border:1px solid #999}button{cursor:pointer;border:1px solid #666}"
-    ".warn{border-left:5px solid #d97706;background:#fff6e9;padding:13px}"
-    "#status{white-space:pre-wrap;background:#edf1f6;padding:12px;border-radius:8px}</style></head>"
-    "<body><main><h1>Servo bench tester</h1>"
-    "<p class='warn'><strong>BENCH ONLY.</strong> Disconnect from the furnace. "
-    "The servo may JUMP when PWM is first enabled. Remove the horn for initial tests. "
-    "No position feedback or automatic motion on startup.</p>"
-    "<p>Wi-Fi: <b>CottageThermoBench</b> (open, no password).</p>"
-    "<p>50Hz PWM. Allowed range <b>1100-1900 microseconds</b>; start unloaded at 1500. "
-    "Small steps only. This is NOT a degree-calibrated position.</p>"
-    "<label for='us'>Command pulse (us):</label>"
-    "<input id='us' type='number' min='1100' max='1900' step='10' value='1500'>"
-    "<button onclick='sendPulse()'>Command PWM</button>"
-    "<button onclick='stopPulse()'>Stop PWM</button>"
-    "<button onclick='refreshStatus()'>Refresh status</button>"
-    "<h3>Controller report</h3><div id='status'>Loading...</div>"
-    "<p><small>Stopping PWM does NOT return the knob to zero or hold it in place. "
-    "Reboot never restores last commanded PWM. Last command is not actual shaft angle.</small></p>"
-    "<script>"
-    "async function request(path,opts){try{const r=await fetch(path,opts);"
-    "const t=await r.text();if(!r.ok)alert('HTTP '+r.status+': '+t);"
-    "await refreshStatus();}catch(e){alert(e.message)}}"
-    "function sendPulse(){const v=document.getElementById('us').value;"
-    "request('/api/pulse',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},"
-    "body:'us='+encodeURIComponent(v)})}"
-    "function stopPulse(){request('/api/stop',{method:'POST'})}"
-    "async function refreshStatus(){try{const r=await fetch('/api/status',{cache:'no-store'});"
-    "document.getElementById('status').textContent=JSON.stringify(await r.json(),null,2)}"
-    "catch(e){document.getElementById('status').textContent='Unavailable: '+e.message}}"
-    "refreshStatus();</script></main></body></html>";
-
-static esp_err_t root_get(httpd_req_t *req)
+static bool number(cJSON *j,const char *key,double *out)
 {
-    httpd_resp_set_type(req, "text/html; charset=utf-8");
-    httpd_resp_set_hdr(req, "Cache-Control", "no-store");
-    return httpd_resp_sendstr(req, s_html);
+    cJSON *v=cJSON_GetObjectItemCaseSensitive(j,key);
+    if (!cJSON_IsNumber(v) || !isfinite(v->valuedouble)) return false;
+    *out=v->valuedouble; return true;
 }
-
-static esp_err_t status_get(httpd_req_t *req)
+static bool text_is(cJSON *j,const char *key,const char *s)
 {
-    char json[192];
-    // No physical angle sensor is present. Never describe command as position.
-    snprintf(json, sizeof(json),
-             "{\"bench_only\":true,\"servo_gpio\":%d,\"pwm_active\":%s,\"last_command_us\":%d,"
-             "\"servo_position_verified\":false,\"min_us\":%d,\"max_us\":%d}",
-             CONFIG_THERMO_SERVO_GPIO, s_pwm_active ? "true" : "false", s_last_command_us,
-             SERVO_MIN_US, SERVO_MAX_US);
-    httpd_resp_set_type(req, "application/json");
-    httpd_resp_set_hdr(req, "Cache-Control", "no-store");
-    return httpd_resp_sendstr(req, json);
+    cJSON *v=cJSON_GetObjectItemCaseSensitive(j,key);
+    return cJSON_IsString(v) && strcmp(v->valuestring,s)==0;
 }
-
-static esp_err_t pulse_post(httpd_req_t *req)
+static esp_err_t root_get(httpd_req_t *r)
 {
-    char body[32];
-    if (req->content_len < 4 || req->content_len >= sizeof(body)) {
-        return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid body");
+    httpd_resp_set_type(r,"text/html; charset=utf-8");
+    httpd_resp_set_hdr(r,"Cache-Control","no-store");
+    return httpd_resp_send(r,(const char *)ui_start,ui_end-ui_start-1);
+}
+static cJSON *config_json(void)
+{
+    th_config_t *c=&state.config;
+    cJSON *j=cJSON_CreateObject();
+    cJSON_AddNumberToObject(j,"schema",c->schema);
+    cJSON_AddStringToObject(j,"mode",th_mode_name(c->mode));
+    cJSON_AddNumberToObject(j,"target_f",c->target_f);
+    cJSON_AddNumberToObject(j,"direct_level",c->direct_level);
+    cJSON_AddBoolToObject(j,"secondary_enabled",c->secondary_enabled);
+    cJSON_AddNumberToObject(j,"dwell_ms",c->dwell_ms);
+    cJSON_AddNumberToObject(j,"level_deadband",c->level_deadband);
+    cJSON_AddNumberToObject(j,"max_level_step",c->max_level_step);
+    cJSON *map=cJSON_AddArrayToObject(j,"map");
+    for (unsigned i=0;i<c->map_count;++i) {
+        cJSON *p=cJSON_CreateObject(); cJSON_AddNumberToObject(p,"temp_f",c->map[i].temp_f);
+        cJSON_AddNumberToObject(p,"level",c->map[i].level);
+        cJSON_AddNumberToObject(p,"pulse_us",c->map[i].pulse_us); cJSON_AddItemToArray(map,p);
     }
-
-    size_t nread = 0;
-    while (nread < req->content_len) {
-        int n = httpd_req_recv(req, body + nread, req->content_len - nread);
-        if (n <= 0) {
-            return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Incomplete request");
+    cJSON_AddBoolToObject(j,"schedule_enabled",c->schedule_enabled);
+    cJSON *schedule=cJSON_AddArrayToObject(j,"schedule");
+    for(unsigned i=0;i<c->schedule_count;++i) {
+        cJSON *p=cJSON_CreateObject();cJSON_AddNumberToObject(p,"days",c->schedule[i].days);
+        cJSON_AddNumberToObject(p,"minute",c->schedule[i].minute);
+        cJSON_AddNumberToObject(p,"target_f",c->schedule[i].target_f);cJSON_AddItemToArray(schedule,p);
+    }
+    return j;
+}
+static void add_sample(cJSON *j,const char *name,th_sample_t p,uint64_t now)
+{
+    cJSON *o=cJSON_AddObjectToObject(j,name);
+    cJSON_AddBoolToObject(o,"fresh",p.valid && now>=p.at_ms && now-p.at_ms<=THERMO_TTL_MS);
+    if(p.valid) {cJSON_AddNumberToObject(o,"temp_f",p.f);cJSON_AddNumberToObject(o,"age_ms",now-p.at_ms);}
+}
+static esp_err_t history_get(httpd_req_t *r)
+{
+    history_t *snapshot=malloc(sizeof(history));
+    if(!snapshot)return httpd_resp_send_err(r,HTTPD_500_INTERNAL_SERVER_ERROR,"Out of memory");
+    xSemaphoreTake(lock,portMAX_DELAY);
+    unsigned count=history_count<360?history_count:360;
+    unsigned start=history_count>360?history_count-360:0;
+    for(unsigned i=0;i<count;++i)snapshot[i]=history[(start+i)%360];
+    xSemaphoreGive(lock);
+    httpd_resp_set_type(r,"text/csv");httpd_resp_set_hdr(r,"Cache-Control","no-store");
+    httpd_resp_set_hdr(r,"Content-Disposition","attachment; filename=thermostat-history.csv");
+    esp_err_t err=httpd_resp_sendstr_chunk(r,"uptime_ms,unix_s,source,temperature_f,target_f,commanded_level\n");
+    for(unsigned i=0;i<count && err==ESP_OK;++i) {
+        char row[160];history_t p=snapshot[i];
+        snprintf(row,sizeof(row),"%llu,%lld,%s,%.3f,%.3f,%.3f\n",(unsigned long long)p.uptime_ms,
+            (long long)p.unix_s,th_source_name(p.source),p.temperature_f,p.target_f,p.level);
+        err=httpd_resp_sendstr_chunk(r,row);
+    }
+    free(snapshot);if(err==ESP_OK)err=httpd_resp_send_chunk(r,NULL,0);return err;
+}
+static esp_err_t get_api(httpd_req_t *r)
+{
+    if(!authorized(r)) return httpd_resp_send_err(r,HTTPD_401_UNAUTHORIZED,"API token required");
+    if(!strcmp(r->uri,"/api/history"))return history_get(r);
+    xSemaphoreTake(lock,portMAX_DELAY);
+    cJSON *j=NULL;
+    if(!strcmp(r->uri,"/api/config")) j=config_json();
+    else if(!strcmp(r->uri,"/api/events")) {
+        j=cJSON_CreateArray();
+        unsigned begin=event_count>64 ? event_count-64:0;
+        for(unsigned i=begin;i<event_count;++i) {
+            cJSON *e=cJSON_CreateObject(); cJSON_AddNumberToObject(e,"uptime_ms",events[i%64].ms);
+            cJSON_AddStringToObject(e,"message",events[i%64].text); cJSON_AddItemToArray(j,e);
         }
-        nread += (size_t)n;
+    } else {
+        j=cJSON_CreateObject();
+        cJSON_AddStringToObject(j,"version","0.2.0");
+        cJSON_AddBoolToObject(j,"simulation",state.simulated);
+        cJSON_AddBoolToObject(j,"bench_armed",armed);
+        cJSON_AddNumberToObject(j,"arm_remaining_ms",armed && armed_until>now_ms()?armed_until-now_ms():0);
+        cJSON_AddBoolToObject(j,"pwm_active",pwm);
+        cJSON_AddNumberToObject(j,"last_command_us",last_pulse);
+        cJSON_AddBoolToObject(j,"position_synchronized",state.synchronized);
+        cJSON_AddBoolToObject(j,"position_measured",false);
+        cJSON_AddStringToObject(j,"reason",state.reason);
+        cJSON_AddStringToObject(j,"source",th_source_name(state.source));
+        cJSON_AddStringToObject(j,"mode",th_mode_name(state.config.mode));
+        cJSON_AddNumberToObject(j,"target_f",state.effective_target_f);
+        cJSON_AddBoolToObject(j,"clock_valid",state.clock_valid);
+        cJSON_AddBoolToObject(j,"schedule_enabled",state.config.schedule_enabled);
+        if(state.source!=TH_NONE) cJSON_AddNumberToObject(j,"temperature_f",state.selected_f);
+        if(state.has_command) cJSON_AddNumberToObject(j,"commanded_level",state.commanded_level);
+        if(isfinite(state.proposed_level)) cJSON_AddNumberToObject(j,"proposed_level",state.proposed_level);
+        cJSON_AddNumberToObject(j,"uptime_ms",now_ms());
+        add_sample(j,"room",state.room,now_ms());add_sample(j,"switchbot",state.secondary,now_ms());
     }
-    body[nread] = '\0';
-    if (strncmp(body, "us=", 3) != 0) {
-        return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Expected us=NNNN");
-    }
-
-    char *end = NULL;
-    long us = strtol(body + 3, &end, 10);
-    if (end == body + 3 || *end != '\0' || us < SERVO_MIN_US || us > SERVO_MAX_US) {
-        return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST,
-                                   "Pulse out of 1100..1900 us bounds");
-    }
-
-    esp_err_t err = servo_command_us((int)us);
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG, "PWM command failed: %s", esp_err_to_name(err));
-        return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR,
-                                   "PWM peripheral error");
-    }
-    httpd_resp_set_type(req, "application/json");
-    return httpd_resp_sendstr(req, "{\"ok\":true}");
+    xSemaphoreGive(lock); return json_send(r,j);
 }
-
-static esp_err_t stop_post(httpd_req_t *req)
+static bool update_config(cJSON *j)
 {
-    servo_release_pwm();
-    httpd_resp_set_type(req, "application/json");
-    return httpd_resp_sendstr(req, "{\"ok\":true,\"pwm_active\":false}");
-}
-
-static void start_http(void)
-{
-    httpd_config_t config = HTTPD_DEFAULT_CONFIG();
-    httpd_handle_t server = NULL;
-    ESP_ERROR_CHECK(httpd_start(&server, &config));
-
-    const httpd_uri_t root = {
-        .uri = "/", .method = HTTP_GET, .handler = root_get,
-    };
-    const httpd_uri_t status = {
-        .uri = "/api/status", .method = HTTP_GET, .handler = status_get,
-    };
-    const httpd_uri_t pulse = {
-        .uri = "/api/pulse", .method = HTTP_POST, .handler = pulse_post,
-    };
-    const httpd_uri_t stop = {
-        .uri = "/api/stop", .method = HTTP_POST, .handler = stop_post,
-    };
-    ESP_ERROR_CHECK(httpd_register_uri_handler(server, &root));
-    ESP_ERROR_CHECK(httpd_register_uri_handler(server, &status));
-    ESP_ERROR_CHECK(httpd_register_uri_handler(server, &pulse));
-    ESP_ERROR_CHECK(httpd_register_uri_handler(server, &stop));
-}
-
-static void start_softap(void)
-{
-    const char *ssid = CONFIG_THERMO_AP_SSID;
-
-    // Open AP for short-range, supervised bench testing only.
-    // Never require a password for the test device's captive-portal Wi-Fi.
-    if (strlen(ssid) == 0 || strlen(ssid) > 31) {
-        ESP_LOGE(TAG, "Invalid bench SoftAP SSID.");
-        return;
+    th_config_t next=state.config;
+    cJSON *v=cJSON_GetObjectItemCaseSensitive(j,"mode");
+    if(v) {
+        if(!cJSON_IsString(v)) return false;
+        int m;
+        for(m=TH_HOLD;m<=TH_AUTO;++m) if(!strcmp(v->valuestring,th_mode_name(m))) break;
+        if(m>TH_AUTO) return false;
+        next.mode=m;
     }
-
-    ESP_ERROR_CHECK(esp_netif_init());
-    ESP_ERROR_CHECK(esp_event_loop_create_default());
+    struct {const char *key;float *p;} floats[]={
+        {"target_f",&next.target_f},{"direct_level",&next.direct_level},
+        {"level_deadband",&next.level_deadband},{"max_level_step",&next.max_level_step}};
+    for(unsigned i=0;i<sizeof(floats)/sizeof(floats[0]);++i) {
+        v=cJSON_GetObjectItemCaseSensitive(j,floats[i].key);
+        if(v) {double d;if(!number(j,floats[i].key,&d))return false;*floats[i].p=d;}
+    }
+    v=cJSON_GetObjectItemCaseSensitive(j,"dwell_ms");
+    if(v) {
+        double d;if(!number(j,"dwell_ms",&d) || d<10000 || d>3600000 || floor(d)!=d)return false;
+        next.dwell_ms=(uint32_t)d;
+    }
+    v=cJSON_GetObjectItemCaseSensitive(j,"secondary_enabled");
+    if(v) {if(!cJSON_IsBool(v))return false;next.secondary_enabled=cJSON_IsTrue(v);}
+    bool map_changed=false;
+    v=cJSON_GetObjectItemCaseSensitive(j,"map");
+    if(v) {
+        if(!cJSON_IsArray(v) || cJSON_GetArraySize(v)>THERMO_MAP_MAX)return false;
+        next.map_count=cJSON_GetArraySize(v); memset(next.map,0,sizeof(next.map));
+        for(unsigned i=0;i<next.map_count;++i) {
+            cJSON *p=cJSON_GetArrayItem(v,i);double t,l,u;
+            if(!number(p,"temp_f",&t)||!number(p,"level",&l)||!number(p,"pulse_us",&u))return false;
+            next.map[i]=(th_point_t){t,l,u};
+        }
+        map_changed=next.map_count!=state.config.map_count || memcmp(next.map,state.config.map,sizeof(next.map));
+    }
+    // An explicit target is a persistent manual override of the schedule.
+    if(cJSON_HasObjectItem(j,"target_f"))next.schedule_enabled=false;
+    v=cJSON_GetObjectItemCaseSensitive(j,"schedule");
+    if(v) {
+        if(!cJSON_IsArray(v)||cJSON_GetArraySize(v)>THERMO_SCHEDULE_MAX)return false;
+        next.schedule_count=cJSON_GetArraySize(v);memset(next.schedule,0,sizeof(next.schedule));
+        for(unsigned i=0;i<next.schedule_count;++i) {
+            cJSON *p=cJSON_GetArrayItem(v,i);double days,minute,target;
+            if(!number(p,"days",&days)||!number(p,"minute",&minute)||!number(p,"target_f",&target)||
+               days<1||days>127||floor(days)!=days||minute<0||minute>1439||floor(minute)!=minute)return false;
+            next.schedule[i]=(th_schedule_t){.days=(uint8_t)days,.minute=(uint16_t)minute,.target_f=target};
+        }
+    }
+    v=cJSON_GetObjectItemCaseSensitive(j,"schedule_enabled");
+    if(v){if(!cJSON_IsBool(v))return false;next.schedule_enabled=cJSON_IsTrue(v);}
+    if(!th_config_valid(&next)) return false;
+    if(!memcmp(&next,&state.config,sizeof(next))) return true; // Repeated settings are idempotent; avoid NVS wear.
+    if(nvs_set_blob(store,CONFIG_KEY,&next,sizeof(next))!=ESP_OK || nvs_commit(store)!=ESP_OK)return false;
+    if(map_changed || next.mode==TH_MANUAL) release();
+    state.config=next; event("Settings committed"); return true;
+}
+static esp_err_t post_api(httpd_req_t *r)
+{
+    if(!authorized(r))return httpd_resp_send_err(r,HTTPD_401_UNAUTHORIZED,"API token required");
+    cJSON *j=body(r);
+    if(!j)return httpd_resp_send_err(r,HTTPD_400_BAD_REQUEST,"JSON object required (max 4096 bytes)");
+    bool ok=false;const char *error="Invalid request or unmet prerequisites";
+    xSemaphoreTake(lock,portMAX_DELAY);
+    if(!strcmp(r->uri,"/api/config")) ok=update_config(j);
+    else if(!strcmp(r->uri,"/api/temperature")) {
+        double f,age;
+        th_source_t source=text_is(j,"source","room")?TH_ROOM:text_is(j,"source","switchbot")?TH_SWITCHBOT:TH_NONE;
+        if(number(j,"temp_f",&f)&&number(j,"age_ms",&age)&&age>=0&&age<=THERMO_TTL_MS&&floor(age)==age)
+            ok=th_sample(&state,source,f,(uint32_t)age,now_ms());
+    } else if(!strcmp(r->uri,"/api/clock")) {
+        double unix_s;
+        if(number(j,"unix_s",&unix_s)&&unix_s>=1767225600&&unix_s<=4102444800&&floor(unix_s)==unix_s) {
+            struct timeval tv={.tv_sec=(time_t)unix_s};ok=settimeofday(&tv,NULL)==0;
+            if(ok)event("Local clock synchronized by paired client");
+        }
+    } else if(!strcmp(r->uri,"/api/stop")) {
+        release();state.config.mode=TH_HOLD;event("PWM disabled; synchronization cleared; session Hold");ok=true;
+    } else if(!strcmp(r->uri,"/api/arm")) {
+        if(text_is(j,"confirm","unloaded_bench") && state.config.mode!=TH_MANUAL) {
+            armed=true;armed_until=now_ms()+900000;event("Bench output armed for 15 minutes");ok=true;
+        }
+    } else if(!strcmp(r->uri,"/api/sync")) {
+        double l;
+        if((state.simulated || (armed && now_ms()<armed_until)) && number(j,"level",&l) &&
+           text_is(j,"confirm",state.simulated?"simulation":"observed_bench_position")) {
+            ok=th_sync(&state,l);
+            if(ok) event(state.simulated?"Simulation synchronized":"Manual bench synchronization; NOT encoder verified");
+        }
+    } else if(!strcmp(r->uri,"/api/pulse")) {
+        double u;
+        if(armed && now_ms()<armed_until && state.config.mode==TH_HOLD && number(j,"us",&u) && floor(u)==u && u>=1100 && u<=1900) {
+            ok=pulse((int)u)==ESP_OK;
+            th_release(&state);
+            if(ok)event("Explicit raw bench PWM command; thermostat synchronization cleared");
+        }
+    }
+    xSemaphoreGive(lock);cJSON_Delete(j);
+    if(!ok)return httpd_resp_send_err(r,HTTPD_400_BAD_REQUEST,error);
+    return httpd_resp_sendstr(r,"{\"ok\":true}");
+}
+static void control_task(void *unused)
+{
+    unsigned minute=0;
+    for(;;) {
+        xSemaphoreTake(lock,portMAX_DELAY);
+        uint64_t now=now_ms();
+        if(armed && now>=armed_until) {release();event("Bench arm expired; PWM disabled");}
+        time_t wall=time(NULL);struct tm local={0};localtime_r(&wall,&local);
+        th_clock(&state,wall>=1767225600,(local.tm_wday+6)%7,local.tm_hour*60+local.tm_min);
+        th_action_t a=th_tick(&state,now);
+        if(a.move) {
+            if(state.simulated) th_commit_move(&state,a,now);
+            else if(armed && now<armed_until) {
+                if(pulse(a.pulse_us)==ESP_OK) th_commit_move(&state,a,now);
+                else {release();state.reason="pwm_error";event("PWM error; motion disabled");}
+            } else state.reason="bench_arm_required";
+            if(state.last_move_ms==now) {
+                char msg[96];snprintf(msg,sizeof(msg),"%s level %.2f / %d us (command, not measured)",
+                    state.simulated?"SIMULATED":"BENCH",a.level,a.pulse_us);event(msg);
+            }
+        }
+        if(strcmp(last_reason,state.reason)) {
+            snprintf(last_reason,sizeof(last_reason),"%s",state.reason);event(state.reason);
+        }
+        if(++minute>=60) {
+            minute=0;
+            history[history_count++%360]=(history_t){.uptime_ms=now,.unix_s=state.clock_valid?wall:0,
+                .temperature_f=state.selected_f,.target_f=state.effective_target_f,
+                .level=state.has_command?state.commanded_level:NAN,.source=state.source};
+            ESP_LOGI(TAG,"Sample source=%s temp=%.2f target=%.2f mode=%s reason=%s",
+                th_source_name(state.source),state.selected_f,state.config.target_f,
+                th_mode_name(state.config.mode),state.reason);
+        }
+        xSemaphoreGive(lock);vTaskDelay(pdMS_TO_TICKS(1000));
+    }
+}
+static void wifi_event(void *arg,esp_event_base_t base,int32_t id,void *data)
+{
+    if(base==WIFI_EVENT && id==WIFI_EVENT_STA_DISCONNECTED) esp_wifi_connect();
+    if(base==IP_EVENT && id==IP_EVENT_STA_GOT_IP) {
+        ip_event_got_ip_t *e=data;ESP_LOGI(TAG,"Controller LAN address: " IPSTR,IP2STR(&e->ip_info.ip));
+    }
+}
+static void network_start(void)
+{
+    ESP_ERROR_CHECK(esp_netif_init());ESP_ERROR_CHECK(esp_event_loop_create_default());
     esp_netif_create_default_wifi_ap();
-
-    wifi_init_config_t init = WIFI_INIT_CONFIG_DEFAULT();
-    ESP_ERROR_CHECK(esp_wifi_init(&init));
-
-    wifi_config_t ap = {0};
-    strncpy((char *)ap.ap.ssid, ssid, sizeof(ap.ap.ssid) - 1);
-    ap.ap.ssid_len = strlen(ssid);
-    ap.ap.channel = 6;
-    ap.ap.max_connection = 2;
-    ap.ap.authmode = WIFI_AUTH_OPEN;
-
-    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_AP));
-    ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_AP, &ap));
-    ESP_ERROR_CHECK(esp_wifi_start());
-
-    ESP_LOGW(TAG, "BENCH OPEN AP (NO PASSWORD): %s, web UI http://192.168.4.1", ssid);
-    start_http();
+    bool station=strlen(CONFIG_THERMO_WIFI_SSID)>0;
+    if(station)esp_netif_create_default_wifi_sta();
+    wifi_init_config_t init=WIFI_INIT_CONFIG_DEFAULT();ESP_ERROR_CHECK(esp_wifi_init(&init));
+    ESP_ERROR_CHECK(esp_wifi_set_storage(WIFI_STORAGE_RAM));
+    ESP_ERROR_CHECK(esp_event_handler_register(WIFI_EVENT,ESP_EVENT_ANY_ID,wifi_event,NULL));
+    ESP_ERROR_CHECK(esp_event_handler_register(IP_EVENT,IP_EVENT_STA_GOT_IP,wifi_event,NULL));
+    wifi_config_t ap={0};snprintf((char *)ap.ap.ssid,sizeof(ap.ap.ssid),"%s",CONFIG_THERMO_AP_SSID);
+    ap.ap.ssid_len=strlen((char *)ap.ap.ssid);ap.ap.channel=6;ap.ap.max_connection=4;ap.ap.authmode=WIFI_AUTH_OPEN;
+    ESP_ERROR_CHECK(esp_wifi_set_mode(station?WIFI_MODE_APSTA:WIFI_MODE_AP));
+    ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_AP,&ap));
+    if(station) {
+        wifi_config_t sta={0};snprintf((char *)sta.sta.ssid,sizeof(sta.sta.ssid),"%s",CONFIG_THERMO_WIFI_SSID);
+        snprintf((char *)sta.sta.password,sizeof(sta.sta.password),"%s",CONFIG_THERMO_WIFI_PASSWORD);
+        ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA,&sta));
+    }
+    ESP_ERROR_CHECK(esp_wifi_start());if(station)esp_wifi_connect();
+    httpd_config_t c=HTTPD_DEFAULT_CONFIG();c.max_uri_handlers=16;c.stack_size=8192;
+    httpd_handle_t h;ESP_ERROR_CHECK(httpd_start(&h,&c));
+    httpd_uri_t root={.uri="/",.method=HTTP_GET,.handler=root_get};ESP_ERROR_CHECK(httpd_register_uri_handler(h,&root));
+    const char *gets[]={"/api/status","/api/config","/api/events","/api/history"};
+    for(unsigned i=0;i<4;++i) {httpd_uri_t u={.uri=gets[i],.method=HTTP_GET,.handler=get_api};ESP_ERROR_CHECK(httpd_register_uri_handler(h,&u));}
+    const char *posts[]={"/api/config","/api/temperature","/api/stop","/api/arm","/api/sync","/api/pulse","/api/clock"};
+    for(unsigned i=0;i<7;++i) {httpd_uri_t u={.uri=posts[i],.method=HTTP_POST,.handler=post_api};ESP_ERROR_CHECK(httpd_register_uri_handler(h,&u));}
+    ESP_LOGI(TAG,"Open bench Wi-Fi %s; http://192.168.4.1",CONFIG_THERMO_AP_SSID);
 }
-
 void app_main(void)
 {
-    ESP_LOGW(TAG, "BENCH FIRMWARE ONLY: AtomS3 Lite G38/GPIO38 default; no furnace connection.");
-    ESP_LOGI(TAG, "Servo PWM signal: GPIO%d; PWM disabled until web command", CONFIG_THERMO_SERVO_GPIO);
-    // Output pin initialized LOW, not PWM. No command, sweep or homing on boot.
-    gpio_config_t pin = {
-        .pin_bit_mask = 1ULL << CONFIG_THERMO_SERVO_GPIO,
-        .mode = GPIO_MODE_OUTPUT,
-        .pull_up_en = GPIO_PULLUP_DISABLE,
-        .pull_down_en = GPIO_PULLDOWN_DISABLE,
-        .intr_type = GPIO_INTR_DISABLE,
-    };
-    ESP_ERROR_CHECK(gpio_config(&pin));
-    ESP_ERROR_CHECK(gpio_set_level(CONFIG_THERMO_SERVO_GPIO, 0));
-
-    ESP_ERROR_CHECK(nvs_flash_init());
-    start_softap();
+    gpio_config_t pin={.pin_bit_mask=1ULL<<CONFIG_THERMO_SERVO_GPIO,.mode=GPIO_MODE_OUTPUT};
+    ESP_ERROR_CHECK(gpio_config(&pin));ESP_ERROR_CHECK(gpio_set_level(CONFIG_THERMO_SERVO_GPIO,0));
+    // Do not erase NVS on version/full errors: retain calibration for deliberate recovery.
+    ESP_ERROR_CHECK(nvs_flash_init());ESP_ERROR_CHECK(nvs_open("thermostat",NVS_READWRITE,&store));
+    th_config_t c=th_defaults();size_t size=sizeof(c);
+    th_config_t saved;
+    if(nvs_get_blob(store,CONFIG_KEY,&saved,&size)==ESP_OK && size==sizeof(saved) && th_config_valid(&saved))c=saved;
+    size=sizeof(token);
+    if(nvs_get_str(store,"api_token",token,&size)!=ESP_OK || strlen(token)!=32) {
+        uint8_t bytes[16];esp_fill_random(bytes,sizeof(bytes));
+        for(unsigned i=0;i<16;++i)snprintf(token+2*i,3,"%02x",bytes[i]);
+        ESP_ERROR_CHECK(nvs_set_str(store,"api_token",token));ESP_ERROR_CHECK(nvs_commit(store));
+    }
+    bool simulated=true;
+#ifdef CONFIG_THERMO_LIVE_BENCH
+    simulated=false;
+#endif
+    th_init(&state,&c,simulated);state.selected_f=NAN;state.proposed_level=NAN;
+    lock=xSemaphoreCreateMutex();assert(lock);
+    event("Boot: PWM disabled; position unknown; no restoration or homing");
+    ESP_LOGW(TAG,"Attended bench firmware. Automatic output: %s",simulated?"SIMULATION":"LIVE BENCH");
+    ESP_LOGI(TAG,"Pairing API token (local bench only): %s",token);
+    setenv("TZ","EST5EDT,M3.2.0/2,M11.1.0/2",1);tzset();
+    network_start();
+    if(strlen(CONFIG_THERMO_WIFI_SSID)) {
+        esp_sntp_setoperatingmode(SNTP_OPMODE_POLL);esp_sntp_setservername(0,"pool.ntp.org");esp_sntp_init();
+    }
+    xTaskCreate(control_task,"thermostat",4096,NULL,5,NULL);
 }

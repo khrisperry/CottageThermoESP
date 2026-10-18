@@ -2,7 +2,7 @@
 
 ESP-IDF smart thermostat / mechanical knob actuator project for a **Williams model 1773512 direct-vent cottage furnace**.
 
-> **Status: concept documented; first milestone is a removable, direct-drive, BENCH-ONLY servo proof of concept. No unattended operation of a modified gas furnace is authorized or validated.** Do not install this on a live gas appliance without appropriate professional review and confirmation that it is permitted by the appliance manufacturer and applicable codes. Do not bypass any original furnace safety controls.
+> **Status: v0.2.0 thermostat development firmware.** Controller and room client are separate ESP-IDF 6.0.1 projects. Automatic output defaults to simulation; physical servo commands are explicitly armed bench operations. Mechanical travel/torque, encoder feedback and appliance integration remain unverified.
 
 ## Start here when resuming the project
 
@@ -11,7 +11,10 @@ ESP-IDF smart thermostat / mechanical knob actuator project for a **Williams mod
 3. **[docs/MECHANICAL_NOTES.md](docs/MECHANICAL_NOTES.md)** — knobs, direct-drive coupling, cap trial sizes, measurement list and attachment concept.
 4. **[docs/DECISIONS_AND_OPEN_QUESTIONS.md](docs/DECISIONS_AND_OPEN_QUESTIONS.md)** — confirmed decisions, unknowns, next session checklist.
 5. **[hardware/cap_fit_kit.scad](hardware/cap_fit_kit.scad)** — parametric **test coupons**, not a verified knob/servo coupling.
-6. **[controller/README.md](controller/README.md)** — bench controller firmware and build steps.
+6. **[controller/README.md](controller/README.md)** — controller setup, modes, calibration and bench movement.
+7. **[touchscreen/README.md](touchscreen/README.md)** — buildable room client, probe support and physical LCD adapter status.
+8. **[docs/LOCAL_VALIDATION.md](docs/LOCAL_VALIDATION.md)** — local build/test steps and next cottage visit.
+9. **[docs/API.md](docs/API.md)** — direct paired API, schedules and data freshness.
 
 ## Goal
 
@@ -21,18 +24,25 @@ ESP-IDF smart thermostat / mechanical knob actuator project for a **Williams mod
 - Servo must not automatically go to 0, sweep, or seek a default position on reboot / power restoration.
 - Ultimately: standalone local thermostat operation, optional Home Assistant climate integration, ESP32-S3 touchscreen room thermostat, adaptive temperature-to-dial calibration, heating recovery-time learning, and HA-assisted "Heading to Cottage" preheat.
 
-## Proposed directories
+## Software now implemented
 
-\`\`\`
-CottageThermoESP/
-  controller/    ESP-IDF furnace-side controller (first bench prototype now)
-  touchscreen/   future ESP32-S3 Touch-LCD-4B UI and room-temperature sensing
-  shared/        future wire protocol
-  hardware/      parametric CAD, measured models and tests
-  docs/          requirements, test plans, engineering decisions
-\`\`\`
+Persistent modes/target/calibration, measured-map interpolation, fractional dial commands, source freshness/disagreement checks, movement limits, weekly schedules in Detroit time, paired web/API access, optional LAN Wi-Fi, events and six-hour sample CSV export. The room client reports CRC-checked SHT31/SHT4x samples and presents a browser thermostat; exact LCD/touch board integration remains pending.
 
-These future directories will be created as implementation begins; see the detailed design documents.
+```text
+controller/    AtomS3 Lite controller + bench web UI
+touchscreen/ room client + external probe + browser UI (LCD adapter pending)
+shared/thermo/ hardware-independent thermostat engine
+tests/        native engine and optional browser checks
+tools/        Windows local build helper
+hardware/     CAD, reference models and tests
+docs/         specification, API, validation and engineering decisions
+```
+
+Build both locally from the configured ESP-IDF PowerShell terminal:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tools\build-local.ps1
+```
 
 ## Current short-term milestone: does the servo have enough torque?
 
