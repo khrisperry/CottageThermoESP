@@ -6,7 +6,8 @@ menu "Cottage thermostat BENCH servo tester"
         default 38
         help
             PWM signal output GPIO. Inspect your board's pinout.
-            For M5Stack AtomS3 Lite, G38 is the rear GPIO38 header.\n            PWM is 3.3V logic only; provide separate 5V servo supply.
+            For M5Stack AtomS3 Lite, G38 is the rear GPIO38 header.
+            PWM is 3.3V logic only; provide separate 5V servo supply.
 
     config THERMO_AP_SSID
         string "Temporary bench access point SSID"
