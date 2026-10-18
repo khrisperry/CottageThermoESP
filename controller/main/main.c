@@ -141,9 +141,9 @@ static esp_err_t status_get(httpd_req_t *req)
     char json[192];
     // No physical angle sensor is present. Never describe command as position.
     snprintf(json, sizeof(json),
-             "{\"bench_only\":true,\"pwm_active\":%s,\"last_command_us\":%d,"
+             "{\"bench_only\":true,\"servo_gpio\":%d,\"pwm_active\":%s,\"last_command_us\":%d,"
              "\"servo_position_verified\":false,\"min_us\":%d,\"max_us\":%d}",
-             s_pwm_active ? "true" : "false", s_last_command_us,
+             CONFIG_THERMO_SERVO_GPIO, s_pwm_active ? "true" : "false", s_last_command_us,
              SERVO_MIN_US, SERVO_MAX_US);
     httpd_resp_set_type(req, "application/json");
     httpd_resp_set_hdr(req, "Cache-Control", "no-store");
@@ -255,7 +255,7 @@ static void start_softap(void)
 
 void app_main(void)
 {
-    ESP_LOGW(TAG, "BENCH FIRMWARE ONLY: no furnace connection.");
+    ESP_LOGW(TAG, "BENCH FIRMWARE ONLY: AtomS3 Lite G38/GPIO38 default; no furnace connection.");\n    ESP_LOGI(TAG, "Servo PWM signal: GPIO%d; PWM disabled until web command", CONFIG_THERMO_SERVO_GPIO);
     // Output pin initialized LOW, not PWM. No command, sweep or homing on boot.
     gpio_config_t pin = {
         .pin_bit_mask = 1ULL << CONFIG_THERMO_SERVO_GPIO,
