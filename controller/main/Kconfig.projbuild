@@ -1,0 +1,22 @@
+menu "Cottage thermostat BENCH servo tester"
+
+    config THERMO_SERVO_GPIO
+        int "Servo signal GPIO (ESP32-S3 bench)"
+        range 0 48
+        default 18
+        help
+            PWM signal output GPIO. Inspect your board's pinout.
+            Does not power the servo. GPIO18 default is for bench only.
+
+    config THERMO_AP_SSID
+        string "Temporary bench access point SSID"
+        default "CottageThermoBench"
+
+    config THERMO_AP_PASSWORD
+        string "Temporary bench access point WPA2 password (CHANGE before flash)"
+        default "REPLACE-ME-NOW"
+        help
+            Temporary lab credential only, not a production security design.
+            For bench use change the password in idf.py menuconfig.
+
+endmenu
