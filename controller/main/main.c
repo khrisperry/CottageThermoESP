@@ -254,7 +254,8 @@ static void start_softap(void)
 
 void app_main(void)
 {
-    ESP_LOGW(TAG, "BENCH FIRMWARE ONLY: AtomS3 Lite G38/GPIO38 default; no furnace connection.");\n    ESP_LOGI(TAG, "Servo PWM signal: GPIO%d; PWM disabled until web command", CONFIG_THERMO_SERVO_GPIO);
+    ESP_LOGW(TAG, "BENCH FIRMWARE ONLY: AtomS3 Lite G38/GPIO38 default; no furnace connection.");
+    ESP_LOGI(TAG, "Servo PWM signal: GPIO%d; PWM disabled until web command", CONFIG_THERMO_SERVO_GPIO);
     // Output pin initialized LOW, not PWM. No command, sweep or homing on boot.
     gpio_config_t pin = {
         .pin_bit_mask = 1ULL << CONFIG_THERMO_SERVO_GPIO,
