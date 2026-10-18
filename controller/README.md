@@ -6,12 +6,12 @@
 
 ## What it does
 
-- Starts the Wi-Fi access point `CottageThermoBench` at **192.168.4.1** after you set a unique WPA2 password in `menuconfig`.
+- Starts **open, password-free** Wi-Fi access point `CottageThermoBench` at **192.168.4.1**. There is no password field to configure.
 - The web page issues explicit TS90MD servo **50 Hz PWM pulse widths from 1100 to 1900 µs**. **1500 µs** is a starting point with servo horn detached, **not** a measured middle angle. Move in small steps.
 - PWM remains **disabled until you click Command PWM**. No servo sweep, automatic homing, or last PWM restoration at startup.
 - **Stop PWM** disables the signal. That is not a physical brake; an unpowered/uncommanded servo may still be back-driven. The very first command can cause an abrupt movement.
 - Reports the configured signal GPIO and last commanded pulse (not the servo's measured angle). There is not yet any encoder.
-- This first prototype has no station-mode Wi-Fi, Home Assistant, OTA, smooth motion, authentication beyond temporary bench WPA2, servo-current feedback or mechanical safety verification.
+- This first prototype has no station-mode Wi-Fi, Home Assistant, OTA, smooth motion, Wi-Fi or web authentication, servo-current feedback or mechanical safety verification. Anyone nearby who joins the open test access point can issue motor commands; **use only in a supervised bench setting**.
 
 ## AtomS3 Lite wiring
 
@@ -45,7 +45,7 @@ idf.py -p COMxx flash monitor
 
 If you already cloned the repo, replace `git clone` with `git pull` inside the `CottageThermoESP` folder.
 
-In **menuconfig → Cottage thermostat BENCH servo tester**, set a **new temporary Wi-Fi password** (at least 8 characters). The shipped placeholder deliberately prevents Wi-Fi from starting. The servo signal default is now **GPIO38**; leave that unchanged unless you intentionally rewire it. `sdkconfig.defaults` enables the USB Serial/JTAG console and configures the chip's 8 MB flash by default.
+There is **no Wi-Fi password** in this build. The access point is open by default. In **menuconfig → Cottage thermostat BENCH servo tester**, verify the servo signal default is **GPIO38**; leave it unchanged unless you intentionally rewire it. `sdkconfig.defaults` enables the USB Serial/JTAG console and configures the chip's 8 MB flash by default. Existing local `sdkconfig` files may still contain an obsolete `CONFIG_THERMO_AP_PASSWORD` line; it is ignored after this change.
 
 Replace `COMxx` with the COM port for the AtomS3 Lite as shown in Windows Device Manager. The board has native USB-C flashing/serial; no separate USB-UART dongle should be needed.
 
@@ -59,8 +59,8 @@ If `idf.py monitor` is blank, verify that the USB console setting `CONFIG_ESP_CO
 
 1. Disconnect servo horn or coupling and verify the servo is mechanically unloaded.
 2. Power AtomS3 Lite by USB, servo from separate 5V supply with common ground.
-3. Connect a phone/laptop to Wi-Fi **CottageThermoBench** using the password you configured.
-4. Open **http://192.168.4.1**. It is a test SoftAP and does not use your existing home network.
+3. Connect a phone/laptop to **CottageThermoBench** (an **open Wi-Fi network**, no password).
+4. Open **http://192.168.4.1**. It is a password-free test SoftAP and does not use your existing home network.
 5. Use **Refresh status** to confirm `servo_gpio: 38` and `pwm_active: false`.
 6. Enter **1500**, click **Command PWM**, then test 1490 / 1510 / 1470 / 1530 and record actual motion.
 7. Click **Stop PWM**. The servo is no longer driven or holding torque. Test power loss/restoration with an isolated fixture **only**.
