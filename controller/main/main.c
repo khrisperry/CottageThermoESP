@@ -106,6 +106,7 @@ static const char s_html[] =
     "<p class='warn'><strong>BENCH ONLY.</strong> Disconnect from the furnace. "
     "The servo may JUMP when PWM is first enabled. Remove the horn for initial tests. "
     "No position feedback or automatic motion on startup.</p>"
+    "<p>Wi-Fi: <b>CottageThermoBench</b> (open, no password).</p>"
     "<p>50Hz PWM. Allowed range <b>1100-1900 microseconds</b>; start unloaded at 1500. "
     "Small steps only. This is NOT a degree-calibrated position.</p>"
     "<label for='us'>Command pulse (us):</label>"
@@ -221,13 +222,12 @@ static void start_http(void)
 static void start_softap(void)
 {
     const char *ssid = CONFIG_THERMO_AP_SSID;
-    const char *password = CONFIG_THERMO_AP_PASSWORD;
 
-    if (strlen(ssid) == 0 || strlen(ssid) > 31 ||
-        strlen(password) < 8 || strlen(password) > 63 ||
-        strcmp(password, "REPLACE-ME-NOW") == 0) {
-        ESP_LOGE(TAG, "Set a unique bench SoftAP password in menuconfig.");
-        return; // Fail closed: no network controls with default credentials.
+    // Open AP for short-range, supervised bench testing only.
+    // Never require a password for the test device's captive-portal Wi-Fi.
+    if (strlen(ssid) == 0 || strlen(ssid) > 31) {
+        ESP_LOGE(TAG, "Invalid bench SoftAP SSID.");
+        return;
     }
 
     ESP_ERROR_CHECK(esp_netif_init());
@@ -239,17 +239,16 @@ static void start_softap(void)
 
     wifi_config_t ap = {0};
     strncpy((char *)ap.ap.ssid, ssid, sizeof(ap.ap.ssid) - 1);
-    strncpy((char *)ap.ap.password, password, sizeof(ap.ap.password) - 1);
     ap.ap.ssid_len = strlen(ssid);
     ap.ap.channel = 6;
     ap.ap.max_connection = 2;
-    ap.ap.authmode = WIFI_AUTH_WPA2_PSK;
+    ap.ap.authmode = WIFI_AUTH_OPEN;
 
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_AP));
     ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_AP, &ap));
     ESP_ERROR_CHECK(esp_wifi_start());
 
-    ESP_LOGW(TAG, "BENCH AP: %s, web UI http://192.168.4.1", ssid);
+    ESP_LOGW(TAG, "BENCH OPEN AP (NO PASSWORD): %s, web UI http://192.168.4.1", ssid);
     start_http();
 }
 
