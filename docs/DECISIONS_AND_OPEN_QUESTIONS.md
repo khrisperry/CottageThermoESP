@@ -14,6 +14,7 @@
 - Empirical temp calibration: dummy examples 1=52°F, 2=59°F, 3=67°F, interpolate fractional knob. Learn real values vs outdoor conditions over longer stable periods.
 - Passive observations any time; **active calibration ONLY when cottage is confirmed empty**, explicitly enabled, not heading to cottage and with all safety prerequisites passing. Unknown presence = no calibration.
 - Heating time predictor learns from start temp, end temp, outdoor weather, dial and activity. HA future "Heading to Cottage" uses phone location/travel time to start preheat early enough.
+- **Open, password-free Wi-Fi for test-device captive portals by default.** Add a captive-portal password only if explicitly requested. This is appropriate for attended bench devices only; revisit access control before a permanent connected actuator installation.
 - **First bench microcontroller selected: M5Stack AtomS3 Lite** (ESP32-S3FN8, 8MB flash), servo signal on **rear G38/GPIO38**. Use external regulated servo 5V and shared GND. Firmware source and instructions: `controller/`.
 - Priority now: prove servo can move a knob surrogate freely, print trial caps ~18–25 mm, develop simple ESP-IDF servo web bench tool, and later get caliper photos/scan.
 
