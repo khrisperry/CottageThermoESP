@@ -66,3 +66,11 @@ These are development firmware builds, not validated appliance automation. Hardw
 - Controller and room-client ELF/binary generation and app-partition size checks passed on the development host. These are compile/link results, not physical board tests or a build executed on Khris's Windows PC.
 - Native C engine checks passed, including address/undefined-behavior sanitizer execution (leak scanning disabled for the host sandbox).
 - Browser smoke tests passed using actual Chromium with mocked API responses. No live ESP HTTP, NVS recovery or probe hardware test has been performed here.
+
+## Windows RGB-driver compiler crash workaround
+
+The Windows log from 2026-10-18 confirms that the controller built, but Xtensa GCC crashed internally in the unused ESP-IDF `esp_lcd_panel_rgb.c` while building the room client. Both projects now set `COMPONENTS main`, so only declared/transitive dependencies are compiled. The current room client has no physical LCD adapter and does not require `esp_lcd`. A future LCD adapter must declare its own display dependencies and be validated with the Windows toolchain. No installed ESP-IDF files or compiler warning policies are modified.
+
+Pull the branch update and rerun `tools/build-local.ps1`; CMake regenerates the build graph automatically. Keep existing sdkconfig and NVS.
+
+Fresh ESP-IDF 6.0.1 builds of both projects passed after this change. Generated component lists and compile commands were checked to confirm `esp_lcd` is absent. The updated Windows build still needs to be rerun on the user PC.
