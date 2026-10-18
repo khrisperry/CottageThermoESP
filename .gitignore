@@ -1,0 +1,26 @@
+# ESP-IDF builds
+**/build/
+**/sdkconfig
+**/sdkconfig.old
+**/managed_components/
+**/dependencies.lock
+**/.idf_component.yml.lock
+
+# Local credentials/configuration
+*.local
+.env
+.env.*
+!.env.example
+
+# CAD and slicer generated artefacts
+*.stl
+*.3mf
+*.gcode
+*.step
+*.STP
+
+# Editors
+.vscode/
+.idea/
+.DS_Store
+__pycache__/
