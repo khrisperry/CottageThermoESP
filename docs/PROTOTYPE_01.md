@@ -4,9 +4,9 @@
 
 ## A. Prepare materials
 
-- ESP32-S3 dev board (provisional platform; actual controller board TBD).
+- M5Stack **AtomS3 Lite** (ESP32-S3FN8, 8MB flash) for first bench testing; future final controller board is TBD.
 - TS90MD servo; manufacturer-matching spline horn/hub; optional MG995 **only as size/torque comparison**, not automatic replacement.
-- Regulated **5 V supply rated for servo stall current** (rating must be established from actual servo datasheet/measurement); do **not** drive servo from ESP32 3.3 V or exceed I/O voltage. Tie grounds together; one PWM signal from configured GPIO (default GPIO18 for bench firmware).
+- Regulated **5 V supply rated for servo stall current** (rating must be established from actual servo datasheet/measurement); do **not** drive servo from ESP32 3.3 V or exceed I/O voltage. Tie grounds together; one PWM signal from configured GPIO (**G38 / GPIO38** on AtomS3 Lite for bench firmware).
 - Calipers, scale/ruler in photographs, 3D printer, optional 3D scan.
 - Separate inert dummy knob/shaft fixture and torque measurement tool where possible.
 - OpenSCAD (for first simple fit coupons); later a fully dimensioned multi-part assembly.
