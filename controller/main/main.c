@@ -6,6 +6,7 @@
  * Servo PWM starts DISABLED and commands are accepted only via HTTP POST.
  * This is not a position sensor: displayed µs = last COMMAND, not actual angle.
  */
+#include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
