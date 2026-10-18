@@ -94,7 +94,7 @@ Two distinct models:
 
 ## 9. Phased execution and evidence
 
-**P0 - now**: comprehensive project docs, geometry fit coupons, simple AP + web servo bench-test firmware. No furnace automation.
+**P0 - now**: comprehensive project docs, geometry fit coupons, simple AP + web servo bench-test firmware for **M5Stack AtomS3 Lite G38/GPIO38**. No furnace automation.
 **P1 - dimensional work**: caliper photos and 3D scan at cottage; verify knob travel/diameter/profile, mounting and safe thermal envelope.
 **P2 - bench mechanical proof**: verify TS90MD direct-drive available torque, no binding, no side loading, repeatable detachable coupling, no power-on twitch into load. Test on isolated surrogate, then only proceed near appliance after qualified review.
 **P3 - controller firmware**: mechanical-angle feedback, validated safe states, config, sensor inputs, learning logs, local thermostat engine.
