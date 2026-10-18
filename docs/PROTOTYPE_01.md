@@ -13,7 +13,7 @@
 
 ## B. Controller
 
-See [controller/README.md](../controller/README.md). First firmware boots into a temporary WPA2 SoftAP, web page on \`http://192.168.4.1\`, gives **explicit** movement commands in microseconds. PWM disabled until a user sends a command; STOP PWM button. Nothing is stored or automatically restored, and there is no closed-loop sensing yet.
+See [controller/README.md](../controller/README.md). First firmware boots into a temporary OPEN, password-free SoftAP, web page on \`http://192.168.4.1\`, gives **explicit** movement commands in microseconds. PWM disabled until a user sends a command; STOP PWM button. Nothing is stored or automatically restored, and there is no closed-loop sensing yet.
 
 **Warning**: enabling PWM can cause the servo to suddenly move to the commanded angle. Start with horn/cap REMOVED and no load, then attach inert fixture only when mechanical center and movement are verified. Do not assume the servo's printed angle or pulse endpoints are correct.
 
