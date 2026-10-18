@@ -1,12 +1,12 @@
 menu "Cottage thermostat BENCH servo tester"
 
     config THERMO_SERVO_GPIO
-        int "Servo signal GPIO (ESP32-S3 bench)"
+        int "Servo signal GPIO (AtomS3 Lite G38 by default)"
         range 0 48
-        default 18
+        default 38
         help
             PWM signal output GPIO. Inspect your board's pinout.
-            Does not power the servo. GPIO18 default is for bench only.
+            For M5Stack AtomS3 Lite, G38 is the rear GPIO38 header.\n            PWM is 3.3V logic only; provide separate 5V servo supply.
 
     config THERMO_AP_SSID
         string "Temporary bench access point SSID"
