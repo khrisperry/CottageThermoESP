@@ -35,3 +35,12 @@ Version 0.7.0 restyles the four production LVGL pages and adds `camera_size_test
 ```
 
 v0.8.1 adds `feedback_test` for cached versus fresh optimistic acknowledgements, five-second rollback and fresh single-shot laundry completion transitions. The native fixture checks independent per-appliance notification toggles and preserves optimistic state across an old cached read. The direct HA fixture supplies a no-op sound sink. These C tests have not been run in the unavailable execution workspace. Run `./feedback_test`, `./native_ui_test`, `./direct_ha_test` and `./empty_ha_test` locally after building.
+
+v0.8.2 adds `audio_test`, which compiles the production audio module with isolated codec, FreeRTOS and NVS stubs. It checks stereo PCM channel equality and peak level, 16 kHz/16-bit format, volume, amp warm-up and drain delays, failure muting, explicit Sound testing while notifications are off, and one-cycle preference consumption/persistence, including a full queue.
+
+This test was compiled and passed with host GCC in the coding workspace. It does not prove speaker wiring, hardware codec output or audibility.
+
+```sh
+gcc -std=c11 -Wall -Wextra -Werror -Wno-unused-parameter -I tests/native/audio_stubs -I touchscreen/main tests/native/test_audio.c -lm -o /tmp/cottage-audio-test
+/tmp/cottage-audio-test
+```

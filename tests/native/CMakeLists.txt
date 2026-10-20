@@ -41,3 +41,8 @@ target_compile_options(visual_state_test PRIVATE -Wall -Wextra -Werror)
 
 add_executable(feedback_test test_feedback.c)
 target_compile_options(feedback_test PRIVATE -Wall -Wextra -Werror)
+
+add_executable(audio_test test_audio.c)
+target_include_directories(audio_test PRIVATE audio_stubs ../../touchscreen/main)
+target_compile_options(audio_test PRIVATE -Wall -Wextra -Werror -Wno-unused-parameter)
+target_link_libraries(audio_test PRIVATE m)

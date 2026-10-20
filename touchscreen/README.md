@@ -1,6 +1,6 @@
 # Cottage room panel — Waveshare ESP32-S3-Touch-LCD-4B
 
-Version 0.8.1 provides the **native 480×480 LCD and capacitive touch interface**. This is for the **4B**, with 16 MB flash and 8 MB octal PSRAM. It uses Waveshare BSP 2.0.0, LVGL 9.2.0 and ESP LVGL port 2.6.2, compiled with ESP-IDF 6.0.1. The dependency lock pins the tested graph. **The ESP connects directly to Home Assistant using your long-lived token; no bridge process, bridge address or bridge token is required.** No device has been flashed or physically verified by the coding environment.
+Version 0.8.2 provides the **native 480×480 LCD and capacitive touch interface**. This is for the **4B**, with 16 MB flash and 8 MB octal PSRAM. It uses Waveshare BSP 2.0.0, LVGL 9.2.0 and ESP LVGL port 2.6.2, compiled with ESP-IDF 6.0.1. The dependency lock pins the tested graph. **The ESP connects directly to Home Assistant using your long-lived token; no bridge process, bridge address or bridge token is required.** No device has been flashed or physically verified by the coding environment.
 
 ## Device settings
 
@@ -80,9 +80,18 @@ Lights have locally drawn bulb silhouettes: dark when off, yellow when on. Confi
 
 Light/switch On/Off taps show the requested state immediately for up to five seconds. An entity sample newer than the tap confirms the displayed state; older cached samples cannot bounce the UI back during that window. If confirmation does not arrive, the UI returns to actual HA state. Explicit command rejection clears the prediction. Confirmed state still drives all controller behavior; this is only display feedback.
 
-Each washer and dryer has an independent **Notify: Off / On** toggle. All four default off. Preferences persist in the `room_alerts` NVS namespace. An enabled appliance plays a short, locally synthesized chime on a fresh active-to-idle/completed transition, then stops and mutes the output. Repeated idle readings, booting idle, missing entities and stale/offline gaps do not trigger completion sounds. Disabling the toggle also suppresses already-queued cues that have not begun. There is no persistent completion badge to dismiss. The 4B BSP/ES8311 speaker output is used; physical speaker playback is unverified.
+Each washer and dryer has an independent **Notify: Off / On** toggle. All four default off. Each opt-in applies to one cycle: when that appliance completes, its toggle returns to Off immediately and that reset is saved in the `room_alerts` NVS namespace. An enabled appliance plays a short, locally synthesized chime on a fresh active-to-idle/completed transition, then stops and mutes the output. Repeated idle readings, booting idle, missing entities and stale/offline gaps do not trigger completion sounds. Disabling a toggle before completion prevents the cue. On completion, permission is captured for that one cue before its toggle is automatically cleared; that cue can still play while the tile already shows Off. There is no persistent completion badge to dismiss. The 4B BSP/ES8311 speaker output is used; physical speaker playback is unverified.
+
+## v0.8.2 audio correction
+
+The first audio implementation used codec volume 30 (approximately -35 dB on the default codec curve) plus low-amplitude PCM. The correction uses 16 kHz stereo PCM duplicated to both slots, volume 75, a stronger 6000-peak tone, a 200 ms amplifier startup delay and a silence/drain interval before muting. Return codes for volume, mute and amplifier control are logged. Logs say PCM sent, not that a physical speaker was heard.
+
+Tap **Sound** in the header to play an explicit test chime without changing any notification toggle or waiting for a laundry cycle. Completion notifications remain opt-in for one cycle per appliance.
 
 ## Validation
+
+- v0.8.2: production `room_audio.c` compiled with host GCC and mocked codec/RTOS/NVS under `-Wall -Wextra -Werror`. `audio_test` passed stereo/peak-level checks, startup/drain ordering, failure muting, explicit speaker testing, one-cycle auto-off and saved preference writes. ESP-IDF/toolchain and physical speaker remain unavailable, so the full firmware build and audible output still require local validation.
+
 
 - v0.8.1 adds pure-C optimistic feedback/laundry transition tests and extends the native UI fixture for independent notification toggles and cached-state feedback. Codec/BSP calls were checked against vendor source. Compilation, rendered previews, NVS persistence and physical speaker testing remain unavailable in the coding workspace.
 

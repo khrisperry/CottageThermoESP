@@ -235,6 +235,11 @@ static void select_page(unsigned p)
     lv_label_set_text(camera_note,"Loading camera...");
     lv_label_set_text(camera_status,LV_SYMBOL_VIDEO "  CONNECTING");
 }
+static void sound_test_event(lv_event_t *e)
+{
+    last_touch=esp_timer_get_time();
+    if(!room_audio_test())message("Sound test busy; try again");
+}
 static void wifi_setup_event(lv_event_t *e){last_touch=esp_timer_get_time();room_wifi_request_setup();}
 static void notify_event(lv_event_t *e)
 {
@@ -386,6 +391,8 @@ static void build_ui(void)
     label(screen,"Cottage",16,12,138,&lv_font_montserrat_24);
     connection=label(screen,LV_SYMBOL_WIFI "  HA OFFLINE",160,9,132,&lv_font_montserrat_14);
     heat_badge=label(screen,"HEAT OFFLINE",160,29,132,&lv_font_montserrat_14);tint(heat_badge,MUTED);
+    lv_obj_t *sound_button=button(screen,"Sound",300,10,56,34,sound_test_event,0);
+    lv_obj_set_style_text_font(sound_button,&lv_font_montserrat_14,0);
     wifi_button=button(screen,LV_SYMBOL_SETTINGS "  Wi-Fi",364,10,100,34,wifi_setup_event,0);
     const char *nav_text[]={LV_SYMBOL_HOME "  Climate",LV_SYMBOL_POWER "  Home",LV_SYMBOL_LOOP "  Laundry",LV_SYMBOL_VIDEO "  Camera"};
     for(int n=0;n<4;++n){

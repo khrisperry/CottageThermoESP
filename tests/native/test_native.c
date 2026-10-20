@@ -30,6 +30,7 @@ void bsp_display_rotate(lv_display_t *d,lv_display_rotation_t r){lv_display_set_
 int bsp_display_brightness_set(int n){return 0;}
 void *bsp_i2c_get_handle(void){return (void*)47;}
 const char *room_settings_controller_url(void){return CONFIG_ROOM_CONTROLLER_URL;}
+bool room_audio_test(void){return true;}
 bool room_audio_notify_enabled(int key){return (test_notify_mask&(1U<<(key-3)))!=0;}
 bool room_audio_set_notify(int key,bool enabled){unsigned bit=1U<<(key-3);test_notify_mask=enabled?test_notify_mask|bit:test_notify_mask&~bit;return true;}
 void room_wifi_request_setup(void){wifi_setup_requested=true;}
