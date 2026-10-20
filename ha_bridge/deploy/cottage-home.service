@@ -1,0 +1,20 @@
+[Unit]
+Description=Cottage thermostat Home Assistant bridge
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+DynamicUser=yes
+WorkingDirectory=/opt/CottageThermoESP/ha_bridge
+EnvironmentFile=/etc/cottage-thermo/ha.env
+ExecStart=/opt/CottageThermoESP/ha_bridge/.venv/bin/python /opt/CottageThermoESP/ha_bridge/bridge.py
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+
+[Install]
+WantedBy=multi-user.target

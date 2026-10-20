@@ -55,3 +55,13 @@ Update this file with: date, branch/commit SHA, hardware board and wiring, firmw
 - Buildable ESP32-S3 room client with browser UI and SHT31/SHT4x driver. Physical LCD/touch adapter remains pending exact board and wiring.
 - Shaft coupon **102** confirmed perfect fit by user; available torque, real knob travel and coupling remain next-weekend tests.
 - No active exploration, encoder truth, MQTT Discovery, OTA rollback or predictive/preheat behavior is claimed. See LOCAL_VALIDATION.md for current implementation and remaining work.
+
+## 2026-10-20 Home Assistant milestone
+
+- Room display confirmed: Waveshare ESP32-S3-Touch-LCD-4B.
+- User supplied HA HTTPS origin and all eleven entity IDs; authoritative mapping is `ha_bridge/entities.json`.
+- HA credentials and camera resize work live on the bridge host (Windows for initial test; Proxmox LXC for permanent hosting). Room firmware receives a small cached model and uses a separate bridge token.
+- Kids heat is `input_boolean.kids_heat`; its automation remains in HA. Kids temperature remains display-only for the Williams project.
+- Four provided laundry status sensors are displayed as reported, without fictional countdowns.
+- First camera implementation is on-demand JPEG live view up to 1 fps; full-motion streaming and physical LCD adapter remain pending.
+- HA token and bridge host address are configured locally. No live HA connection or physical device action has been tested by the coding environment.

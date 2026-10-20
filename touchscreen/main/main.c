@@ -15,6 +15,8 @@
 #include "freertos/task.h"
 #include "nvs_flash.h"
 #include "cJSON.h"
+#include "esp_sntp.h"
+#include "ha_panel.h"
 
 static const char *TAG="room_thermostat";
 static i2c_master_dev_handle_t probe;
@@ -137,11 +139,13 @@ void app_main(void)
         i2c_device_config_t dev={.dev_addr_length=I2C_ADDR_BIT_LEN_7,.device_address=0x44,.scl_speed_hz=100000};
         ESP_ERROR_CHECK(i2c_master_bus_add_device(bus,&dev,&probe));
     }
-    httpd_config_t cfg=HTTPD_DEFAULT_CONFIG();cfg.stack_size=8192;httpd_handle_t h;ESP_ERROR_CHECK(httpd_start(&h,&cfg));
+    httpd_config_t cfg=HTTPD_DEFAULT_CONFIG();cfg.stack_size=8192;cfg.max_uri_handlers=12;httpd_handle_t h;ESP_ERROR_CHECK(httpd_start(&h,&cfg));
     httpd_uri_t routes[]={ {.uri="/",.method=HTTP_GET,.handler=root},
         {.uri="/api/status",.method=HTTP_GET,.handler=proxy}, {.uri="/api/target",.method=HTTP_POST,.handler=proxy}};
     for(unsigned i=0;i<3;++i)ESP_ERROR_CHECK(httpd_register_uri_handler(h,&routes[i]));
+    ha_panel_register(h);
+    esp_sntp_setoperatingmode(SNTP_OPMODE_POLL);esp_sntp_setservername(0,"pool.ntp.org");esp_sntp_init();
     if(probe && strlen(CONFIG_ROOM_API_TOKEN)==32)xTaskCreate(sensor_task,"room_probe",6144,NULL,5,NULL);
     else ESP_LOGW(TAG,"Probe reporting disabled: configure probe pins/type and 32-character pairing token");
-    ESP_LOGI(TAG,"Room client v0.2.0; browser UI ready; LCD board driver not configured");
+    ESP_LOGI(TAG,"Room client v0.3.0; browser UI ready; LCD board driver not configured");
 }

@@ -25,3 +25,7 @@ Probe defaults to **disabled**, pins **-1**. When wired and verified, select `1`
 Open the room client's printed IP in a browser, enter the same pairing token and change the target. The client never stores the committed setpoint locally and cannot arm the servo or set the controller's operating mode. Controller restarts, unavailability and missing fresh readings appear explicitly; old room temperature is cleared from the UI on connection loss. Entering a target overrides a controller schedule until it is re-enabled there.
 
 Transport is paired local HTTP for this attended development setup. Production encrypted pairing, MQTT, physical LCD integration and signed OTA remain separate work.
+
+## Home Assistant panel (v0.3.0)
+
+User confirmed Waveshare **ESP32-S3-Touch-LCD-4B** on 2026-10-20. The room client now embeds `/home` for Home/Laundry/Camera controls and forwards compact requests to the local HA bridge. See [../ha_bridge/README.md](../ha_bridge/README.md) for the exact mappings, secure local credential setup, Windows validation and optional Proxmox deployment. The physical 4B LCD/touch adapter is still pending. The furnace controller and its simulation/bench interlocks are unchanged.

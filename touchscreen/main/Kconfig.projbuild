@@ -23,4 +23,13 @@ menu "Cottage room thermostat"
         int "External probe SCL (-1 until wiring is confirmed)"
         range -1 48
         default -1
+    config ROOM_HA_BRIDGE_URL
+        string "Optional local HA bridge URL (no trailing slash)"
+        default ""
+        help
+            Example http://192.168.x.x:8087; run ha_bridge on a LAN host.
+            The Home Assistant token stays on the host, not in firmware.
+    config ROOM_HA_BRIDGE_TOKEN
+        string "HA bridge client token (NOT the Home Assistant token)"
+        default ""
 endmenu

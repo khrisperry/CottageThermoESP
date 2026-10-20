@@ -16,6 +16,10 @@ ESP-IDF smart thermostat / mechanical knob actuator project for a **Williams mod
 8. **[docs/LOCAL_VALIDATION.md](docs/LOCAL_VALIDATION.md)** — local build/test steps and next cottage visit.
 9. **[docs/API.md](docs/API.md)** — direct paired API, schedules and data freshness.
 
+## Home Assistant development
+
+The room client v0.3.0 adds a Home/Laundry/Camera browser panel and compact bridge API. [ha_bridge/README.md](ha_bridge/README.md) includes the confirmed entity mappings, local token setup and Windows/Proxmox instructions. The physical 4B LCD adapter remains pending.
+
 ## Goal
 
 - Keep the original Williams furnace thermostat and safety functions intact. Its physical 0–6 dial sets the temperature; it is **not** an on/off power relay.

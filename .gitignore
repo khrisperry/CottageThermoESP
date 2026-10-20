@@ -28,3 +28,6 @@ __pycache__/
 # Optional browser-test dependencies
 **/node_modules/
 **/test-results/
+
+# Local Home Assistant bridge environment
+**/.venv/
