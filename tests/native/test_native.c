@@ -36,7 +36,10 @@ bool room_audio_test(void){return true;}
 bool room_audio_notify_enabled(int key){return (test_notify_mask&(1U<<(key-3)))!=0;}
 bool room_audio_set_notify(int key,bool enabled){unsigned bit=1U<<(key-3);test_notify_mask=enabled?test_notify_mask|bit:test_notify_mask&~bit;return true;}
 void room_wifi_request_setup(void){wifi_setup_requested=true;}
-bool room_wifi_setup_hint(char *buffer,size_t size){return false;}
+bool room_wifi_setup_hint(char *buffer,size_t size){
+ if(!wifi_setup_requested)return false;
+ snprintf(buffer,size,"Wi-Fi setup: CottageThermo-TEST-Setup / 192.168.4.1");return true;
+}
 static char ha_json[4096];
 esp_err_t room_http(const char *origin,const char *header,const char *token,const char *path,const char *post,void *out,size_t cap,int timeout,int *status,int *length)
 {
@@ -82,7 +85,9 @@ int main(void)
  click(settings_button);assert(model.settings_open&&!lv_obj_has_flag(settings_modal,LV_OBJ_FLAG_HIDDEN));
  lv_slider_set_value(settings_volume,42,LV_ANIM_OFF);lv_obj_send_event(settings_volume,LV_EVENT_RELEASED,NULL);assert(test_volume==42);
  click(settings_camera_button);assert(model.camera_fill);
+ assert(!strcmp(lv_label_get_text(lv_obj_get_child(settings_wifi_button,0)),"Open network setup"));
  click(settings_wifi_button);assert(wifi_setup_requested);
+ refresh(NULL);assert(strstr(lv_label_get_text(settings_hint),"CottageThermo-TEST-Setup"));assert(strstr(lv_label_get_text(settings_hint),"/settings"));
  click(settings_close_button);assert(!model.settings_open&&lv_obj_has_flag(settings_modal,LV_OBJ_FLAG_HIDDEN));
  populate();refresh(NULL);assert(!lv_obj_has_state(control[0][0],LV_STATE_DISABLED));
  assert(!strcmp(lv_label_get_text(temp_label),"65.2 F"));assert(!strcmp(lv_label_get_text(states[3]),"Running"));
@@ -95,6 +100,19 @@ int main(void)
  touch(310,70,true);touch(230,70,true);touch(150,70,true);touch(60,70,true);touch(60,70,false);
  assert(visible_page==2);assert(queue_count==no_commands);select_page(0);
  render("climate.ppm");select_page(1);render("home.ppm");select_page(2);render("laundry.ppm");select_page(3);render("camera.ppm");
+ /* Render decoded frames through the production presenter, including upscaled
+  * Fit/Fill and repeated cache replacement. Empty-camera renders missed the mask allocation. */
+ assert(!lv_obj_get_style_clip_corner(camera_frame,LV_PART_MAIN));
+ assert(lv_obj_get_style_radius(camera_frame,LV_PART_MAIN)==0);
+ for(unsigned frame=0;frame<6;++frame){
+     uint16_t *pixels=malloc(320*180*2);assert(pixels);
+     for(unsigned i=0;i<320*180;++i)pixels[i]=0x07e0;
+     camera_present(pixels,320,180,320*180*2,(frame&1)!=0);
+     assert(!lv_obj_has_flag(camera_image,LV_OBJ_FLAG_HIDDEN));
+     render((frame&1)?"camera-fill.ppm":"camera-fit.ppm");
+     assert(screen_pixels[(240*480+240)*3+1]>128);
+ }
+ select_page(0);
  /* Different devices accept taps while one is in flight; only that row locks. */
  click(control[0][0]);command_t first=queued;
  refresh(NULL);assert(!strcmp(lv_label_get_text(states[0]),"on"));
