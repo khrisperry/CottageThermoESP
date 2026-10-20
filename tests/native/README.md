@@ -33,3 +33,5 @@ Version 0.7.0 restyles the four production LVGL pages and adds `camera_size_test
 ./camera_size_test
 ./native_ui_test
 ```
+
+v0.8.1 adds `feedback_test` for cached versus fresh optimistic acknowledgements, five-second rollback and fresh single-shot laundry completion transitions. The native fixture checks independent per-appliance notification toggles and preserves optimistic state across an old cached read. The direct HA fixture supplies a no-op sound sink. These C tests have not been run in the unavailable execution workspace. Run `./feedback_test`, `./native_ui_test`, `./direct_ha_test` and `./empty_ha_test` locally after building.

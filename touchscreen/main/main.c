@@ -16,7 +16,7 @@
 #include "nvs_flash.h"
 #include "cJSON.h"
 #include "esp_sntp.h"
-#include "ha_panel.h"
+#include "room_audio.h"
 #include "room_display.h"
 #include "room_transport.h"
 #include "room_ha.h"
@@ -25,8 +25,6 @@
 
 static const char *TAG="room_thermostat";
 static i2c_master_dev_handle_t probe;
-extern const unsigned char page_start[] asm("_binary_room_html_start");
-extern const unsigned char page_end[] asm("_binary_room_html_end");
 // Each HTTP client is owned by its caller. Shared controller settings live upstream only.
 static esp_err_t exchange(const char *path,const char *payload,char *out,size_t cap,int *status)
 {
@@ -67,39 +65,15 @@ static void sensor_task(void *arg)
         vTaskDelay(pdMS_TO_TICKS(15000));
     }
 }
+static esp_err_t settings_redirect(httpd_req_t *r)
+{
+    httpd_resp_set_status(r,"303 See Other");httpd_resp_set_hdr(r,"Location","/settings");
+    httpd_resp_set_hdr(r,"Cache-Control","no-store");return httpd_resp_sendstr(r,"Open device settings at /settings");
+}
 static esp_err_t root(httpd_req_t *r)
 {
     if(room_wifi_setup_request(r))return room_wifi_setup_get(r);
-    httpd_resp_set_type(r,"text/html; charset=utf-8");return httpd_resp_send(r,(const char*)page_start,page_end-page_start-1);
-}
-static bool browser_authorized(httpd_req_t *r)
-{
-    char t[48]={0};
-    return strlen(CONFIG_ROOM_API_TOKEN)==32 && httpd_req_get_hdr_value_str(r,"X-Thermo-Token",t,sizeof(t))==ESP_OK && !strcmp(t,CONFIG_ROOM_API_TOKEN);
-}
-static esp_err_t proxy(httpd_req_t *r)
-{
-    if(!browser_authorized(r))return httpd_resp_send_err(r,HTTPD_401_UNAUTHORIZED,"Pairing token required");
-    char payload[256],out[2048];const char *post=NULL;int status=0;
-    if(r->method==HTTP_POST) {
-        if(r->content_len<=0 || r->content_len>=sizeof(payload))return httpd_resp_send_err(r,HTTPD_400_BAD_REQUEST,"Invalid body");
-        int at=0;while(at<r->content_len){int n=httpd_req_recv(r,payload+at,r->content_len-at);if(n<=0)return ESP_FAIL;at+=n;}payload[at]=0;
-        cJSON *j=cJSON_ParseWithLengthOpts(payload,strlen(payload)+1,NULL,true);double target=0;cJSON *v=cJSON_GetObjectItemCaseSensitive(j,"target_f");
-        bool valid=cJSON_IsObject(j)&&cJSON_GetArraySize(j)==1&&cJSON_IsNumber(v)&&isfinite(v->valuedouble);
-        if(valid)target=v->valuedouble;
-        cJSON_Delete(j);
-        if(!valid || target<45 || target>80)return httpd_resp_send_err(r,HTTPD_400_BAD_REQUEST,"Only target_f 45..80 is accepted");
-        // Room client can change target, never arm/synchronize/enable a controller mode.
-        snprintf(payload,sizeof(payload),"{\"target_f\":%.2f}",target);post=payload;
-    }
-    esp_err_t err=exchange(r->method==HTTP_POST?"/api/config":"/api/status",post,out,sizeof(out),&status);
-    if(err!=ESP_OK) {
-        httpd_resp_set_status(r,"503 Service Unavailable");
-        httpd_resp_set_type(r,"text/plain");
-        return httpd_resp_sendstr(r,"Controller unavailable; no command queued");
-    }
-    if(status!=200)return httpd_resp_send_err(r,HTTPD_400_BAD_REQUEST,"Controller rejected request; check pairing and settings");
-    httpd_resp_set_type(r,"application/json");httpd_resp_set_hdr(r,"Cache-Control","no-store");return httpd_resp_sendstr(r,out);
+    return settings_redirect(r);
 }
 void app_main(void)
 {
@@ -108,6 +82,7 @@ void app_main(void)
     room_wifi_start();
     room_ha_start();
     room_display_start();
+    room_audio_start();
     if(CONFIG_ROOM_SENSOR && CONFIG_ROOM_SDA>=0 && CONFIG_ROOM_SCL>=0 && CONFIG_ROOM_SDA!=CONFIG_ROOM_SCL) {
         i2c_master_bus_handle_t bus=NULL;
 #if CONFIG_ROOM_NATIVE_DISPLAY
@@ -122,13 +97,12 @@ void app_main(void)
     }
     httpd_config_t cfg=HTTPD_DEFAULT_CONFIG();cfg.stack_size=8192;cfg.max_uri_handlers=20;httpd_handle_t h;ESP_ERROR_CHECK(httpd_start(&h,&cfg));
     httpd_uri_t routes[]={ {.uri="/",.method=HTTP_GET,.handler=root},
-        {.uri="/api/status",.method=HTTP_GET,.handler=proxy}, {.uri="/api/target",.method=HTTP_POST,.handler=proxy}};
-    for(unsigned i=0;i<3;++i)ESP_ERROR_CHECK(httpd_register_uri_handler(h,&routes[i]));
-    ha_panel_register(h);
+        {.uri="/home",.method=HTTP_GET,.handler=settings_redirect}};
+    for(unsigned i=0;i<2;++i)ESP_ERROR_CHECK(httpd_register_uri_handler(h,&routes[i]));
     room_wifi_register(h);
     room_settings_register(h);
     esp_sntp_setoperatingmode(SNTP_OPMODE_POLL);esp_sntp_setservername(0,"pool.ntp.org");esp_sntp_init();
     if(probe && strlen(CONFIG_ROOM_API_TOKEN)==32)xTaskCreate(sensor_task,"room_probe",6144,NULL,5,NULL);
     else ESP_LOGW(TAG,"Probe reporting disabled: configure probe pins/type and 32-character pairing token");
-    ESP_LOGI(TAG,"Room client v0.8.0; native display and browser services ready");
+    ESP_LOGI(TAG,"Room client v0.8.1; native display and browser services ready");
 }

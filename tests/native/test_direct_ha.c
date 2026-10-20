@@ -16,6 +16,7 @@ static char sent_path[160],sent_body[256];
 #include "../../touchscreen/main/room_ha.c"
 const char *room_settings_ha_url(void){return "https://cottageha.greenledges.net:8123";}
 const char *room_settings_ha_token(void){return COTTAGE_HA_TOKEN;}
+void room_audio_laundry_done(int key){}
 int64_t esp_timer_get_time(void){return fake_time;}
 int xSemaphoreTake(void *p,int n){if(p==ha_io_mutex){assert(!io_locked);io_locked=1;}return 1;}
 int xSemaphoreGive(void *p){if(p==ha_io_mutex){assert(io_locked);io_locked=0;}return 1;}

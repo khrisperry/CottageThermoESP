@@ -7,6 +7,7 @@ static int64_t now=1000000;
 static int posts=0,queue_count=0;
 static char last_path[80],last_post[256];
 static bool unknown=false,wifi_setup_requested=false;
+static unsigned test_notify_mask;
 #include "../../touchscreen/main/room_display.c"
 static command_t queued;
 int64_t esp_timer_get_time(void){return now;}
@@ -29,6 +30,8 @@ void bsp_display_rotate(lv_display_t *d,lv_display_rotation_t r){lv_display_set_
 int bsp_display_brightness_set(int n){return 0;}
 void *bsp_i2c_get_handle(void){return (void*)47;}
 const char *room_settings_controller_url(void){return CONFIG_ROOM_CONTROLLER_URL;}
+bool room_audio_notify_enabled(int key){return (test_notify_mask&(1U<<(key-3)))!=0;}
+bool room_audio_set_notify(int key,bool enabled){unsigned bit=1U<<(key-3);test_notify_mask=enabled?test_notify_mask|bit:test_notify_mask&~bit;return true;}
 void room_wifi_request_setup(void){wifi_setup_requested=true;}
 bool room_wifi_setup_hint(char *buffer,size_t size){return false;}
 static char ha_json[4096];
@@ -63,7 +66,7 @@ static void populate(void)
 {
  cJSON *root=cJSON_CreateObject();cJSON_AddBoolToObject(root,"connected",true);cJSON *array=cJSON_AddArrayToObject(root,"items");
  const char *status[]={"off","on","open","Running","Idle","Finished","Idle","off","65.2","docked","idle"};
- for(int k=0;k<COUNT;++k){cJSON *j=cJSON_CreateObject();cJSON_AddStringToObject(j,"key",keys[k]);cJSON_AddStringToObject(j,"state",status[k]);cJSON_AddBoolToObject(j,"available",true);cJSON *a=cJSON_AddArrayToObject(j,"actions");for(int n=0;n<6;++n)cJSON_AddItemToArray(a,cJSON_CreateString(actions[n]));if(k==8){cJSON_AddNumberToObject(j,"value",65.2);cJSON_AddStringToObject(j,"unit","F");}cJSON_AddItemToArray(array,j);}
+ for(int k=0;k<COUNT;++k){cJSON *j=cJSON_CreateObject();cJSON_AddStringToObject(j,"key",keys[k]);cJSON_AddStringToObject(j,"state",status[k]);cJSON_AddNumberToObject(j,"sample_us",now);cJSON_AddBoolToObject(j,"available",true);cJSON *a=cJSON_AddArrayToObject(j,"actions");for(int n=0;n<6;++n)cJSON_AddItemToArray(a,cJSON_CreateString(actions[n]));if(k==8){cJSON_AddNumberToObject(j,"value",65.2);cJSON_AddStringToObject(j,"unit","F");}cJSON_AddItemToArray(array,j);}
  char *json=cJSON_PrintUnformatted(root);snprintf(ha_json,sizeof(ha_json),"%s",json);free(json);cJSON_Delete(root);
  poll_ha();poll_climate();
 }
@@ -76,6 +79,8 @@ int main(void)
  click(wifi_button);assert(wifi_setup_requested);
  populate();refresh(NULL);assert(!lv_obj_has_state(control[0][0],LV_STATE_DISABLED));
  assert(!strcmp(lv_label_get_text(temp_label),"65.2 F"));assert(!strcmp(lv_label_get_text(states[3]),"Running"));
+ click(notify_button[0]);assert(room_audio_notify_enabled(3));assert(!room_audio_notify_enabled(4));
+ click(notify_button[0]);assert(!room_audio_notify_enabled(3));
  int no_commands=queue_count;
  touch(400,365,true);touch(330,365,true);touch(240,365,true);touch(150,365,true);touch(80,365,true);touch(80,365,false);
  assert(visible_page==1);assert(queue_count==no_commands);
@@ -85,11 +90,13 @@ int main(void)
  render("climate.ppm");select_page(1);render("home.ppm");select_page(2);render("laundry.ppm");select_page(3);render("camera.ppm");
  /* Different devices accept taps while one is in flight; only that row locks. */
  click(control[0][0]);command_t first=queued;
+ refresh(NULL);assert(!strcmp(lv_label_get_text(states[0]),"on"));
  refresh(NULL);assert(lv_obj_has_state(control[0][0],LV_STATE_DISABLED));assert(!lv_obj_has_state(control[1][0],LV_STATE_DISABLED));
  click(control[1][0]);command_t second=queued;
  assert(first.item==0&&second.item==1&&(model.pending&3U)==3U);
  int queued_before=queue_count;click(control[0][0]);assert(queue_count==queued_before);
  execute(first);assert(!(model.pending&1U)&&(model.pending&2U));
+ refresh(NULL);assert(!strcmp(lv_label_get_text(states[0]),"on"));
  execute(second);assert(model.pending==0);posts=0;
  assert(lv_obj_get_height(body[1])==364);
  assert(lv_obj_has_flag(notice,LV_OBJ_FLAG_HIDDEN));

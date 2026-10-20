@@ -1,6 +1,6 @@
 # Cottage room panel — Waveshare ESP32-S3-Touch-LCD-4B
 
-Version 0.8.0 provides the **native 480×480 LCD and capacitive touch interface**. This is for the **4B**, with 16 MB flash and 8 MB octal PSRAM. It uses Waveshare BSP 2.0.0, LVGL 9.2.0 and ESP LVGL port 2.6.2, compiled with ESP-IDF 6.0.1. The dependency lock pins the tested graph. **The ESP connects directly to Home Assistant using your long-lived token; no bridge process, bridge address or bridge token is required.** No device has been flashed or physically verified by the coding environment.
+Version 0.8.1 provides the **native 480×480 LCD and capacitive touch interface**. This is for the **4B**, with 16 MB flash and 8 MB octal PSRAM. It uses Waveshare BSP 2.0.0, LVGL 9.2.0 and ESP LVGL port 2.6.2, compiled with ESP-IDF 6.0.1. The dependency lock pins the tested graph. **The ESP connects directly to Home Assistant using your long-lived token; no bridge process, bridge address or bridge token is required.** No device has been flashed or physically verified by the coding environment.
 
 ## Device settings
 
@@ -20,7 +20,7 @@ v0.7.0 replaces the initial flat layouts with a dark navy theme, mint/amber acce
 
 Swipe left/right or tap the bottom navigation. After 60 seconds without navigation or a control tap, it returns to Climate and stops camera requests. Network work runs in separate tasks; the display task performs no network I/O. A background task reads the eleven configured entities, waits 5 seconds, then repeats. Polls, button commands and camera reads share a single serialized persistent HTTPS client. Commands take priority between entity polls. Successful responses keep the connection open when HA permits it; failed connections are discarded for the next request, and service calls are never automatically replayed. TLS allocations use PSRAM to preserve internal memory for the RGB display; the Windows helper migrates existing configs. Individual HA reads are bounded to 32 KB. Missing entities disable only their own controls; a temporary request failure retains recent state until its normal 30-second expiry; an authentication failure invalidates all HA controls immediately. Cached entities expire after 30 seconds. The native screen also disables controls if it has not refreshed its local model for 10 seconds. Tap **Wi-Fi** in the header to open the captive setup network. Native commands use a dedicated worker and an eight-entry FIFO. Only the device with a queued/in-flight command is disabled, so Deck then Breezeway taps are accepted independently. Requests expire after ten seconds if the command worker has not begun them and are never automatically replayed. A brief error toast overlays content; the persistent bottom Wi-Fi/status strip has been removed. The last 32 HA request IDs are held for this boot so a duplicate does not repeat an ambiguous service call. An uncertain command result asks you to inspect state before intentionally trying again.
 
-The browser interfaces remain at `/` (Climate) and `/home` (HA). On the ESP both require the locally configured room pairing token for API access. The native HA panel needs only the HA token from the local secrets file, without a pairing screen. The existing controller pairing token still protects furnace communication and optional browser API access; it is separate from HA authentication.
+The retired browser Climate/Home dashboards are no longer embedded or served. LAN requests to `/` and `/home` redirect to `/settings`; setup-network `/` still opens Wi-Fi provisioning. Native display controls and controller probe reporting continue independently.
 
 ## Windows build and first hardware test
 
@@ -76,7 +76,16 @@ The browser-only fallback is available by disabling the native display setting; 
 
 Lights have locally drawn bulb silhouettes: dark when off, yellow when on. Confirmed HA state drives the icon; a pending command shows Sending on that row. Kids heat, blinds and vacuum also change icon/color with state. Laundry classifies Washing/Drying/Rinsing/Spinning as active, Not in Use as idle, plus finished, paused and error states; colored tiles and rotating drum indicators distinguish running appliances without inventing a percentage. The reclaimed footer area enlarges all four pages.
 
+## v0.8.1 feedback and completion sounds
+
+Light/switch On/Off taps show the requested state immediately for up to five seconds. An entity sample newer than the tap confirms the displayed state; older cached samples cannot bounce the UI back during that window. If confirmation does not arrive, the UI returns to actual HA state. Explicit command rejection clears the prediction. Confirmed state still drives all controller behavior; this is only display feedback.
+
+Each washer and dryer has an independent **Notify: Off / On** toggle. All four default off. Preferences persist in the `room_alerts` NVS namespace. An enabled appliance plays a short, locally synthesized chime on a fresh active-to-idle/completed transition, then stops and mutes the output. Repeated idle readings, booting idle, missing entities and stale/offline gaps do not trigger completion sounds. Disabling the toggle also suppresses already-queued cues that have not begun. There is no persistent completion badge to dismiss. The 4B BSP/ES8311 speaker output is used; physical speaker playback is unverified.
+
 ## Validation
+
+- v0.8.1 adds pure-C optimistic feedback/laundry transition tests and extends the native UI fixture for independent notification toggles and cached-state feedback. Codec/BSP calls were checked against vendor source. Compilation, rendered previews, NVS persistence and physical speaker testing remain unavailable in the coding workspace.
+
 
 - v0.8.0 includes per-device pending/rapid-tap regression checks and a pure-C visual-state fixture. The settings page JavaScript was syntax-checked and exercised with mocked GET/POST responses, token clearing and access-denied messaging. C compilation, NVS/HTTP hardware behavior and native rendering remain unverified in the unavailable execution workspace.
 

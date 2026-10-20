@@ -2,6 +2,8 @@
  * URL, log or retry queue. TLS is verified by room_transport. */
 #include "room_ha.h"
 #include "room_settings.h"
+#include "room_audio.h"
+#include "room_feedback.h"
 #include "room_transport.h"
 #include <math.h>
 #include <stdint.h>
@@ -25,6 +27,7 @@ typedef struct {char id[81];int key,action;bool accepted;} ha_request_t;
 static ha_state_t ha_states[HA_COUNT];
 static ha_request_t ha_requests[HA_IDS];
 static unsigned ha_next;
+static room_laundry_tracker_t laundry_tracker[4];
 static SemaphoreHandle_t ha_mutex,ha_command_mutex,ha_io_mutex;
 static room_http_session_t *ha_session;
 static atomic_bool ha_command_waiting;
@@ -97,16 +100,30 @@ static ha_state_t ha_normalize(int key,cJSON *j)
     s.has_position=!strcmp(ha_specs[key].kind,"cover")&&ha_numeric(attrs,"current_position",&s.position)&&s.position>=0&&s.position<=100;
     return s;
 }
+static void ha_laundry_lost(void)
+{
+    xSemaphoreTake(ha_mutex,portMAX_DELAY);
+    memset(laundry_tracker,0,sizeof(laundry_tracker));
+    xSemaphoreGive(ha_mutex);
+}
+static bool ha_laundry_sample(int key,const char *state,bool available,int64_t now)
+{
+    xSemaphoreTake(ha_mutex,portMAX_DELAY);
+    bool notify=room_laundry_observe(&laundry_tracker[key-3],state,available,now);
+    xSemaphoreGive(ha_mutex);return notify;
+}
 static bool ha_read(int key,char *buffer,size_t capacity)
 {
     char path[160];int code,n;snprintf(path,sizeof(path),"/api/states/%s",ha_specs[key].entity);
     esp_err_t err=ha_http(path,NULL,buffer,capacity,&code,&n);
-    if(code==404){xSemaphoreTake(ha_mutex,portMAX_DELAY);memset(&ha_states[key],0,sizeof(ha_states[key]));xSemaphoreGive(ha_mutex);return true;}
-    if(err!=ESP_OK||code!=200){ha_global_error(code);return false;}
+    if(code==404){if(key>=3&&key<=6)ha_laundry_sample(key,"",false,esp_timer_get_time());xSemaphoreTake(ha_mutex,portMAX_DELAY);memset(&ha_states[key],0,sizeof(ha_states[key]));xSemaphoreGive(ha_mutex);return true;}
+    if(err!=ESP_OK||code!=200){ha_laundry_lost();ha_global_error(code);return false;}
     cJSON *j=cJSON_ParseWithLengthOpts(buffer,n+1,NULL,true);
     bool valid=cJSON_IsObject(j)&&!strcmp(ha_string(j,"entity_id"),ha_specs[key].entity)&&cJSON_IsString(cJSON_GetObjectItemCaseSensitive(j,"state"));
-    if(valid){ha_state_t s=ha_normalize(key,j);xSemaphoreTake(ha_mutex,portMAX_DELAY);ha_states[key]=s;xSemaphoreGive(ha_mutex);}
-    cJSON_Delete(j);if(!valid)ha_global_error(0);return valid;
+    if(valid){ha_state_t s=ha_normalize(key,j);xSemaphoreTake(ha_mutex,portMAX_DELAY);ha_states[key]=s;xSemaphoreGive(ha_mutex);
+        if(key>=3&&key<=6&&ha_laundry_sample(key,s.state,s.available,s.at))room_audio_laundry_done(key);
+    }
+    cJSON_Delete(j);if(!valid){ha_laundry_lost();ha_global_error(0);}return valid;
 }
 static void ha_poll_once(void)
 {
@@ -141,7 +158,7 @@ cJSON *room_ha_status(void)
     xSemaphoreTake(ha_mutex,portMAX_DELAY);
     for(int k=0;k<HA_COUNT;++k){ha_state_t s=ha_states[k];const ha_spec_t *spec=&ha_specs[k];bool available=ha_fresh(s);connected|=available;
         cJSON *item=cJSON_CreateObject();cJSON_AddStringToObject(item,"key",spec->key);cJSON_AddStringToObject(item,"label",spec->label);cJSON_AddStringToObject(item,"kind",spec->kind);
-        cJSON_AddStringToObject(item,"state",available?s.state:"unavailable");cJSON_AddBoolToObject(item,"available",available);cJSON_AddStringToObject(item,"unit",s.unit);
+        cJSON_AddStringToObject(item,"state",available?s.state:"unavailable");cJSON_AddBoolToObject(item,"available",available);cJSON_AddNumberToObject(item,"sample_us",(double)s.at);cJSON_AddStringToObject(item,"unit",s.unit);
         if(available&&s.has_value)cJSON_AddNumberToObject(item,"value",s.value);
         if(available&&s.has_position)cJSON_AddNumberToObject(item,"position",s.position);
         cJSON *a=cJSON_AddArrayToObject(item,"actions");if(available)for(int n=0;n<6;++n)if(s.actions&(1U<<n))cJSON_AddItemToArray(a,cJSON_CreateString(ha_actions[n]));
