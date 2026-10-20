@@ -22,7 +22,6 @@
 #include "room_transport.h"
 #include "room_ha.h"
 #include "room_settings.h"
-#include "wifi_setup.h"
 #include "room_camera_size.h"
 #include "room_camera_scale.h"
 #include "room_visual_state.h"
@@ -50,7 +49,7 @@ static SemaphoreHandle_t mutex;
 static QueueHandle_t commands;
 static lv_obj_t *body[4],*nav[4],*connection,*notice,*temp_label,*target_label,*mode_label,*reason_label;
 static lv_obj_t *states[COUNT],*control[COUNT][6],*minus_button,*plus_button,*apply_button,*camera_image,*camera_note,*settings_button;
-static lv_obj_t *settings_modal,*settings_volume,*settings_volume_label,*settings_camera_button,*settings_wifi_button,*settings_close_button,*settings_hint;
+static lv_obj_t *settings_modal,*settings_volume,*settings_volume_label,*settings_camera_button,*settings_close_button;
 static lv_obj_t *temperature_ring,*heat_badge,*camera_frame,*camera_status,*tile[COUNT],*icon_badge[COUNT];
 static lv_obj_t *bulb_head[COUNT],*bulb_stem[COUNT],*bulb_base[COUNT],*activity_ring[COUNT];
 static lv_obj_t *notify_button[4];
@@ -250,11 +249,6 @@ static void sound_test_event(lv_event_t *e)
     last_touch=esp_timer_get_time();
     if(!room_audio_test())message("Sound test busy; try again");
 }
-static void wifi_setup_event(lv_event_t *e)
-{
-    (void)e;last_touch=esp_timer_get_time();room_wifi_request_setup();
-    if(settings_hint)lv_label_set_text(settings_hint,"Opening setup Wi-Fi...\nJoin the CottageThermo setup network.");
-}
 static void notify_event(lv_event_t *e)
 {
     int key=(int)(intptr_t)lv_event_get_user_data(e);last_touch=esp_timer_get_time();
@@ -340,7 +334,7 @@ static void open_settings(void)
 {
     last_touch=esp_timer_get_time();
     if(!settings_modal){
-        settings_modal=panel(lv_screen_active(),12,57,456,364,CARD,18);
+        settings_modal=panel(lv_screen_active(),12,57,456,260,CARD,18);
         lv_obj_add_flag(settings_modal,LV_OBJ_FLAG_CLICKABLE);
         label(settings_modal,"Settings",20,16,240,&lv_font_montserrat_24);
         settings_close_button=button(settings_modal,"Close",342,12,94,34,settings_close_event,0);
@@ -352,9 +346,6 @@ static void open_settings(void)
         lv_obj_add_event_cb(settings_volume,settings_volume_event,LV_EVENT_RELEASED,NULL);
         button(settings_modal,LV_SYMBOL_PLAY "  Test sound",24,150,408,42,sound_test_event,0);
         settings_camera_button=button(settings_modal,"",24,202,408,40,settings_camera_event,0);
-        settings_wifi_button=button(settings_modal,"Open network setup",24,252,408,40,wifi_setup_event,0);
-        settings_hint=label(settings_modal,"Opens a temporary setup Wi-Fi network.\n/wifi: Wi-Fi  |  /settings: HA/controller",24,305,408,&lv_font_montserrat_14);
-        tint(settings_hint,MUTED);
     }
     lv_slider_set_value(settings_volume,(int32_t)room_audio_get_volume(),LV_ANIM_OFF);
     lv_label_set_text_fmt(settings_volume_label,"Volume: %u%%%s",room_audio_get_volume(),room_audio_get_volume()?"":" (muted)");
@@ -367,11 +358,6 @@ static void refresh(lv_timer_t *timer)
 {
     model_t m=snapshot();int64_t now=esp_timer_get_time();
     if((visible_page||m.settings_open)&&now-last_touch>60000000){select_page(0);m=snapshot();}
-    if(m.settings_open&&settings_hint){
-        char hint[128];
-        if(room_wifi_setup_hint(hint,sizeof(hint)))
-            lv_label_set_text_fmt(settings_hint,"%s\n/wifi: Wi-Fi  |  /settings: HA/controller",hint);
-    }
     bool ha=m.ha_ok&&current(m.ha_at),climate=m.climate_ok&&current(m.climate_at);
     lv_label_set_text_fmt(connection,LV_SYMBOL_WIFI "  HA %s",ha?"ONLINE":"OFFLINE");
     tint(connection,ha?MINT:MUTED);

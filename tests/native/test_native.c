@@ -6,7 +6,7 @@
 static int64_t now=1000000;
 static int posts=0,queue_count=0;
 static char last_path[80],last_post[256];
-static bool unknown=false,wifi_setup_requested=false;
+static bool unknown=false;
 static unsigned test_notify_mask,test_volume=100;
 #include "../../touchscreen/main/room_display.c"
 static command_t queued;
@@ -35,11 +35,6 @@ bool room_audio_set_volume(unsigned value){if(value>100)return false;test_volume
 bool room_audio_test(void){return true;}
 bool room_audio_notify_enabled(int key){return (test_notify_mask&(1U<<(key-3)))!=0;}
 bool room_audio_set_notify(int key,bool enabled){unsigned bit=1U<<(key-3);test_notify_mask=enabled?test_notify_mask|bit:test_notify_mask&~bit;return true;}
-void room_wifi_request_setup(void){wifi_setup_requested=true;}
-bool room_wifi_setup_hint(char *buffer,size_t size){
- if(!wifi_setup_requested)return false;
- snprintf(buffer,size,"Wi-Fi setup: CottageThermo-TEST-Setup / 192.168.4.1");return true;
-}
 static char ha_json[4096];
 esp_err_t room_http(const char *origin,const char *header,const char *token,const char *path,const char *post,void *out,size_t cap,int timeout,int *status,int *length)
 {
@@ -85,9 +80,6 @@ int main(void)
  click(settings_button);assert(model.settings_open&&!lv_obj_has_flag(settings_modal,LV_OBJ_FLAG_HIDDEN));
  lv_slider_set_value(settings_volume,42,LV_ANIM_OFF);lv_obj_send_event(settings_volume,LV_EVENT_RELEASED,NULL);assert(test_volume==42);
  click(settings_camera_button);assert(model.camera_fill);
- assert(!strcmp(lv_label_get_text(lv_obj_get_child(settings_wifi_button,0)),"Open network setup"));
- click(settings_wifi_button);assert(wifi_setup_requested);
- refresh(NULL);assert(strstr(lv_label_get_text(settings_hint),"CottageThermo-TEST-Setup"));assert(strstr(lv_label_get_text(settings_hint),"/settings"));
  click(settings_close_button);assert(!model.settings_open&&lv_obj_has_flag(settings_modal,LV_OBJ_FLAG_HIDDEN));
  populate();refresh(NULL);assert(!lv_obj_has_state(control[0][0],LV_STATE_DISABLED));
  assert(!strcmp(lv_label_get_text(temp_label),"65.2 F"));assert(!strcmp(lv_label_get_text(states[3]),"Running"));
