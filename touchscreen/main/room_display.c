@@ -195,7 +195,7 @@ static void camera_task(void *arg)
                         lv_image_set_scale(camera_image,scale);lv_obj_align(camera_image,LV_ALIGN_CENTER,0,0);
                         lv_obj_remove_flag(camera_image,LV_OBJ_FLAG_HIDDEN);
                         lv_label_set_text(camera_note,"Auto-refreshing snapshots");
-                        lv_label_set_text(camera_status,LV_SYMBOL_EYE "  LIVE VIEW");
+                        lv_label_set_text(camera_status,LV_SYMBOL_VIDEO "  LIVE VIEW");
                     } else {
                         lv_label_set_text(camera_note,detail);
                         lv_label_set_text(camera_status,LV_SYMBOL_REFRESH "  RETRYING");
