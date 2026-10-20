@@ -1,4 +1,4 @@
-/* Thin client to the local HA bridge. No Home Assistant bearer token on ESP. */
+/* Local panel API backed by direct ESP-to-Home-Assistant requests. */
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -9,6 +9,8 @@
 #include "esp_http_server.h"
 #include "cJSON.h"
 #include "ha_panel.h"
+#include "room_ha.h"
+#include "esp_heap_caps.h"
 
 extern const unsigned char home_start[] asm("_binary_home_html_start");
 extern const unsigned char home_end[] asm("_binary_home_html_end");
@@ -34,62 +36,26 @@ static esp_err_t home_get(httpd_req_t *r)
 static esp_err_t upstream(httpd_req_t *r)
 {
     if(!authorized(r))return fail(r,"401 Unauthorized","{\"error\":\"Room pairing token required\"}");
-    if(!strlen(CONFIG_ROOM_HA_BRIDGE_URL)||strlen(CONFIG_ROOM_HA_BRIDGE_TOKEN)<32)
-        return fail(r,"503 Service Unavailable","{\"error\":\"Home Assistant bridge is not configured in menuconfig\"}");
     bool camera=!strcmp(r->uri,"/api/ha/camera");
-    bool status=!strcmp(r->uri,"/api/ha/status");
-    if(strncmp(CONFIG_ROOM_HA_BRIDGE_URL,"http://",7) && strncmp(CONFIG_ROOM_HA_BRIDGE_URL,"https://",8))
-        return fail(r,"503 Service Unavailable","{\"error\":\"Bridge URL must use HTTP or HTTPS\"}");
-    if(!strncmp(CONFIG_ROOM_HA_BRIDGE_URL,"https://",8) && time(NULL)<1767225600)
-        return fail(r,"503 Service Unavailable","{\"error\":\"Waiting for network time before verified HTTPS\"}");
-    char url[320],payload[384];const char *post=NULL;
-    if(snprintf(url,sizeof(url),"%s%s",CONFIG_ROOM_HA_BRIDGE_URL,r->uri)>=(int)sizeof(url))
-        return fail(r,"503 Service Unavailable","{\"error\":\"Bridge URL too long\"}");
-    if(r->method==HTTP_POST) {
-        if(r->content_len<=0 || r->content_len>=sizeof(payload))return fail(r,"400 Bad Request","{\"error\":\"Invalid command body\"}");
-        size_t nread=0;
-        while(nread<r->content_len){int n=httpd_req_recv(r,payload+nread,r->content_len-nread);if(n<=0)return ESP_FAIL;nread+=n;}
-        payload[nread]=0;
-        cJSON *j=cJSON_ParseWithLengthOpts(payload,nread+1,NULL,true);
-        bool valid=cJSON_IsObject(j);cJSON_Delete(j);
-        if(!valid)return fail(r,"400 Bad Request","{\"error\":\"JSON object required\"}");
-        post=payload;
+    httpd_resp_set_hdr(r,"Cache-Control","no-store");
+    if(camera){
+        uint8_t *data=heap_caps_malloc(ROOM_HA_CAMERA_CAPACITY,MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT);
+        if(!data)return fail(r,"503 Service Unavailable","{\"error\":\"Camera memory unavailable\"}");
+        int code,length;esp_err_t err=room_ha_camera(data,ROOM_HA_CAMERA_CAPACITY,&code,&length);
+        if(err!=ESP_OK||code!=200||length<2||data[0]!=0xff||data[1]!=0xd8){free(data);return fail(r,"503 Service Unavailable","{\"error\":\"Home Assistant camera unavailable\"}");}
+        httpd_resp_set_type(r,"image/jpeg");err=httpd_resp_send(r,(char*)data,length);free(data);return err;
     }
-    size_t cap=camera?96001:8192;
-    char *data=malloc(cap);
-    if(!data)return fail(r,"503 Service Unavailable","{\"error\":\"Insufficient memory for bridge response\"}");
-    esp_http_client_config_t cfg={.url=url,.timeout_ms=camera?7000:(post?20000:3000),.disable_auto_redirect=true,
-        .crt_bundle_attach=esp_crt_bundle_attach};
-    esp_http_client_handle_t h=esp_http_client_init(&cfg);
-    if(!h){free(data);return fail(r,"503 Service Unavailable","{\"error\":\"Bridge client unavailable\"}");}
-    esp_http_client_set_header(h,"X-Cottage-Token",CONFIG_ROOM_HA_BRIDGE_TOKEN);
-    if(post){esp_http_client_set_method(h,HTTP_METHOD_POST);esp_http_client_set_header(h,"Content-Type","application/json");}
-    esp_err_t err=esp_http_client_open(h,post?strlen(post):0);
-    if(err==ESP_OK && post) {
-        int at=0,len=strlen(post);
-        while(at<len){int n=esp_http_client_write(h,post+at,len-at);if(n<=0){err=ESP_FAIL;break;}at+=n;}
-    }
-    if(err==ESP_OK && esp_http_client_fetch_headers(h)<0)err=ESP_FAIL;
-    int code=esp_http_client_get_status_code(h),size=-1;
-    if(err==ESP_OK){size=esp_http_client_read_response(h,data,cap-1);if(size<0 || size>=(int)cap-1 || !esp_http_client_is_complete_data_received(h))err=ESP_FAIL;else data[size]=0;}
-    esp_http_client_close(h);esp_http_client_cleanup(h);
-    if(err!=ESP_OK){free(data);return fail(r,"503 Service Unavailable","{\"error\":\"Bridge unavailable; no command retry queued. Check device state before retrying.\"}");}
-    if(code!=200) {
-        // Return bridge's bounded JSON error, not its HTTP headers or credentials.
-        cJSON *j=cJSON_Parse(data);bool json=cJSON_IsObject(j);cJSON_Delete(j);
-        httpd_resp_set_status(r,code==401?"502 Bad Gateway":code==409?"409 Conflict":code==400?"400 Bad Request":"503 Service Unavailable");
-        httpd_resp_set_type(r,"application/json");httpd_resp_set_hdr(r,"Cache-Control","no-store");
-        err=httpd_resp_sendstr(r,json?data:"{\"error\":\"Bridge rejected request\"}");free(data);return err;
-    }
-    if(status) {
-        cJSON *j=cJSON_Parse(data);
-        if(!cJSON_IsObject(j)){cJSON_Delete(j);free(data);return fail(r,"502 Bad Gateway","{\"error\":\"Invalid bridge status\"}");}
-        cJSON_AddBoolToObject(j,"room_client",true);char *encoded=cJSON_PrintUnformatted(j);cJSON_Delete(j);free(data);data=encoded;
-        if(!data)return fail(r,"503 Service Unavailable","{\"error\":\"Insufficient memory\"}");
-        size=strlen(data);
-    }
-    httpd_resp_set_type(r,camera?"image/jpeg":"application/json");httpd_resp_set_hdr(r,"Cache-Control","no-store");
-    err=httpd_resp_send(r,data,size);free(data);return err;
+    int code=200;cJSON *result;
+    if(r->method==HTTP_POST){
+        char payload[384];
+        if(r->content_len<=0||r->content_len>=sizeof(payload))return fail(r,"400 Bad Request","{\"error\":\"Invalid command body\"}");
+        size_t at=0;while(at<r->content_len){int n=httpd_req_recv(r,payload+at,r->content_len-at);if(n<=0)return ESP_FAIL;at+=n;}payload[at]=0;
+        cJSON *p=cJSON_ParseWithLengthOpts(payload,at+1,NULL,true);result=room_ha_command(p,&code);cJSON_Delete(p);
+    }else result=room_ha_status();
+    char *encoded=cJSON_PrintUnformatted(result);cJSON_Delete(result);
+    if(!encoded)return fail(r,"503 Service Unavailable","{\"error\":\"Insufficient memory\"}");
+    if(code!=200)httpd_resp_set_status(r,code==409?"409 Conflict":"400 Bad Request");
+    httpd_resp_set_type(r,"application/json");esp_err_t err=httpd_resp_sendstr(r,encoded);free(encoded);return err;
 }
 void ha_panel_register(httpd_handle_t h)
 {

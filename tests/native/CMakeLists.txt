@@ -14,3 +14,15 @@ target_include_directories(native_ui_test PRIVATE stubs ../../touchscreen/main .
 target_compile_options(native_ui_test PRIVATE -ffunction-sections -fdata-sections -Wall -Wextra -Wno-unused-parameter -Wno-unused-function)
 target_link_options(native_ui_test PRIVATE -Wl,--gc-sections)
 target_link_libraries(native_ui_test PRIVATE lvgl m)
+
+find_package(Python3 REQUIRED COMPONENTS Interpreter)
+execute_process(COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_LIST_DIR}/../../tools/generate-ha-entities.py" "${CMAKE_CURRENT_LIST_DIR}/../../ha_bridge/entities.json" "${CMAKE_CURRENT_BINARY_DIR}/room_ha_entities.h" COMMAND_ERROR_IS_FATAL ANY)
+add_executable(direct_ha_test test_direct_ha.c ../../touchscreen/managed_components/espressif__cjson/cJSON/cJSON.c)
+target_include_directories(direct_ha_test PRIVATE stubs "${CMAKE_CURRENT_BINARY_DIR}" ../../touchscreen/main ../../touchscreen/managed_components/espressif__cjson/cJSON)
+target_compile_options(direct_ha_test PRIVATE -Wall -Wextra -Wno-unused-parameter -Wno-unused-variable)
+target_link_libraries(direct_ha_test PRIVATE lvgl m)
+
+add_executable(empty_ha_test test_direct_ha.c ../../touchscreen/managed_components/espressif__cjson/cJSON/cJSON.c)
+target_compile_definitions(empty_ha_test PRIVATE ROOM_HA_EMPTY=1)
+target_include_directories(empty_ha_test PRIVATE stubs "${CMAKE_CURRENT_BINARY_DIR}" ../../touchscreen/main ../../touchscreen/managed_components/espressif__cjson/cJSON)
+target_link_libraries(empty_ha_test PRIVATE lvgl m)

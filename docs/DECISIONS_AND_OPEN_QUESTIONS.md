@@ -75,3 +75,12 @@ Update this file with: date, branch/commit SHA, hardware board and wiring, firmw
 - Optional external probe shares BSP-owned I2C SDA47/SCL48. Other pins are rejected in native mode.
 - Controller servo/mode/arming logic remains unchanged; only explicit target changes are available on the room screen. Ship tracker page/full-motion camera remain future work.
 - Firmware compile and host LVGL interaction/layout checks passed. Physical LCD/touch orientation, camera color and live device checks await user flashing.
+
+## 2026-10-20 Direct Home Assistant connection (supersedes bridge requirement)
+
+- User rejected the extra bridge token/process and requested direct ESP access with a long-lived HA token in a secrets file.
+- Room panel v0.5.0 reads ignored `touchscreen/secrets.h`; committed `secrets.h.example` contains no token. HTTPS origin defaults to the supplied cottage URL. Existing bridge URL/token menuconfig settings are removed.
+- ESP polls only the eleven configured entities, calls allowlisted HA services directly and requests scaled snapshots from HA itself. The earlier PC bridge is optional legacy testing code, not a display dependency.
+- The application filters arbitrary attributes/camera tokens from local responses, verifies HTTPS after NTP, refuses redirects and never automatically repeats mutations. Missing credentials make no requests; rejected credentials pause requests until reboot.
+- Native HA requires only its HA long-lived token. Existing controller pairing remains separate for furnace/browser access. Kids temperature is still display-only for the Williams controller.
+- Direct C client, empty-token and LVGL host checks use simulated requests. No live direct-ESP HA access or physical board action is claimed.

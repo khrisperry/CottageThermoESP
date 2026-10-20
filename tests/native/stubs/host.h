@@ -9,6 +9,8 @@ typedef int esp_err_t;
 #define ESP_OK 0
 #define ESP_FAIL -1
 #define ESP_ERR_NO_MEM -2
+#define ESP_ERR_INVALID_STATE -3
+#define ESP_ERR_INVALID_ARG -4
 #define ESP_ERROR_CHECK(x) assert((x)==0)
 #define ESP_LOGI(...) ((void)0)
 #define ESP_LOGE(...) ((void)0)

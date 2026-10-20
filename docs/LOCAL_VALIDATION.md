@@ -1,6 +1,6 @@
 # Local validation and next cottage visit
 
-Firmware: **controller v0.2.0 / room panel v0.4.0**, updated 2026-10-20. Build from a configured **ESP-IDF 6.0.1** terminal; user machine is Windows/VSCode. The checked-in PowerShell helper builds both firmware projects, does not flash, and checks exit codes.
+Firmware: **controller v0.2.0 / room panel v0.5.0**, updated 2026-10-20. Build from a configured **ESP-IDF 6.0.1** terminal; user machine is Windows/VSCode. The checked-in PowerShell helper builds both firmware projects, does not flash, and checks exit codes.
 
 ## Before next weekend
 
@@ -15,7 +15,7 @@ Firmware: **controller v0.2.0 / room panel v0.4.0**, updated 2026-10-20. Build f
 4. Pair the controller web page with the USB-monitor token. Verify `simulation:true`, `pwm_active:false`, `position_measured:false`. Review modes and persisted settings. Reboot and verify PWM remains off and session synchronization/arming are cleared.
 5. For pure software testing, create a synthetic map in the simulation build, synchronize a virtual level, submit a simulation reading and select Thermostat. Verify 0.25-level bounded simulated commands, dwell, target outside map, stale-source and Hold behavior. Restore Hold when finished.
 6. Set the clock from the UI in AP-only mode; configure a weekly schedule. Before the first day's slot, the previous day's last slot applies. A manually saved target overrides it. After reboot without a valid clock, scheduled movement is blocked.
-7. Build the native 4B with `tools/build-room-4b.ps1 -Configure`. Follow `touchscreen/README.md` for the separate sdkconfig.4b, LAN bridge/token setup and explicit flash command. Leave the sensor disabled until wiring is confirmed; native probe support shares SDA47/SCL48.
+7. Build the native 4B with `tools/build-room-4b.ps1 -Configure`. Follow `touchscreen/README.md` for the separate sdkconfig.4b, direct HA secrets setup and explicit flash command. Leave the sensor disabled until wiring is confirmed; native probe support shares SDA47/SCL48.
 
 ## At the cottage / physical proof
 
@@ -54,7 +54,7 @@ These use mocked HTTP responses to check mobile layout, settings, pairing failur
 - Physical validation of the native 4B RGB/touch adapter, orientation, JPEG color and probe wiring. The adapter compiles and passes real-LVGL host checks; see `tests/native`.
 - Encoder mounting/driver, actual position agreement, slip/stall/coupler monitoring and verified mechanical limits.
 - Wi-Fi provisioning page/captive DNS; SSID/password currently use menuconfig.
-- Native MQTT Discovery/climate exposure and SwitchBot temperature mapping. The eleven user-supplied HA panel entities are implemented through `ha_bridge`; the user confirmed its browser connection works. SwitchBot reports can already enter through the paired controller API.
+- Native MQTT Discovery/climate exposure and SwitchBot temperature mapping. The eleven user-supplied HA panel entities are implemented directly on the ESP in v0.5.0. The user previously confirmed the optional PC webpage connection works. SwitchBot reports can already enter through the paired controller API.
 - OTA image validation/rollback and production transport/security.
 - Durable long-term observations, recovery model, weather/activity/occupancy inputs, heading-to-cottage ETA automation and active learning. Active exploration is **not implemented** and cannot start accidentally.
 

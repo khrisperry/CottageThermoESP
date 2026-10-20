@@ -2,7 +2,7 @@
 
 ESP-IDF smart thermostat / mechanical knob actuator project for a **Williams model 1773512 direct-vent cottage furnace**.
 
-> **Status: controller v0.2.0; native 4B room panel v0.4.0.** Controller and room client are separate ESP-IDF 6.0.1 projects. Automatic output defaults to simulation; physical servo commands are explicitly armed bench operations. Mechanical travel/torque, encoder feedback and appliance integration remain unverified.
+> **Status: controller v0.2.0; native 4B room panel v0.5.0.** Controller and room client are separate ESP-IDF 6.0.1 projects. Automatic output defaults to simulation; physical servo commands are explicitly armed bench operations. Mechanical travel/torque, encoder feedback and appliance integration remain unverified.
 
 ## Start here when resuming the project
 
@@ -12,13 +12,13 @@ ESP-IDF smart thermostat / mechanical knob actuator project for a **Williams mod
 4. **[docs/DECISIONS_AND_OPEN_QUESTIONS.md](docs/DECISIONS_AND_OPEN_QUESTIONS.md)** — confirmed decisions, unknowns, next session checklist.
 5. **[hardware/cap_fit_kit.scad](hardware/cap_fit_kit.scad)** — parametric **test coupons**, not a verified knob/servo coupling.
 6. **[controller/README.md](controller/README.md)** — controller setup, modes, calibration and bench movement.
-7. **[touchscreen/README.md](touchscreen/README.md)** — native 4B build, Wi-Fi/bridge setup and first hardware checks.
+7. **[touchscreen/README.md](touchscreen/README.md)** — native 4B build, Wi-Fi/direct HA setup and first hardware checks.
 8. **[docs/LOCAL_VALIDATION.md](docs/LOCAL_VALIDATION.md)** — local build/test steps and next cottage visit.
 9. **[docs/API.md](docs/API.md)** — direct paired API, schedules and data freshness.
 
 ## Home Assistant development
 
-The room client provides native Climate/Home/Laundry/Camera pages with touch/swipe navigation, alongside the browser panel and compact bridge API. [ha_bridge/README.md](ha_bridge/README.md) includes the confirmed entity mappings, local token setup and Windows/Proxmox instructions. Native firmware compiles and passes host UI checks; physical RGB/touch/camera testing remains pending.
+The native room client connects **directly to Home Assistant** using a long-lived token in ignored `touchscreen/secrets.h`. No bridge or bridge token is required. See [touchscreen setup](touchscreen/README.md) for the one-time secrets file, Wi-Fi settings and 4B build/flash commands. Climate/Home/Laundry/Camera and swipe navigation are implemented. Firmware and mocked direct-HA/LVGL checks pass; physical RGB/touch/camera and live direct-HA testing remain pending.
 
 ## Goal
 

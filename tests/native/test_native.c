@@ -37,6 +37,8 @@ esp_err_t room_http(const char *origin,const char *header,const char *token,cons
  else body="{\"temperature_f\":65.2,\"target_f\":67,\"simulation\":true,\"mode\":\"hold\",\"reason\":\"simulation\"}";
  *length=snprintf(out,cap,"%s",body);*status=200;return 0;
 }
+cJSON *room_ha_status(void){return cJSON_Parse(ha_json);}
+cJSON *room_ha_command(cJSON *p,int *code){char *post=cJSON_PrintUnformatted(p),buffer[256];int length;room_http("http://ha.test","Authorization","Bearer test","/api/ha/command",post,buffer,sizeof(buffer),1000,code,&length);free(post);return cJSON_Parse(buffer);}
 static uint8_t screen_pixels[480*480*3],draw_pixels[480*480*3];
 static void flush(lv_display_t *d,const lv_area_t *a,uint8_t *pixels)
 {

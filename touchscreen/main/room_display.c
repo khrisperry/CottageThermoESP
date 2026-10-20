@@ -20,6 +20,7 @@
 #include "cJSON.h"
 #include "jpeg_decoder.h"
 #include "room_transport.h"
+#include "room_ha.h"
 
 #define COUNT 11
 #define FRESH_US 10000000LL
@@ -31,7 +32,7 @@ typedef struct { bool available; unsigned actions; char state[128]; } item_t;
 typedef struct {
     item_t items[COUNT]; int64_t ha_at,climate_at;
     bool ha_ok,climate_ok,has_temp,has_target,simulation,pending;
-    float temp,target; char mode[32],reason[80],notice[128];
+    float temp,target; char mode[32],reason[80],notice[128],ha_error[128];
     unsigned page,generation;
 } model_t;
 typedef struct { int item,action; float target; int64_t at; } command_t;
@@ -54,9 +55,12 @@ static bool number(cJSON *j,const char *key,float *out) { cJSON *v=cJSON_GetObje
 static bool yes(cJSON *j,const char *key) { return cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(j,key)); }
 static cJSON *json_request(bool ha,const char *path,const char *post,int *code)
 {
+    if(ha){
+        if(!post){*code=200;return room_ha_status();}
+        cJSON *payload=cJSON_Parse(post);cJSON *result=room_ha_command(payload,code);cJSON_Delete(payload);if(*code!=200){cJSON_Delete(result);return NULL;}return result;
+    }
     *code=0;char *buffer=malloc(8192);if(!buffer)return NULL;
-    int n;esp_err_t err=room_http(ha?CONFIG_ROOM_HA_BRIDGE_URL:CONFIG_ROOM_CONTROLLER_URL,
-        ha?"X-Cottage-Token":"X-Thermo-Token",ha?CONFIG_ROOM_HA_BRIDGE_TOKEN:CONFIG_ROOM_API_TOKEN,
+    int n;esp_err_t err=room_http(CONFIG_ROOM_CONTROLLER_URL,"X-Thermo-Token",CONFIG_ROOM_API_TOKEN,
         path,post,buffer,8192,post?20000:3000,code,&n);
     cJSON *j=err==ESP_OK&&*code==200?cJSON_ParseWithLengthOpts(buffer,n+1,NULL,true):NULL;
     free(buffer);if(!cJSON_IsObject(j)){cJSON_Delete(j);return NULL;}return j;
@@ -79,6 +83,7 @@ static void poll_ha(void)
         }
     }
     xSemaphoreTake(mutex,portMAX_DELAY);
+    snprintf(model.ha_error,sizeof(model.ha_error),"%s",str(j,"error"));
     memcpy(model.items,items,sizeof(items));model.ha_ok=valid&&yes(j,"connected");model.ha_at=valid?esp_timer_get_time():0;
     xSemaphoreGive(mutex);cJSON_Delete(j);
 }
@@ -133,14 +138,13 @@ static bool camera_current(unsigned generation)
 }
 static void camera_task(void *arg)
 {
-    uint8_t *jpeg=heap_caps_malloc(96002,MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT);
+    uint8_t *jpeg=heap_caps_malloc(ROOM_HA_CAMERA_CAPACITY,MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT);
     if(!jpeg){message("Camera memory unavailable");vTaskDelete(NULL);return;}
     for(;;) {
         model_t m=snapshot();
         if(camera_current(m.generation)) {
             int code,n;
-            esp_err_t err=room_http(CONFIG_ROOM_HA_BRIDGE_URL,"X-Cottage-Token",CONFIG_ROOM_HA_BRIDGE_TOKEN,
-                "/api/ha/camera",NULL,jpeg,96002,7000,&code,&n);
+            esp_err_t err=room_ha_camera(jpeg,ROOM_HA_CAMERA_CAPACITY,&code,&n);
             esp_jpeg_image_cfg_t cfg={.indata=jpeg,.indata_size=n,.out_format=JPEG_IMAGE_FORMAT_RGB565,.out_scale=JPEG_IMAGE_SCALE_0};
             esp_jpeg_image_output_t info={0};void *pixels=NULL;
             if(err==ESP_OK&&code==200&&esp_jpeg_get_image_info(&cfg,&info)==ESP_OK&&info.width&&info.height&&info.width<=480&&info.height<=320&&info.output_len<=480*320*2) {
@@ -220,7 +224,7 @@ static void refresh(lv_timer_t *timer)
     if(visible_page&&now-last_touch>60000000){select_page(0);m=snapshot();}
     bool ha=m.ha_ok&&current(m.ha_at),climate=m.climate_ok&&current(m.climate_at);
     lv_label_set_text_fmt(connection,"HA %s  |  Heat %s",ha?"online":"offline",climate?"online":"offline");
-    lv_label_set_text(notice,m.notice);
+    lv_label_set_text(notice,*m.notice?m.notice:m.ha_error);
     if(!editing&&climate&&m.has_target)draft=m.target;
     char text[80];
     if(climate&&m.has_temp){snprintf(text,sizeof(text),"%.1f F",m.temp);lv_label_set_text(temp_label,text);}else lv_label_set_text(temp_label,"-- F");

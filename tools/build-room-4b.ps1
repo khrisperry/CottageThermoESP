@@ -6,6 +6,10 @@ if (-not (Get-Command idf.py -ErrorAction SilentlyContinue)) {
 if (($Flash -or $Monitor) -and -not $Port) { throw 'Specify -Port COMxx for Flash/Monitor.' }
 Push-Location (Join-Path (Split-Path -Parent $PSScriptRoot) 'touchscreen')
 try {
+    if (-not (Test-Path secrets.h)) {
+        Copy-Item secrets.h.example secrets.h
+        Write-Host 'Created touchscreen/secrets.h. Add your HA long-lived token there and rebuild.'
+    }
     # Separate from the old browser-only sdkconfig: 16 MB flash and octal PSRAM.
     # Credentials stay in this ignored local config, not in defaults or git.
     $idfArgs=@('-B','build-4b','-D','SDKCONFIG=sdkconfig.4b')

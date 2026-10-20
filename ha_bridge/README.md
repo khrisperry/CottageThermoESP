@@ -1,4 +1,6 @@
-# Cottage Home Assistant bridge — first integration milestone
+# Optional legacy PC Home Assistant test helper
+
+**ESP v0.5.0 connects directly to HA using `touchscreen/secrets.h`. It does not use this bridge or its client token. Follow [the native setup](../touchscreen/README.md) instead.** This helper is retained for the already-tested standalone PC webpage. The entity JSON and HTML here are also build inputs shared by the ESP; that does not require running the bridge service.
 
 This host service runs on a Windows PC for initial validation, then can run beside the ship tracker in the Proxmox LXC. Home Assistant authentication, TLS and JPEG scaling stay on the host. The ESP receives a small state document and sends allowlisted requests. **This module has no furnace servo or main thermostat control endpoint.**
 
@@ -57,15 +59,7 @@ No deployment or service installation is performed automatically. Actual LXC add
 
 ## ESP room-client setup
 
-Build the dedicated 4B profile using `tools/build-room-4b.ps1` with ESP-IDF 6.0.1. Under **Cottage room thermostat**, keep the existing controller pairing token and configure:
-
-- `ROOM_HA_BRIDGE_URL`: bridge LAN URL, e.g. `http://<LXC-LAN-IP>:8087`, no trailing slash.
-- `ROOM_HA_BRIDGE_TOKEN`: the bridge client token, **not HA_TOKEN**.
-- Room Wi-Fi must reach the controller and bridge. The default isolated bench AP alone will not reach Proxmox/HA unless routing is provided.
-
-After flashing to the verified room board, visit its browser UI and select **Home · Laundry · Camera**. Use the **room controller-pairing token** on this page; the firmware attaches the separate bridge token upstream. The same HTML is embedded in firmware and served by the bridge. An HTTPS bridge URL uses the ESP certificate bundle and requires valid NTP time; plain local HTTP does not. Credentials in generated `sdkconfig` remain ignored by git.
-
-The 4B build now uses 16 MB flash/8 MB octal PSRAM, the Waveshare display/touch BSP and a shared board I2C probe bus (SDA47/SCL48). Keep the probe disabled until physically wired and confirmed. Native pages and browser pages use the same bridge mapping.
+The v0.5.0 room client uses direct authenticated HA REST requests. Old `ROOM_HA_BRIDGE_URL` and `ROOM_HA_BRIDGE_TOKEN` settings have been removed. Follow `../touchscreen/README.md`; the descriptions below apply only to this optional PC helper.
 
 ## Behavior, limits and endpoints
 
@@ -85,7 +79,7 @@ All API endpoints require `X-Cottage-Token`. Query-string tokens are rejected. N
 | POST | `/api/ha/command` | `{"key":"deck","action":"on","request_id":"<unique ID>"}` |
 | GET | `/api/ha/camera` | One scaled JPEG; polled only for visible live view |
 
-On the room ESP, `/home` and the three API paths are also available. Its `X-Cottage-Token` is the **room pairing token**; the HA token remains only on the bridge host. Thermostat routes `/api/status` and `/api/target` continue to use `X-Thermo-Token` as before.
+On the room ESP, `/home` and these three API paths are also available, backed directly by the ESP HA client. Its `X-Cottage-Token` is the existing **room pairing token**. The HA bearer is read from local `touchscreen/secrets.h` and never returned to the browser. Thermostat routes `/api/status` and `/api/target` continue to use `X-Thermo-Token`.
 
 ## Validation
 

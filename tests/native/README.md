@@ -7,6 +7,10 @@ cmake -S tests/native -B tests/native/build
 cmake --build tests/native/build -j 6
 cd tests/native/build
 ./native_ui_test
+./direct_ha_test
+./empty_ha_test
 ```
 
 The program renders Climate/Home/Laundry/Camera to PPM files for layout inspection, injects a real LVGL pointer swipe, and checks commands, stale controls, unknown outcomes, expired requests, target-only climate changes, I2C pin protection and idle return. It does not emulate the RGB LCD, touch controller, Wi-Fi, PSRAM or JPEG decoder. Those require the first physical 4B test described in `touchscreen/README.md`.
+
+The direct client tests exercise production `room_ha.c` against a fake HTTP transport, including the bearer header and actual HA state/service/camera paths. The empty-token target verifies setup mode performs no requests. Neither test uses a real HA credential or network connection.

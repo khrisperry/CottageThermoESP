@@ -19,6 +19,7 @@
 #include "ha_panel.h"
 #include "room_display.h"
 #include "room_transport.h"
+#include "room_ha.h"
 
 static const char *TAG="room_thermostat";
 static i2c_master_dev_handle_t probe;
@@ -116,6 +117,7 @@ void app_main(void)
     wifi_config_t sta={0};snprintf((char*)sta.sta.ssid,sizeof(sta.sta.ssid),"%s",CONFIG_ROOM_WIFI_SSID);
     snprintf((char*)sta.sta.password,sizeof(sta.sta.password),"%s",CONFIG_ROOM_WIFI_PASSWORD);
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA,&sta));ESP_ERROR_CHECK(esp_wifi_start());
+    room_ha_start();
     room_display_start();
     if(CONFIG_ROOM_SENSOR && CONFIG_ROOM_SDA>=0 && CONFIG_ROOM_SCL>=0 && CONFIG_ROOM_SDA!=CONFIG_ROOM_SCL) {
         i2c_master_bus_handle_t bus=NULL;
@@ -137,5 +139,5 @@ void app_main(void)
     esp_sntp_setoperatingmode(SNTP_OPMODE_POLL);esp_sntp_setservername(0,"pool.ntp.org");esp_sntp_init();
     if(probe && strlen(CONFIG_ROOM_API_TOKEN)==32)xTaskCreate(sensor_task,"room_probe",6144,NULL,5,NULL);
     else ESP_LOGW(TAG,"Probe reporting disabled: configure probe pins/type and 32-character pairing token");
-    ESP_LOGI(TAG,"Room client v0.4.0; native display and browser services ready");
+    ESP_LOGI(TAG,"Room client v0.5.0; native display and browser services ready");
 }
