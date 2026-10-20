@@ -31,6 +31,13 @@ try {
     $configText=[regex]::Replace($configText,'(?m)^(?:CONFIG_MBEDTLS_(?:INTERNAL|EXTERNAL|DEFAULT|CUSTOM|IRAM_8BIT)_MEM_ALLOC=.*|# CONFIG_MBEDTLS_(?:INTERNAL|EXTERNAL|DEFAULT|CUSTOM|IRAM_8BIT)_MEM_ALLOC is not set)\r?\n?','')
     $configText += [Environment]::NewLine + 'CONFIG_MBEDTLS_EXTERNAL_MEM_ALLOC=y' + [Environment]::NewLine
     [IO.File]::WriteAllText($configPath,$configText,[Text.UTF8Encoding]::new($false))
+    # The native Settings volume control requires these widgets in saved configs.
+    $configText=Get-Content $configPath -Raw
+    foreach ($widget in @('BAR','SLIDER')) {
+        $configText=[regex]::Replace($configText,"(?m)^(?:CONFIG_LV_USE_${widget}=.*|# CONFIG_LV_USE_${widget} is not set)\r?\n?",'')
+        $configText += [Environment]::NewLine + "CONFIG_LV_USE_${widget}=y" + [Environment]::NewLine
+    }
+    [IO.File]::WriteAllText($configPath,$configText,[Text.UTF8Encoding]::new($false))
     if ($Configure) {
         & idf.py @idfArgs menuconfig
         if ($LASTEXITCODE -ne 0) { throw '4B configuration failed' }

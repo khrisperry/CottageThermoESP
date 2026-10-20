@@ -1,10 +1,10 @@
 # Cottage room panel — Waveshare ESP32-S3-Touch-LCD-4B
 
-Version 0.8.3 provides the **native 480×480 LCD and capacitive touch interface**. This is for the **4B**, with 16 MB flash and 8 MB octal PSRAM. It uses Waveshare BSP 2.0.0, LVGL 9.2.0 and ESP LVGL port 2.6.2, compiled with ESP-IDF 6.0.1. The dependency lock pins the tested graph. **The ESP connects directly to Home Assistant using your long-lived token; no bridge process, bridge address or bridge token is required.** No device has been flashed or physically verified by the coding environment.
+Version 0.9.0 provides the **native 480×480 LCD and capacitive touch interface**. This is for the **4B**, with 16 MB flash and 8 MB octal PSRAM. It uses Waveshare BSP 2.0.0, LVGL 9.2.0 and ESP LVGL port 2.6.2, compiled with ESP-IDF 6.0.1. The dependency lock pins the tested graph. **The ESP connects directly to Home Assistant using your long-lived token; no bridge process, bridge address or bridge token is required.** No device has been flashed or physically verified by the coding environment.
 
 ## Device settings
 
-Tap **Wi-Fi** in the screen header, join **CottageThermo-XXXX-Setup**, then open **http://192.168.4.1/settings** (also linked from Wi-Fi setup). Configure the Home Assistant HTTPS origin, its long-lived token, and the thermostat controller IP/name or HTTP(S) origin. Bare controller IPs/names use HTTP. Click **Save and restart**; the profile persists in NVS across firmware flashes that preserve NVS.
+Tap **Settings**, then **Wi-Fi setup**, join **CottageThermo-XXXX-Setup**, then open **http://192.168.4.1/settings** (also linked from Wi-Fi setup). Configure the Home Assistant HTTPS origin, its long-lived token, and the thermostat controller IP/name or HTTP(S) origin. Bare controller IPs/names use HTTP. Click **Save and restart**; the profile persists in NVS across firmware flashes that preserve NVS.
 
 The token is never returned to the browser. Leaving the token field blank keeps the existing token; an explicit Clear checkbox removes it. Settings writes require the setup AP, local Host/Origin and custom setup header. The page at the ordinary LAN IP explains how to enter setup; no additional bridge or credential is required. Existing secrets.h/menuconfig settings are boot defaults until a settings profile is saved. They continue to support building without a web-configured profile.
 
@@ -18,7 +18,7 @@ v0.7.0 replaces the initial flat layouts with a dark navy theme, mint/amber acce
 - **Laundry** shows the four status sensor strings, without invented progress or completion estimates.
 - **Camera** requests 480×320 JPEG snapshots directly from Home Assistant only while visible, at most one per second after the previous request completes. Old images hide on failure, stale data or navigation. An already-running read may finish within its timeout, but its result is discarded after a page change; no further frames are requested. Full-motion video remains separate work.
 
-Swipe left/right or tap the bottom navigation. After 60 seconds without navigation or a control tap, it returns to Climate and stops camera requests. Network work runs in separate tasks; the display task performs no network I/O. A background task reads the eleven configured entities, waits 5 seconds, then repeats. Polls, button commands and camera reads share a single serialized persistent HTTPS client. Commands take priority between entity polls. Successful responses keep the connection open when HA permits it; failed connections are discarded for the next request, and service calls are never automatically replayed. TLS allocations use PSRAM to preserve internal memory for the RGB display; the Windows helper migrates existing configs. Individual HA reads are bounded to 32 KB. Missing entities disable only their own controls; a temporary request failure retains recent state until its normal 30-second expiry; an authentication failure invalidates all HA controls immediately. Cached entities expire after 30 seconds. The native screen also disables controls if it has not refreshed its local model for 10 seconds. Tap **Wi-Fi** in the header to open the captive setup network. Native commands use a dedicated worker and an eight-entry FIFO. Only the device with a queued/in-flight command is disabled, so Deck then Breezeway taps are accepted independently. Requests expire after ten seconds if the command worker has not begun them and are never automatically replayed. A brief error toast overlays content; the persistent bottom Wi-Fi/status strip has been removed. The last 32 HA request IDs are held for this boot so a duplicate does not repeat an ambiguous service call. An uncertain command result asks you to inspect state before intentionally trying again.
+Swipe left/right or tap the bottom navigation. After 60 seconds without navigation or a control tap, it returns to Climate and stops camera requests. Network work runs in separate tasks; the display task performs no network I/O. A background task reads the eleven configured entities, waits 5 seconds, then repeats. Polls, button commands and camera reads share a single serialized persistent HTTPS client. Commands take priority between entity polls. Successful responses keep the connection open when HA permits it; failed connections are discarded for the next request, and service calls are never automatically replayed. TLS allocations use PSRAM to preserve internal memory for the RGB display; the Windows helper migrates existing configs. Individual HA reads are bounded to 32 KB. Missing entities disable only their own controls; a temporary request failure retains recent state until its normal 30-second expiry; an authentication failure invalidates all HA controls immediately. Cached entities expire after 30 seconds. The native screen also disables controls if it has not refreshed its local model for 10 seconds. Tap **Settings → Wi-Fi setup** to open the captive setup network. Native commands use a dedicated worker and an eight-entry FIFO. Only the device with a queued/in-flight command is disabled, so Deck then Breezeway taps are accepted independently. Requests expire after ten seconds if the command worker has not begun them and are never automatically replayed. A brief error toast overlays content; the persistent bottom Wi-Fi/status strip has been removed. The last 32 HA request IDs are held for this boot so a duplicate does not repeat an ambiguous service call. An uncertain command result asks you to inspect state before intentionally trying again.
 
 The retired browser Climate/Home dashboards are no longer embedded or served. LAN requests to `/` and `/home` redirect to `/settings`; setup-network `/` still opens Wi-Fi provisioning. Native display controls and controller probe reporting continue independently.
 
@@ -43,10 +43,10 @@ The retired browser Climate/Home dashboards are no longer embedded or served. LA
 2. From a **VSCode ESP-IDF 6.0.1 terminal**, build and flash the display using its actual COM port:
 
    ```powershell
-   .\tools\build-room-4b.ps1 -Flash -Monitor -Port COMxx
+   .\tools\build-room-4b.ps1 -Flash -Monitor -Port COM14
    ```
 
-   Replace `COMxx` with the display port. There is no need to enter Wi-Fi in menuconfig. The helper preserves the local HA secrets and existing board/controller settings. It also raises older main-task stack settings to at least 16384 bytes, addressing the display-startup overflow observed on the physical board. Fresh builds have the same stack default. A manually increased larger stack is preserved.
+   Replace `COM14` with the display port. There is no need to enter Wi-Fi in menuconfig. The helper preserves the local HA secrets and existing board/controller settings. It also raises older main-task stack settings to at least 16384 bytes, addressing the display-startup overflow observed on the physical board. Fresh builds have the same stack default. A manually increased larger stack is preserved.
 
 3. With no saved network, the display opens **CottageThermo-XXXX-Setup** immediately. If the legacy/current saved network fails, setup opens after about **30 seconds** without an IP address. Join this setup network from your phone or PC. Stay connected if it warns that the network has no Internet.
 
@@ -86,11 +86,11 @@ Each washer and dryer has an independent **Notify: Off / On** toggle. All four d
 
 The first audio implementation used codec volume 30 (approximately -35 dB on the default codec curve) plus low-amplitude PCM. The correction uses 16 kHz stereo PCM duplicated to both slots, volume 75, a stronger 6000-peak tone, a 200 ms amplifier startup delay and a silence/drain interval before muting. Return codes for volume, mute and amplifier control are logged. Logs say PCM sent, not that a physical speaker was heard.
 
-Tap **Sound** in the header to play an explicit test chime without changing any notification toggle or waiting for a laundry cycle. Completion notifications remain opt-in for one cycle per appliance.
+Tap **Settings → Test sound** to play an explicit test chime without changing any notification toggle or waiting for a laundry cycle. Completion notifications remain opt-in for one cycle per appliance.
 
 ## v0.8.3 volume and reset correction
 
-The chime now uses codec volume **100** and full-scale 16-bit sine PCM (peak **32767**) on both stereo slots. This is the maximum configured software level. The Sound test and completion chimes use the same output settings.
+The chime now uses codec volume **100** and full-scale 16-bit sine PCM (peak **32767**) on both stereo slots. This is the maximum software level at volume 100%. The Sound test and completion chimes use the same output settings.
 
 Cycle history for the notification reset is now separate from freshness needed for a sound. A temporary HA failure, unavailable reading or stale gap suppresses an uncertain/stale chime but preserves the known running cycle. When a fresh idle/completed reading later arrives, that appliance's Notify toggle is cleared and saved even if the chime was suppressed. Logs report the reset and whether sound was suppressed.
 
@@ -117,3 +117,11 @@ Cycle history for the notification reset is now separate from freshness needed f
 - Existing browser checks continue. The earlier PC bridge remains an optional test helper, but is not used by the ESP.
 
 Hardware/API sources: [Waveshare 4B examples](https://docs.waveshare.net/ESP32-S3-Touch-LCD-4B/ESP-IDF/), [Waveshare BSP](https://components.espressif.com/components/waveshare/esp32_s3_touch_lcd_4b/versions/2.0.0), [LVGL 9.2](https://docs.lvgl.io/9.2/).
+
+## Touchscreen settings and camera sizing (v0.9.0)
+
+The header Settings button opens a local touchscreen dialog. Volume ranges from 0 (muted) to 100 and is saved when the slider is released; it persists across restarts. Test sound uses the selected volume, and laundry notifications keep their independent one-cycle toggles. Wi-Fi setup remains available inside this dialog.
+
+Camera snapshots now enlarge as well as shrink to fit a larger viewport. The default Fit option preserves the whole image with only the borders required by its aspect ratio. Select Fill in Settings to cover the viewport and crop the edges instead; Fit/Fill is retained for this boot. Camera reads pause while Settings covers the display. After 60 seconds without interaction, Settings closes and the display returns to Climate.
+
+Use COM14 for this device when flashing/monitoring. This revision was source-reviewed; firmware compilation and physical testing must be run locally.

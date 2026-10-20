@@ -8,14 +8,15 @@
 static cue_t queue[8];static unsigned queued,head;
 static int64_t clock_us=1000000,amp_started;
 static jmp_buf stop_worker;
-static uint8_t persisted;
+static uint8_t persisted,persisted_volume=100;
+static int last_volume;
 static bool amp_on,muted=true,write_failure,amp_failure;
 static unsigned writes,nonzero_writes,open_count,startup_delays,drain_delays,peak;
 void audio_test_log(const char *tag,const char *fmt,...){}
 int64_t esp_timer_get_time(void){return clock_us;}
 esp_err_t nvs_open(const char *name,int mode,nvs_handle_t *h){assert(!strcmp(name,"room_alerts"));*h=1;return ESP_OK;}
-esp_err_t nvs_get_u8(nvs_handle_t h,const char *key,uint8_t *v){*v=persisted;return ESP_OK;}
-esp_err_t nvs_set_u8(nvs_handle_t h,const char *key,uint8_t v){persisted=v;return ESP_OK;}
+esp_err_t nvs_get_u8(nvs_handle_t h,const char *key,uint8_t *v){*v=!strcmp(key,"volume")?persisted_volume:persisted;return ESP_OK;}
+esp_err_t nvs_set_u8(nvs_handle_t h,const char *key,uint8_t v){if(!strcmp(key,"volume"))persisted_volume=v;else persisted=v;return ESP_OK;}
 esp_err_t nvs_commit(nvs_handle_t h){return ESP_OK;}
 void nvs_close(nvs_handle_t h){}
 QueueHandle_t xQueueCreate(unsigned count,unsigned size){assert(count==8&&size==sizeof(cue_t));return (void*)1;}
@@ -29,7 +30,7 @@ esp_err_t bsp_audio_poweramp_enable(bool on){if(on&&amp_failure)return -1;amp_on
 int esp_codec_dev_open(esp_codec_dev_handle_t h,esp_codec_dev_sample_info_t *f){assert(f->sample_rate==16000&&f->channel==2&&f->bits_per_sample==16);++open_count;return ESP_CODEC_DEV_OK;}
 int esp_codec_dev_close(esp_codec_dev_handle_t h){return ESP_CODEC_DEV_OK;}
 void esp_codec_dev_delete(esp_codec_dev_handle_t h){}
-int esp_codec_dev_set_out_vol(esp_codec_dev_handle_t h,int volume){assert(volume==100);return ESP_CODEC_DEV_OK;}
+int esp_codec_dev_set_out_vol(esp_codec_dev_handle_t h,int volume){assert(volume>=0&&volume<=100);last_volume=volume;return ESP_CODEC_DEV_OK;}
 int esp_codec_dev_set_out_mute(esp_codec_dev_handle_t h,bool mute){muted=mute;return ESP_CODEC_DEV_OK;}
 int esp_codec_dev_write(esp_codec_dev_handle_t h,void *data,int len)
 {
@@ -58,6 +59,15 @@ int main(void)
  for(unsigned n=0;n<8;++n)assert(room_audio_set_notify(5,false)); /* fill queue */
  room_audio_laundry_done(3);assert(!room_audio_notify_enabled(3));run_worker();assert(persisted==0); /* reset persists even if sound queue full */
  assert(open_count>=4);
+ assert(room_audio_get_volume()==100);
+ assert(!room_audio_set_volume(101));assert(room_audio_get_volume()==100);
+ assert(room_audio_set_volume(45));run_worker();assert(persisted_volume==45&&room_audio_get_volume()==45);
+ before=writes;assert(room_audio_test());run_worker();assert(writes>before&&last_volume==45);
+ assert(room_audio_set_volume(0));run_worker();before=writes;
+ assert(room_audio_test());run_worker();assert(writes==before&&persisted_volume==0);
+ assert(room_audio_set_volume(100));run_worker();assert(persisted_volume==100);
+ persisted_volume=62;room_audio_start();assert(room_audio_get_volume()==62);
+ persisted_volume=255;room_audio_start();assert(room_audio_get_volume()==100);
  puts("PASS: production audio stereo PCM/level/startup/drain, failure mute, explicit speaker test, per-cycle auto-off and NVS preference writes");
  return 0;
 }

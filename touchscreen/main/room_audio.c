@@ -16,6 +16,8 @@
 typedef struct {int key;int64_t at;} cue_t;
 static QueueHandle_t cues;
 static atomic_uint notify_mask;
+static atomic_uint output_volume=100;
+unsigned room_audio_get_volume(void){return atomic_load(&output_volume);}
 static atomic_bool preferences_dirty;
 bool room_audio_notify_enabled(int key){return key>=3&&key<=6&&(atomic_load(&notify_mask)&(1U<<(key-3)))!=0;}
 
@@ -39,7 +41,7 @@ static void save_preferences(void)
 {
     if(!atomic_exchange(&preferences_dirty,false))return;
     nvs_handle_t nvs;esp_err_t err=nvs_open("room_alerts",NVS_READWRITE,&nvs);
-    if(err==ESP_OK){err=nvs_set_u8(nvs,"notify",(uint8_t)atomic_load(&notify_mask));if(err==ESP_OK)err=nvs_commit(nvs);nvs_close(nvs);}
+    if(err==ESP_OK){err=nvs_set_u8(nvs,"notify",(uint8_t)atomic_load(&notify_mask));if(err==ESP_OK)err=nvs_set_u8(nvs,"volume",(uint8_t)room_audio_get_volume());if(err==ESP_OK)err=nvs_commit(nvs);nvs_close(nvs);}
     if(err!=ESP_OK){atomic_store(&preferences_dirty,true);ESP_LOGW("room_audio","Could not persist notification preferences");}
 }
 static void audio_task(void *arg)
@@ -52,6 +54,7 @@ static void audio_task(void *arg)
         /* Completion cues carry permission captured when the cycle ended.
          * The one-shot toggle is already off by the time playback starts. */
         if(esp_timer_get_time()-cue.at>5000000)continue;
+        if(room_audio_get_volume()==0){ESP_LOGI("room_audio","Volume muted; cue skipped");continue;}
         if(!codec){
             codec=bsp_audio_codec_speaker_init();
             esp_codec_dev_sample_info_t format={.sample_rate=16000,.channel=2,.bits_per_sample=16};
@@ -60,14 +63,18 @@ static void audio_task(void *arg)
                 if(codec){esp_codec_dev_delete(codec);}codec=NULL;
                 bsp_audio_poweramp_enable(false);continue;
             }
-            int volume=esp_codec_dev_set_out_vol(codec,100);
+            int volume=esp_codec_dev_set_out_vol(codec,(int)room_audio_get_volume());
             int mute=esp_codec_dev_set_out_mute(codec,true);
             esp_err_t pa=bsp_audio_poweramp_enable(false);
-            ESP_LOGI("room_audio","Speaker configured: 16000 Hz stereo, volume=100, PCM peak=32767; volume_rc=%d mute_rc=%d amp_rc=0x%x",volume,mute,(unsigned)pa);
+            ESP_LOGI("room_audio","Speaker configured: 16000 Hz stereo, PCM peak=32767; volume_rc=%d mute_rc=%d amp_rc=0x%x",volume,mute,(unsigned)pa);
             if(volume!=ESP_CODEC_DEV_OK||mute!=ESP_CODEC_DEV_OK||pa!=ESP_OK){
                 esp_codec_dev_close(codec);esp_codec_dev_delete(codec);codec=NULL;continue;
             }
         }
+        unsigned requested_volume=room_audio_get_volume();
+        int volume_rc=esp_codec_dev_set_out_vol(codec,(int)requested_volume);
+        if(volume_rc!=ESP_CODEC_DEV_OK){ESP_LOGW("room_audio","Volume update failed: rc=%d",volume_rc);continue;}
+        ESP_LOGI("room_audio","Playing cue at volume=%u",requested_volume);
         esp_err_t amp=bsp_audio_poweramp_enable(true);
         int unmute=esp_codec_dev_set_out_mute(codec,false);
         if(amp!=ESP_OK||unmute!=ESP_CODEC_DEV_OK){
@@ -90,9 +97,10 @@ static void audio_task(void *arg)
 void room_audio_start(void)
 {
     /* Independent appliance preferences; notifications are opt-in. */
-    nvs_handle_t nvs;uint8_t saved=0;
-    if(nvs_open("room_alerts",NVS_READONLY,&nvs)==ESP_OK){nvs_get_u8(nvs,"notify",&saved);nvs_close(nvs);}
+    nvs_handle_t nvs;uint8_t saved=0,volume=100;
+    if(nvs_open("room_alerts",NVS_READONLY,&nvs)==ESP_OK){nvs_get_u8(nvs,"notify",&saved);nvs_get_u8(nvs,"volume",&volume);nvs_close(nvs);}
     atomic_store(&notify_mask,saved&15U);
+    atomic_store(&output_volume,volume<=100?volume:100);
     cues=xQueueCreate(8,sizeof(cue_t));
     if(!cues){ESP_LOGW("room_audio","Completion audio queue unavailable");return;}
     if(xTaskCreate(audio_task,"room_audio",6144,NULL,2,NULL)!=pdPASS){
@@ -127,7 +135,15 @@ bool room_audio_set_notify(int key,bool enabled)
     /* A full queue already wakes the worker, which saves the dirty mask. */
     xQueueSend(cues,&save,0);return true;
 }
+bool room_audio_set_volume(unsigned percent)
+{
+    if(!cues||percent>100)return false;
+    atomic_store(&output_volume,percent);atomic_store(&preferences_dirty,true);
+    cue_t save={.key=-1};xQueueSend(cues,&save,0);return true;
+}
 #else
+unsigned room_audio_get_volume(void){return 100;}
+bool room_audio_set_volume(unsigned percent){return false;}
 bool room_audio_test(void){return false;}
 bool room_audio_notify_enabled(int key){return false;}
 bool room_audio_set_notify(int key,bool enabled){return false;}

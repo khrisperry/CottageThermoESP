@@ -46,3 +46,6 @@ add_executable(audio_test test_audio.c)
 target_include_directories(audio_test PRIVATE audio_stubs ../../touchscreen/main)
 target_compile_options(audio_test PRIVATE -Wall -Wextra -Werror -Wno-unused-parameter)
 target_link_libraries(audio_test PRIVATE m)
+
+add_executable(camera_scale_test test_camera_scale.c)
+target_compile_options(camera_scale_test PRIVATE -Wall -Wextra -Werror)

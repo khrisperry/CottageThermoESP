@@ -24,6 +24,7 @@
 #include "room_settings.h"
 #include "wifi_setup.h"
 #include "room_camera_size.h"
+#include "room_camera_scale.h"
 #include "room_visual_state.h"
 #include "room_feedback.h"
 #include "room_audio.h"
@@ -38,7 +39,7 @@ static const char *actions[]={"on","off","open","stop","close","start"};
 typedef struct { bool available; unsigned actions; int64_t sampled; char state[128]; } item_t;
 typedef struct {
     item_t items[COUNT];room_optimistic_t optimistic[COUNT]; int64_t ha_at,climate_at;
-    bool ha_ok,climate_ok,has_temp,has_target,simulation;
+    bool ha_ok,climate_ok,has_temp,has_target,simulation,settings_open,camera_fill;
     unsigned pending;int64_t notice_until;
     float temp,target; char mode[32],reason[80],notice[128],ha_error[128];
     unsigned page,generation;
@@ -48,7 +49,8 @@ static model_t model;
 static SemaphoreHandle_t mutex;
 static QueueHandle_t commands;
 static lv_obj_t *body[4],*nav[4],*connection,*notice,*temp_label,*target_label,*mode_label,*reason_label;
-static lv_obj_t *states[COUNT],*control[COUNT][6],*minus_button,*plus_button,*apply_button,*camera_image,*camera_note,*wifi_button;
+static lv_obj_t *states[COUNT],*control[COUNT][6],*minus_button,*plus_button,*apply_button,*camera_image,*camera_note,*settings_button;
+static lv_obj_t *settings_modal,*settings_volume,*settings_volume_label,*settings_camera_button,*settings_wifi_button,*settings_close_button;
 static lv_obj_t *temperature_ring,*heat_badge,*camera_frame,*camera_status,*tile[COUNT],*icon_badge[COUNT];
 static lv_obj_t *bulb_head[COUNT],*bulb_stem[COUNT],*bulb_base[COUNT],*activity_ring[COUNT];
 static lv_obj_t *notify_button[4];
@@ -152,7 +154,7 @@ static void network_task(void *arg)
 }
 static bool camera_current(unsigned generation)
 {
-    model_t m=snapshot();return m.page==3 && m.generation==generation && current(m.ha_at)&&m.items[10].available;
+    model_t m=snapshot();return !m.settings_open && m.page==3 && m.generation==generation && current(m.ha_at)&&m.items[10].available;
 }
 static void camera_task(void *arg)
 {
@@ -205,9 +207,7 @@ static void camera_task(void *arg)
                         image_desc=(lv_image_dsc_t){.header={.magic=LV_IMAGE_HEADER_MAGIC,.cf=LV_COLOR_FORMAT_RGB565,
                             .w=info.width,.h=info.height,.stride=info.width*2},.data_size=info.output_len,.data=image_pixels};
                         lv_image_set_src(camera_image,&image_desc);
-                        uint32_t scale=256;
-                        if(info.width>432)scale=432*256/info.width;
-                        if(info.height*scale/256>274)scale=274*256/info.height;
+                        uint32_t scale=room_camera_scale(info.width,info.height,454,306,m.camera_fill);
                         lv_image_set_scale(camera_image,scale);lv_obj_align(camera_image,LV_ALIGN_CENTER,0,0);
                         lv_obj_remove_flag(camera_image,LV_OBJ_FLAG_HIDDEN);
                         lv_label_set_text(camera_note,"Auto-refreshing snapshots");
@@ -228,13 +228,16 @@ static void enabled(lv_obj_t *b,bool value) { if(value)lv_obj_remove_state(b,LV_
 static void select_page(unsigned p)
 {
     visible_page=p;last_touch=esp_timer_get_time();
+    if(settings_modal)lv_obj_add_flag(settings_modal,LV_OBJ_FLAG_HIDDEN);
     for(unsigned n=0;n<4;++n){if(n==p)lv_obj_remove_flag(body[n],LV_OBJ_FLAG_HIDDEN);else lv_obj_add_flag(body[n],LV_OBJ_FLAG_HIDDEN);
         lv_obj_set_style_bg_color(nav[n],lv_color_hex(n==p?0x64dfc4:0x151f2d),0);lv_obj_set_style_text_color(nav[n],lv_color_hex(n==p?0x0b111b:0x92a3b8),0);}
-    xSemaphoreTake(mutex,portMAX_DELAY);model.page=p;++model.generation;xSemaphoreGive(mutex);
+    xSemaphoreTake(mutex,portMAX_DELAY);model.page=p;model.settings_open=false;++model.generation;xSemaphoreGive(mutex);
     lv_obj_add_flag(camera_image,LV_OBJ_FLAG_HIDDEN);
     lv_label_set_text(camera_note,"Loading camera...");
     lv_label_set_text(camera_status,LV_SYMBOL_VIDEO "  CONNECTING");
 }
+static void open_settings(void);
+static void settings_event(lv_event_t *e){(void)e;open_settings();}
 static void sound_test_event(lv_event_t *e)
 {
     last_touch=esp_timer_get_time();
@@ -249,6 +252,7 @@ static void notify_event(lv_event_t *e)
 static void nav_event(lv_event_t *e) {select_page((unsigned)(uintptr_t)lv_event_get_user_data(e));}
 static void gesture(lv_event_t *e)
 {
+    if(snapshot().settings_open)return;
     lv_indev_t *input=lv_indev_active();if(!input)return;
     lv_dir_t d=lv_indev_get_gesture_dir(input);
     if(d==LV_DIR_LEFT||d==LV_DIR_RIGHT){select_page((visible_page+(d==LV_DIR_LEFT?1:3))%4);lv_indev_wait_release(input);}
@@ -304,10 +308,54 @@ static lv_obj_t *button(lv_obj_t *parent,const char *text,int x,int y,int width,
     lv_obj_add_flag(o,LV_OBJ_FLAG_GESTURE_BUBBLE);lv_obj_add_event_cb(o,cb,LV_EVENT_CLICKED,(void*)id);
     lv_obj_t *l=lv_label_create(o);lv_label_set_text(l,text);lv_obj_center(l);return o;
 }
+static void settings_close_event(lv_event_t *e)
+{
+    (void)e;last_touch=esp_timer_get_time();lv_obj_add_flag(settings_modal,LV_OBJ_FLAG_HIDDEN);
+    xSemaphoreTake(mutex,portMAX_DELAY);model.settings_open=false;++model.generation;xSemaphoreGive(mutex);
+}
+static void settings_volume_event(lv_event_t *e)
+{
+    last_touch=esp_timer_get_time();unsigned volume=(unsigned)lv_slider_get_value(settings_volume);
+    lv_label_set_text_fmt(settings_volume_label,"Volume: %u%%%s",volume,volume?"":" (muted)");
+    if(lv_event_get_code(e)==LV_EVENT_RELEASED&&!room_audio_set_volume(volume))message("Volume setting busy; try again");
+}
+static void settings_camera_event(lv_event_t *e)
+{
+    (void)e;last_touch=esp_timer_get_time();
+    xSemaphoreTake(mutex,portMAX_DELAY);model.camera_fill=!model.camera_fill;++model.generation;bool fill=model.camera_fill;xSemaphoreGive(mutex);
+    lv_label_set_text(lv_obj_get_child(settings_camera_button,0),fill?"Camera: Fill (crop edges)":"Camera: Fit (whole image)");
+}
+static void open_settings(void)
+{
+    last_touch=esp_timer_get_time();
+    if(!settings_modal){
+        settings_modal=panel(lv_screen_active(),12,57,456,364,CARD,18);
+        lv_obj_add_flag(settings_modal,LV_OBJ_FLAG_CLICKABLE);
+        label(settings_modal,"Settings",20,16,240,&lv_font_montserrat_24);
+        settings_close_button=button(settings_modal,"Close",342,12,94,34,settings_close_event,0);
+        settings_volume_label=label(settings_modal,"",24,65,400,&lv_font_montserrat_20);
+        settings_volume=lv_slider_create(settings_modal);lv_obj_set_pos(settings_volume,36,111);lv_obj_set_size(settings_volume,384,16);
+        lv_slider_set_range(settings_volume,0,100);
+        lv_obj_set_style_bg_color(settings_volume,lv_color_hex(MINT),LV_PART_INDICATOR);
+        lv_obj_add_event_cb(settings_volume,settings_volume_event,LV_EVENT_VALUE_CHANGED,NULL);
+        lv_obj_add_event_cb(settings_volume,settings_volume_event,LV_EVENT_RELEASED,NULL);
+        button(settings_modal,LV_SYMBOL_PLAY "  Test sound",24,150,408,42,sound_test_event,0);
+        settings_camera_button=button(settings_modal,"",24,202,408,40,settings_camera_event,0);
+        settings_wifi_button=button(settings_modal,"Wi-Fi setup",24,252,408,40,wifi_setup_event,0);
+        lv_obj_t *hint=label(settings_modal,"For HA/controller settings, join the setup Wi-Fi, then open 192.168.4.1/settings",24,305,408,&lv_font_montserrat_14);
+        tint(hint,MUTED);
+    }
+    lv_slider_set_value(settings_volume,(int32_t)room_audio_get_volume(),LV_ANIM_OFF);
+    lv_label_set_text_fmt(settings_volume_label,"Volume: %u%%%s",room_audio_get_volume(),room_audio_get_volume()?"":" (muted)");
+    xSemaphoreTake(mutex,portMAX_DELAY);model.settings_open=true;++model.generation;bool fill=model.camera_fill;xSemaphoreGive(mutex);
+    lv_label_set_text(lv_obj_get_child(settings_camera_button,0),fill?"Camera: Fill (crop edges)":"Camera: Fit (whole image)");
+    lv_obj_remove_flag(settings_modal,LV_OBJ_FLAG_HIDDEN);
+    lv_obj_move_to_index(settings_modal,-1);
+}
 static void refresh(lv_timer_t *timer)
 {
     model_t m=snapshot();int64_t now=esp_timer_get_time();
-    if(visible_page&&now-last_touch>60000000){select_page(0);m=snapshot();}
+    if((visible_page||m.settings_open)&&now-last_touch>60000000){select_page(0);m=snapshot();}
     bool ha=m.ha_ok&&current(m.ha_at),climate=m.climate_ok&&current(m.climate_at);
     lv_label_set_text_fmt(connection,LV_SYMBOL_WIFI "  HA %s",ha?"ONLINE":"OFFLINE");
     tint(connection,ha?MINT:MUTED);
@@ -391,9 +439,7 @@ static void build_ui(void)
     label(screen,"Cottage",16,12,138,&lv_font_montserrat_24);
     connection=label(screen,LV_SYMBOL_WIFI "  HA OFFLINE",160,9,132,&lv_font_montserrat_14);
     heat_badge=label(screen,"HEAT OFFLINE",160,29,132,&lv_font_montserrat_14);tint(heat_badge,MUTED);
-    lv_obj_t *sound_button=button(screen,"Sound",300,10,56,34,sound_test_event,0);
-    lv_obj_set_style_text_font(sound_button,&lv_font_montserrat_14,0);
-    wifi_button=button(screen,LV_SYMBOL_SETTINGS "  Wi-Fi",364,10,100,34,wifi_setup_event,0);
+    settings_button=button(screen,LV_SYMBOL_SETTINGS " Settings",336,10,128,34,settings_event,0);
     const char *nav_text[]={LV_SYMBOL_HOME "  Climate",LV_SYMBOL_POWER "  Home",LV_SYMBOL_LOOP "  Laundry",LV_SYMBOL_VIDEO "  Camera"};
     for(int n=0;n<4;++n){
         body[n]=lv_obj_create(screen);lv_obj_remove_style_all(body[n]);lv_obj_set_pos(body[n],12,57);lv_obj_set_size(body[n],456,364);
@@ -459,9 +505,10 @@ static void build_ui(void)
     lv_obj_t *camera_title=label(body[3],"Parking lot",0,1,240,&lv_font_montserrat_24);
     (void)camera_title;
     camera_status=label(body[3],LV_SYMBOL_VIDEO "  CONNECTING",252,7,204,&lv_font_montserrat_14);tint(camera_status,MINT);
-    camera_frame=panel(body[3],0,40,456,290,0x05090e,16);
+    camera_frame=panel(body[3],0,32,456,308,0x05090e,16);
+    lv_obj_remove_flag(camera_frame,LV_OBJ_FLAG_OVERFLOW_VISIBLE);lv_obj_set_style_clip_corner(camera_frame,true,0);
     camera_image=lv_image_create(camera_frame);lv_obj_add_flag(camera_image,LV_OBJ_FLAG_HIDDEN);lv_obj_add_flag(camera_image,LV_OBJ_FLAG_GESTURE_BUBBLE);
-    camera_note=label(body[3],"Loading camera...",0,341,456,&lv_font_montserrat_14);centered(camera_note);tint(camera_note,MUTED);
+    camera_note=label(body[3],"Loading camera...",0,346,456,&lv_font_montserrat_14);centered(camera_note);tint(camera_note,MUTED);
     lv_timer_create(refresh,250,NULL);select_page(0);refresh(NULL);
 }
 void room_display_start(void)

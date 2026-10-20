@@ -7,7 +7,7 @@ static int64_t now=1000000;
 static int posts=0,queue_count=0;
 static char last_path[80],last_post[256];
 static bool unknown=false,wifi_setup_requested=false;
-static unsigned test_notify_mask;
+static unsigned test_notify_mask,test_volume=100;
 #include "../../touchscreen/main/room_display.c"
 static command_t queued;
 int64_t esp_timer_get_time(void){return now;}
@@ -30,6 +30,8 @@ void bsp_display_rotate(lv_display_t *d,lv_display_rotation_t r){lv_display_set_
 int bsp_display_brightness_set(int n){return 0;}
 void *bsp_i2c_get_handle(void){return (void*)47;}
 const char *room_settings_controller_url(void){return CONFIG_ROOM_CONTROLLER_URL;}
+unsigned room_audio_get_volume(void){return test_volume;}
+bool room_audio_set_volume(unsigned value){if(value>100)return false;test_volume=value;return true;}
 bool room_audio_test(void){return true;}
 bool room_audio_notify_enabled(int key){return (test_notify_mask&(1U<<(key-3)))!=0;}
 bool room_audio_set_notify(int key,bool enabled){unsigned bit=1U<<(key-3);test_notify_mask=enabled?test_notify_mask|bit:test_notify_mask&~bit;return true;}
@@ -77,7 +79,11 @@ int main(void)
  lv_indev_t *input=lv_indev_create();lv_indev_set_type(input,LV_INDEV_TYPE_POINTER);lv_indev_set_read_cb(input,pointer_read);lv_indev_set_display(input,d);
  mutex=(void*)1;commands=(void*)1;build_ui();
  assert(lv_obj_has_state(control[0][0],LV_STATE_DISABLED));
- click(wifi_button);assert(wifi_setup_requested);
+ click(settings_button);assert(model.settings_open&&!lv_obj_has_flag(settings_modal,LV_OBJ_FLAG_HIDDEN));
+ lv_slider_set_value(settings_volume,42,LV_ANIM_OFF);lv_obj_send_event(settings_volume,LV_EVENT_RELEASED,NULL);assert(test_volume==42);
+ click(settings_camera_button);assert(model.camera_fill);
+ click(settings_wifi_button);assert(wifi_setup_requested);
+ click(settings_close_button);assert(!model.settings_open&&lv_obj_has_flag(settings_modal,LV_OBJ_FLAG_HIDDEN));
  populate();refresh(NULL);assert(!lv_obj_has_state(control[0][0],LV_STATE_DISABLED));
  assert(!strcmp(lv_label_get_text(temp_label),"65.2 F"));assert(!strcmp(lv_label_get_text(states[3]),"Running"));
  click(notify_button[0]);assert(room_audio_notify_enabled(3));assert(!room_audio_notify_enabled(4));
