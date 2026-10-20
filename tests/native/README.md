@@ -26,3 +26,10 @@ Version 0.6.2 adds `keepalive_test`, exercising the production transport with a 
 ```
 
 Version 0.6.3 corrects initial GET setup: IDF 6.0.1 returns `ESP_ERR_NOT_FOUND` when `set_post_field(NULL, 0)` deletes a missing Content-Type. The transport now sets Content-Type before resetting the body. The fixture models the actual missing-header behavior and checks GET → POST → GET. HA startup, request failures and successful polling now produce credential-free diagnostics. Source/API review only; C compilation/tests remain unavailable in the coding workspace.
+
+Version 0.7.0 restyles the four production LVGL pages and adds `camera_size_test`, which exercises the bounded JPEG marker parser and 1/2, 1/4, 1/8 downscaling selection, including 1080p/4K, portrait, progressive and malformed inputs. The native UI target still renders the actual screens and checks swipe/control behavior. These C targets and firmware have not been compiled or executed for this revision because the execution workspace is unavailable.
+
+```sh
+./camera_size_test
+./native_ui_test
+```

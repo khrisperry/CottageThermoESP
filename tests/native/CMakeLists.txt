@@ -32,3 +32,6 @@ add_executable(wifi_portal_test test_wifi_portal.c)
 add_executable(keepalive_test test_keepalive.c)
 target_include_directories(keepalive_test PRIVATE transport_stubs ../../touchscreen/main)
 target_compile_options(keepalive_test PRIVATE -Wall -Wextra -Werror -Wno-unused-parameter)
+
+add_executable(camera_size_test test_camera_size.c)
+target_compile_options(camera_size_test PRIVATE -Wall -Wextra -Werror)

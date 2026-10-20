@@ -61,7 +61,7 @@ static esp_err_t ha_http(const char *path,const char *post,void *buffer,size_t c
     char *bearer=malloc(len+8);if(!bearer)return ESP_ERR_NO_MEM;
     snprintf(bearer,len+8,"Bearer %s",COTTAGE_HA_TOKEN);
     xSemaphoreTake(ha_io_mutex,portMAX_DELAY);
-    esp_err_t err=ha_auth_failed?ESP_ERR_INVALID_STATE:room_http_keepalive(&ha_session,COTTAGE_HA_URL,"Authorization",bearer,path,post,buffer,capacity,post?10000:7000,code,length);
+    esp_err_t err=ha_auth_failed?ESP_ERR_INVALID_STATE:room_http_keepalive(&ha_session,COTTAGE_HA_URL,"Authorization",bearer,path,post,buffer,capacity,post?10000:(strstr(path,"/api/camera_proxy/")==path?15000:7000),code,length);
     if(*code==401||*code==403)ha_auth_failed=true;
     xSemaphoreGive(ha_io_mutex);
     /* No requests are repeated automatically, including ambiguous service timeouts. */
