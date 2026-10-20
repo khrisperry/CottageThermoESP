@@ -20,6 +20,7 @@
 #include "room_display.h"
 #include "room_transport.h"
 #include "room_ha.h"
+#include "wifi_setup.h"
 
 static const char *TAG="room_thermostat";
 static i2c_master_dev_handle_t probe;
@@ -67,6 +68,7 @@ static void sensor_task(void *arg)
 }
 static esp_err_t root(httpd_req_t *r)
 {
+    if(room_wifi_setup_request(r))return room_wifi_setup_get(r);
     httpd_resp_set_type(r,"text/html; charset=utf-8");return httpd_resp_send(r,(const char*)page_start,page_end-page_start-1);
 }
 static bool browser_authorized(httpd_req_t *r)
@@ -98,25 +100,10 @@ static esp_err_t proxy(httpd_req_t *r)
     if(status!=200)return httpd_resp_send_err(r,HTTPD_400_BAD_REQUEST,"Controller rejected request; check pairing and settings");
     httpd_resp_set_type(r,"application/json");httpd_resp_set_hdr(r,"Cache-Control","no-store");return httpd_resp_sendstr(r,out);
 }
-static void wifi_event(void *arg,esp_event_base_t base,int32_t id,void *data)
-{
-    if(base==WIFI_EVENT && (id==WIFI_EVENT_STA_START || id==WIFI_EVENT_STA_DISCONNECTED))esp_wifi_connect();
-    if(base==IP_EVENT && id==IP_EVENT_STA_GOT_IP) {
-        ip_event_got_ip_t *e=data;ESP_LOGI(TAG,"Room UI: http://" IPSTR,IP2STR(&e->ip_info.ip));
-    }
-}
 void app_main(void)
 {
     ESP_ERROR_CHECK(nvs_flash_init());ESP_ERROR_CHECK(esp_netif_init());ESP_ERROR_CHECK(esp_event_loop_create_default());
-    esp_netif_t *netif=esp_netif_create_default_wifi_sta();
-    ESP_ERROR_CHECK(esp_netif_set_hostname(netif,"CottageThermostat"));
-    wifi_init_config_t init=WIFI_INIT_CONFIG_DEFAULT();ESP_ERROR_CHECK(esp_wifi_init(&init));
-    ESP_ERROR_CHECK(esp_wifi_set_storage(WIFI_STORAGE_RAM));
-    ESP_ERROR_CHECK(esp_event_handler_register(WIFI_EVENT,ESP_EVENT_ANY_ID,wifi_event,NULL));
-    ESP_ERROR_CHECK(esp_event_handler_register(IP_EVENT,IP_EVENT_STA_GOT_IP,wifi_event,NULL));
-    wifi_config_t sta={0};snprintf((char*)sta.sta.ssid,sizeof(sta.sta.ssid),"%s",CONFIG_ROOM_WIFI_SSID);
-    snprintf((char*)sta.sta.password,sizeof(sta.sta.password),"%s",CONFIG_ROOM_WIFI_PASSWORD);
-    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA,&sta));ESP_ERROR_CHECK(esp_wifi_start());
+    room_wifi_start();
     room_ha_start();
     room_display_start();
     if(CONFIG_ROOM_SENSOR && CONFIG_ROOM_SDA>=0 && CONFIG_ROOM_SCL>=0 && CONFIG_ROOM_SDA!=CONFIG_ROOM_SCL) {
@@ -131,13 +118,14 @@ void app_main(void)
         i2c_device_config_t dev={.dev_addr_length=I2C_ADDR_BIT_LEN_7,.device_address=0x44,.scl_speed_hz=100000};
         if(bus)ESP_ERROR_CHECK(i2c_master_bus_add_device(bus,&dev,&probe));
     }
-    httpd_config_t cfg=HTTPD_DEFAULT_CONFIG();cfg.stack_size=8192;cfg.max_uri_handlers=12;httpd_handle_t h;ESP_ERROR_CHECK(httpd_start(&h,&cfg));
+    httpd_config_t cfg=HTTPD_DEFAULT_CONFIG();cfg.stack_size=8192;cfg.max_uri_handlers=16;httpd_handle_t h;ESP_ERROR_CHECK(httpd_start(&h,&cfg));
     httpd_uri_t routes[]={ {.uri="/",.method=HTTP_GET,.handler=root},
         {.uri="/api/status",.method=HTTP_GET,.handler=proxy}, {.uri="/api/target",.method=HTTP_POST,.handler=proxy}};
     for(unsigned i=0;i<3;++i)ESP_ERROR_CHECK(httpd_register_uri_handler(h,&routes[i]));
     ha_panel_register(h);
+    room_wifi_register(h);
     esp_sntp_setoperatingmode(SNTP_OPMODE_POLL);esp_sntp_setservername(0,"pool.ntp.org");esp_sntp_init();
     if(probe && strlen(CONFIG_ROOM_API_TOKEN)==32)xTaskCreate(sensor_task,"room_probe",6144,NULL,5,NULL);
     else ESP_LOGW(TAG,"Probe reporting disabled: configure probe pins/type and 32-character pairing token");
-    ESP_LOGI(TAG,"Room client v0.5.0; native display and browser services ready");
+    ESP_LOGI(TAG,"Room client v0.6.0; native display and browser services ready");
 }

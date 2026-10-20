@@ -84,3 +84,12 @@ Update this file with: date, branch/commit SHA, hardware board and wiring, firmw
 - The application filters arbitrary attributes/camera tokens from local responses, verifies HTTPS after NTP, refuses redirects and never automatically repeats mutations. Missing credentials make no requests; rejected credentials pause requests until reboot.
 - Native HA requires only its HA long-lived token. Existing controller pairing remains separate for furnace/browser access. Kids temperature is still display-only for the Williams controller.
 - Direct C client, empty-token and LVGL host checks use simulated requests. No live direct-ESP HA access or physical board action is claimed.
+
+## 2026-10-20 Captive Wi-Fi setup and physical startup follow-up
+
+- User wants captive portals as the default on these ESP devices going forward. This change applies it to the room display; existing other projects are not changed here.
+- User's Windows v0.5.0 build succeeded. Physical GT911/LCD initialization then overflowed the main stack; setting it to 16384 bytes allowed native startup. The new defaults and build helper preserve/enforce this minimum for local builds.
+- Physical Wi-Fi logs showed repeated authentication/disconnection without a confirmed IP. New code logs the numeric disconnect reason and uses a dedicated reconnect task with backoff.
+- Room v0.6.0 adds first-boot/failure setup AP, local DNS/HTTP capture, network scanning, connection testing, NVS save after IP assignment, old-profile retention on failure and an on-screen Wi-Fi setup button.
+- HA remains direct with the existing ignored secrets header. No bridge/token requirement was reintroduced; no furnace servo behavior was changed.
+- Coding workspace is unavailable. Portal JavaScript was checked with a mock DOM/transport; new C/DNS tests are supplied but have not been run. Firmware compile and physical AP/DHCP/DNS/save/reboot tests remain explicitly pending.

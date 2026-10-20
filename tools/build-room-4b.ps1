@@ -17,6 +17,15 @@ try {
         & idf.py @idfArgs set-target esp32s3
         if ($LASTEXITCODE -ne 0) { throw '4B target setup failed' }
     }
+    # Migrate older local configs too; defaults do not override saved values.
+    $configPath=Join-Path (Get-Location).Path 'sdkconfig.4b'
+    $configText=Get-Content $configPath -Raw
+    $mainStack=[regex]::Match($configText,'(?m)^CONFIG_ESP_MAIN_TASK_STACK_SIZE=(\d+)\r?$')
+    if (-not $mainStack.Success -or [int]$mainStack.Groups[1].Value -lt 16384) {
+        if ($mainStack.Success) { $configText=$configText.Replace($mainStack.Value,'CONFIG_ESP_MAIN_TASK_STACK_SIZE=16384') }
+        else { $configText += [Environment]::NewLine + 'CONFIG_ESP_MAIN_TASK_STACK_SIZE=16384' + [Environment]::NewLine }
+        [IO.File]::WriteAllText($configPath,$configText,[Text.UTF8Encoding]::new($false))
+    }
     if ($Configure) {
         & idf.py @idfArgs menuconfig
         if ($LASTEXITCODE -ne 0) { throw '4B configuration failed' }

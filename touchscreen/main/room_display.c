@@ -21,6 +21,7 @@
 #include "jpeg_decoder.h"
 #include "room_transport.h"
 #include "room_ha.h"
+#include "wifi_setup.h"
 
 #define COUNT 11
 #define FRESH_US 10000000LL
@@ -40,7 +41,7 @@ static model_t model;
 static SemaphoreHandle_t mutex;
 static QueueHandle_t commands;
 static lv_obj_t *body[4],*nav[4],*connection,*notice,*temp_label,*target_label,*mode_label,*reason_label;
-static lv_obj_t *states[COUNT],*control[COUNT][6],*minus_button,*plus_button,*apply_button,*camera_image,*camera_note;
+static lv_obj_t *states[COUNT],*control[COUNT][6],*minus_button,*plus_button,*apply_button,*camera_image,*camera_note,*wifi_button;
 static lv_image_dsc_t image_desc;
 static void *image_pixels;
 static float draft=65;
@@ -186,6 +187,7 @@ static void select_page(unsigned p)
     lv_obj_add_flag(camera_image,LV_OBJ_FLAG_HIDDEN);
     lv_label_set_text(camera_note,"Loading live view...");
 }
+static void wifi_setup_event(lv_event_t *e){last_touch=esp_timer_get_time();room_wifi_request_setup();}
 static void nav_event(lv_event_t *e) {select_page((unsigned)(uintptr_t)lv_event_get_user_data(e));}
 static void gesture(lv_event_t *e)
 {
@@ -224,7 +226,8 @@ static void refresh(lv_timer_t *timer)
     if(visible_page&&now-last_touch>60000000){select_page(0);m=snapshot();}
     bool ha=m.ha_ok&&current(m.ha_at),climate=m.climate_ok&&current(m.climate_at);
     lv_label_set_text_fmt(connection,"HA %s  |  Heat %s",ha?"online":"offline",climate?"online":"offline");
-    lv_label_set_text(notice,*m.notice?m.notice:m.ha_error);
+    char wifi_hint[96];
+    lv_label_set_text(notice,room_wifi_setup_hint(wifi_hint,sizeof(wifi_hint))?wifi_hint:(*m.notice?m.notice:m.ha_error));
     if(!editing&&climate&&m.has_target)draft=m.target;
     char text[80];
     if(climate&&m.has_temp){snprintf(text,sizeof(text),"%.1f F",m.temp);lv_label_set_text(temp_label,text);}else lv_label_set_text(temp_label,"-- F");
@@ -245,7 +248,8 @@ static void build_ui(void)
     lv_obj_set_style_text_color(screen,lv_color_hex(0xecf5f4),0);lv_obj_set_style_text_font(screen,&lv_font_montserrat_16,0);
     lv_obj_remove_flag(screen,LV_OBJ_FLAG_SCROLLABLE);lv_obj_add_event_cb(screen,gesture,LV_EVENT_GESTURE,NULL);
     label(screen,"Cottage",16,9,150,&lv_font_montserrat_24);
-    connection=label(screen,"Connecting...",190,16,280,&lv_font_montserrat_14);
+    connection=label(screen,"Connecting...",155,16,225,&lv_font_montserrat_14);
+    wifi_button=button(screen,"Wi-Fi",390,7,78,34,wifi_setup_event,0);
     for(int n=0;n<4;++n){body[n]=lv_obj_create(screen);lv_obj_remove_style_all(body[n]);lv_obj_set_pos(body[n],12,49);lv_obj_set_size(body[n],456,333);lv_obj_remove_flag(body[n],LV_OBJ_FLAG_SCROLLABLE);lv_obj_add_flag(body[n],LV_OBJ_FLAG_GESTURE_BUBBLE);
         nav[n]=button(screen,pages[n],12+n*116,429,108,44,nav_event,n);}
     notice=label(screen,"Waiting for first update",16,388,448,&lv_font_montserrat_14);

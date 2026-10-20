@@ -6,7 +6,7 @@
 static int64_t now=1000000;
 static int posts=0,queue_count=0;
 static char last_path[80],last_post[256];
-static bool unknown=false;
+static bool unknown=false,wifi_setup_requested=false;
 #include "../../touchscreen/main/room_display.c"
 static command_t queued;
 int64_t esp_timer_get_time(void){return now;}
@@ -28,6 +28,8 @@ lv_display_t *bsp_display_start(void){return lv_display_get_default();}
 void bsp_display_rotate(lv_display_t *d,lv_display_rotation_t r){lv_display_set_rotation(d,r);}
 int bsp_display_brightness_set(int n){return 0;}
 void *bsp_i2c_get_handle(void){return (void*)47;}
+void room_wifi_request_setup(void){wifi_setup_requested=true;}
+bool room_wifi_setup_hint(char *buffer,size_t size){return false;}
 static char ha_json[4096];
 esp_err_t room_http(const char *origin,const char *header,const char *token,const char *path,const char *post,void *out,size_t cap,int timeout,int *status,int *length)
 {
@@ -70,6 +72,7 @@ int main(void)
  lv_indev_t *input=lv_indev_create();lv_indev_set_type(input,LV_INDEV_TYPE_POINTER);lv_indev_set_read_cb(input,pointer_read);lv_indev_set_display(input,d);
  mutex=(void*)1;commands=(void*)1;build_ui();
  assert(lv_obj_has_state(control[0][0],LV_STATE_DISABLED));
+ click(wifi_button);assert(wifi_setup_requested);
  populate();refresh(NULL);assert(!lv_obj_has_state(control[0][0],LV_STATE_DISABLED));
  assert(!strcmp(lv_label_get_text(temp_label),"65.2 F"));assert(!strcmp(lv_label_get_text(states[3]),"Running"));
  int no_commands=queue_count;

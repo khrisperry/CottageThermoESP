@@ -10,10 +10,10 @@ menu "Cottage room thermostat"
         depends on ROOM_NATIVE_DISPLAY
         default n
     config ROOM_WIFI_SSID
-        string "Controller bench AP or LAN SSID"
-        default "CottageThermoBench"
+        string "Legacy Wi-Fi SSID (optional migration only; use captive portal)"
+        default ""
     config ROOM_WIFI_PASSWORD
-        string "Wi-Fi password (blank for bench AP)"
+        string "Legacy Wi-Fi password (optional migration only)"
         default ""
     config ROOM_CONTROLLER_URL
         string "Controller base URL (no trailing slash)"

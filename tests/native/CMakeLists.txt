@@ -26,3 +26,5 @@ add_executable(empty_ha_test test_direct_ha.c ../../touchscreen/managed_componen
 target_compile_definitions(empty_ha_test PRIVATE ROOM_HA_EMPTY=1)
 target_include_directories(empty_ha_test PRIVATE stubs "${CMAKE_CURRENT_BINARY_DIR}" ../../touchscreen/main ../../touchscreen/managed_components/espressif__cjson/cJSON)
 target_link_libraries(empty_ha_test PRIVATE lvgl m)
+
+add_executable(wifi_portal_test test_wifi_portal.c)
