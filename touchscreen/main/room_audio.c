@@ -27,7 +27,7 @@ static bool tone(esp_codec_dev_handle_t codec,float hz,unsigned ms)
         for(unsigned n=0;n<count;++n){
             unsigned i=at+n;
             float envelope=fminf(1.0f,fminf(i/220.0f,(total-i)/440.0f));
-            int16_t sample=(int16_t)(6000*envelope*sinf(6.2831853f*hz*i/16000.0f));
+            int16_t sample=(int16_t)(32767.0f*envelope*sinf(6.2831853f*hz*i/16000.0f));
             pcm[n*2]=sample;pcm[n*2+1]=sample;
         }
         if(esp_codec_dev_write(codec,pcm,count*2*sizeof(*pcm))!=ESP_CODEC_DEV_OK)return false;
@@ -60,10 +60,10 @@ static void audio_task(void *arg)
                 if(codec){esp_codec_dev_delete(codec);}codec=NULL;
                 bsp_audio_poweramp_enable(false);continue;
             }
-            int volume=esp_codec_dev_set_out_vol(codec,75);
+            int volume=esp_codec_dev_set_out_vol(codec,100);
             int mute=esp_codec_dev_set_out_mute(codec,true);
             esp_err_t pa=bsp_audio_poweramp_enable(false);
-            ESP_LOGI("room_audio","Speaker configured: 16000 Hz stereo, volume=75, PCM peak=6000; volume_rc=%d mute_rc=%d amp_rc=0x%x",volume,mute,(unsigned)pa);
+            ESP_LOGI("room_audio","Speaker configured: 16000 Hz stereo, volume=100, PCM peak=32767; volume_rc=%d mute_rc=%d amp_rc=0x%x",volume,mute,(unsigned)pa);
             if(volume!=ESP_CODEC_DEV_OK||mute!=ESP_CODEC_DEV_OK||pa!=ESP_OK){
                 esp_codec_dev_close(codec);esp_codec_dev_delete(codec);codec=NULL;continue;
             }

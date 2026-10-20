@@ -1,6 +1,6 @@
 # Cottage room panel — Waveshare ESP32-S3-Touch-LCD-4B
 
-Version 0.8.2 provides the **native 480×480 LCD and capacitive touch interface**. This is for the **4B**, with 16 MB flash and 8 MB octal PSRAM. It uses Waveshare BSP 2.0.0, LVGL 9.2.0 and ESP LVGL port 2.6.2, compiled with ESP-IDF 6.0.1. The dependency lock pins the tested graph. **The ESP connects directly to Home Assistant using your long-lived token; no bridge process, bridge address or bridge token is required.** No device has been flashed or physically verified by the coding environment.
+Version 0.8.3 provides the **native 480×480 LCD and capacitive touch interface**. This is for the **4B**, with 16 MB flash and 8 MB octal PSRAM. It uses Waveshare BSP 2.0.0, LVGL 9.2.0 and ESP LVGL port 2.6.2, compiled with ESP-IDF 6.0.1. The dependency lock pins the tested graph. **The ESP connects directly to Home Assistant using your long-lived token; no bridge process, bridge address or bridge token is required.** No device has been flashed or physically verified by the coding environment.
 
 ## Device settings
 
@@ -88,7 +88,16 @@ The first audio implementation used codec volume 30 (approximately -35 dB on the
 
 Tap **Sound** in the header to play an explicit test chime without changing any notification toggle or waiting for a laundry cycle. Completion notifications remain opt-in for one cycle per appliance.
 
+## v0.8.3 volume and reset correction
+
+The chime now uses codec volume **100** and full-scale 16-bit sine PCM (peak **32767**) on both stereo slots. This is the maximum configured software level. The Sound test and completion chimes use the same output settings.
+
+Cycle history for the notification reset is now separate from freshness needed for a sound. A temporary HA failure, unavailable reading or stale gap suppresses an uncertain/stale chime but preserves the known running cycle. When a fresh idle/completed reading later arrives, that appliance's Notify toggle is cleared and saved even if the chime was suppressed. Logs report the reset and whether sound was suppressed.
+
 ## Validation
+
+- v0.8.3 updates the production-audio fixture for volume 100/full-scale peak, adds cycle-history assertions across missing/stale samples, and checks the reset-only path through the direct HA fixture. Source reviewed; these revised C checks and full firmware could not run because the execution workspace is unavailable again. The v0.8.2 host-audio result below is historical, not validation of physical loudness or this revision.
+
 
 - v0.8.2: production `room_audio.c` compiled with host GCC and mocked codec/RTOS/NVS under `-Wall -Wextra -Werror`. `audio_test` passed stereo/peak-level checks, startup/drain ordering, failure muting, explicit speaker testing, one-cycle auto-off and saved preference writes. ESP-IDF/toolchain and physical speaker remain unavailable, so the full firmware build and audible output still require local validation.
 

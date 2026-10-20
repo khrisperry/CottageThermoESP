@@ -29,7 +29,7 @@ esp_err_t bsp_audio_poweramp_enable(bool on){if(on&&amp_failure)return -1;amp_on
 int esp_codec_dev_open(esp_codec_dev_handle_t h,esp_codec_dev_sample_info_t *f){assert(f->sample_rate==16000&&f->channel==2&&f->bits_per_sample==16);++open_count;return ESP_CODEC_DEV_OK;}
 int esp_codec_dev_close(esp_codec_dev_handle_t h){return ESP_CODEC_DEV_OK;}
 void esp_codec_dev_delete(esp_codec_dev_handle_t h){}
-int esp_codec_dev_set_out_vol(esp_codec_dev_handle_t h,int volume){assert(volume==75);return ESP_CODEC_DEV_OK;}
+int esp_codec_dev_set_out_vol(esp_codec_dev_handle_t h,int volume){assert(volume==100);return ESP_CODEC_DEV_OK;}
 int esp_codec_dev_set_out_mute(esp_codec_dev_handle_t h,bool mute){muted=mute;return ESP_CODEC_DEV_OK;}
 int esp_codec_dev_write(esp_codec_dev_handle_t h,void *data,int len)
 {
@@ -47,7 +47,7 @@ int main(void)
  room_audio_laundry_done(3);assert(!queued);
  assert(room_audio_set_notify(3,true));assert(room_audio_set_notify(5,true));
  room_audio_laundry_done(3);assert(!room_audio_notify_enabled(3)&&room_audio_notify_enabled(5));
- run_worker();assert(persisted==4&&writes>0&&nonzero_writes>0&&peak>=5000&&peak<=6000);
+ run_worker();assert(persisted==4&&writes>0&&nonzero_writes>0&&peak>=32000&&peak<=32767);
  assert(muted&&!amp_on&&startup_delays==1&&drain_delays==1);
  unsigned before=writes;room_audio_laundry_done(3);assert(!queued&&writes==before);
  room_audio_laundry_done(5);assert(!room_audio_notify_enabled(5));run_worker();assert(persisted==0&&writes>before);

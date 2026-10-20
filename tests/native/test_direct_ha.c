@@ -10,13 +10,16 @@
 #include <string.h>
 static int64_t fake_time=1000000;
 static int gets,posts,frames,fail_code,missing=-1;
+static int completion_calls,reset_calls;
+static const char *washer_state="Running";
 static int semaphore_count,io_locked;
 static bool uncertain,unsupported,bad_temp;
 static char sent_path[160],sent_body[256];
 #include "../../touchscreen/main/room_ha.c"
 const char *room_settings_ha_url(void){return "https://cottageha.greenledges.net:8123";}
 const char *room_settings_ha_token(void){return COTTAGE_HA_TOKEN;}
-void room_audio_laundry_done(int key){}
+void room_audio_laundry_done(int key){if(key==3)++completion_calls;}
+bool room_audio_set_notify(int key,bool enabled){assert(!enabled);if(key==3)++reset_calls;return true;}
 int64_t esp_timer_get_time(void){return fake_time;}
 int xSemaphoreTake(void *p,int n){if(p==ha_io_mutex){assert(!io_locked);io_locked=1;}return 1;}
 int xSemaphoreGive(void *p){if(p==ha_io_mutex){assert(io_locked);io_locked=0;}return 1;}
@@ -34,7 +37,7 @@ esp_err_t room_http_keepalive(room_http_session_t **session,const char *origin,c
  ++gets;assert(strstr(path,"/api/states/")==path);
  int key=-1;for(int k=0;k<HA_COUNT;++k)if(!strcmp(path+12,ha_specs[k].entity))key=k;
  assert(key>=0);if(key==missing){*status=404;return 0;}
- *length=snprintf(out,cap,"{\"entity_id\":\"%s\",\"state\":\"%s\",\"attributes\":{\"supported_features\":%d,\"unit_of_measurement\":\"°F\",\"access_token\":\"never-return-this\",\"current_position\":55}}",ha_specs[key].entity,key==8?(bad_temp?"nan":"65.2"):key==3?"Running":"off",unsupported?0:8203);
+ *length=snprintf(out,cap,"{\"entity_id\":\"%s\",\"state\":\"%s\",\"attributes\":{\"supported_features\":%d,\"unit_of_measurement\":\"°F\",\"access_token\":\"never-return-this\",\"current_position\":55}}",ha_specs[key].entity,key==8?(bad_temp?"nan":"65.2"):key==3?washer_state:"off",unsupported?0:8203);
  return 0;
 }
 static cJSON *item(cJSON *root,int k){return cJSON_GetArrayItem(cJSON_GetObjectItem(root,"items"),k);}
@@ -58,6 +61,11 @@ int main(void)
  ha_command_waiting=true;before=gets;ha_poll_once();assert(gets==before);ha_command_waiting=false;
  uncertain=true;command(9,"stop","request-05",false);before=posts;uncertain=false;ha_poll_once();command(9,"stop","request-05",false);assert(posts==before);
  missing=3;ha_poll_once();root=room_ha_status();assert(cJSON_IsFalse(cJSON_GetObjectItem(item(root,3),"available")));assert(cJSON_IsTrue(cJSON_GetObjectItem(item(root,0),"available")));cJSON_Delete(root);missing=-1;
+ /* A missed read suppresses audio but must still reset that appliance's opt-in. */
+ washer_state="Not In Use";ha_poll_once();assert(reset_calls==1&&completion_calls==0);
+ washer_state="Washing";ha_poll_once();washer_state="Not In Use";ha_poll_once();assert(completion_calls==1);
+ ha_poll_once();assert(completion_calls==1&&reset_calls==1);
+ washer_state="Running";ha_poll_once();
  unsupported=true;bad_temp=true;ha_poll_once();root=room_ha_status();assert(cJSON_GetArraySize(cJSON_GetObjectItem(item(root,2),"actions"))==0);assert(cJSON_IsFalse(cJSON_GetObjectItem(item(root,8),"available")));cJSON_Delete(root);unsupported=false;bad_temp=false;
  ha_poll_once();char frame[10];int code,n;assert(room_ha_camera(frame,sizeof(frame),&code,&n)==0&&code==200&&n==4);assert(frames==1);
  fake_time+=31000000;root=room_ha_status();assert(cJSON_IsFalse(cJSON_GetObjectItem(root,"connected")));cJSON_Delete(root);

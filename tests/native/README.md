@@ -44,3 +44,5 @@ This test was compiled and passed with host GCC in the coding workspace. It does
 gcc -std=c11 -Wall -Wextra -Werror -Wno-unused-parameter -I tests/native/audio_stubs -I touchscreen/main tests/native/test_audio.c -lm -o /tmp/cottage-audio-test
 /tmp/cottage-audio-test
 ```
+
+v0.8.3 changes expected codec volume to 100 and PCM peak to full-scale 32767. Feedback tests preserve a running cycle for auto-off across unavailable/stale samples while suppressing a stale sound. The direct HA fixture checks a missing washer read followed by Not In Use clears its toggle without audio, and a normal fresh completion invokes the sound only once. These revised tests have not been executed because the workspace is unavailable again.

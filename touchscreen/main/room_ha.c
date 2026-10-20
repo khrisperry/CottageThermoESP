@@ -103,14 +103,16 @@ static ha_state_t ha_normalize(int key,cJSON *j)
 static void ha_laundry_lost(void)
 {
     xSemaphoreTake(ha_mutex,portMAX_DELAY);
-    memset(laundry_tracker,0,sizeof(laundry_tracker));
+    for(unsigned k=0;k<4;++k)room_laundry_observe(&laundry_tracker[k],"",false,esp_timer_get_time());
     xSemaphoreGive(ha_mutex);
 }
-static bool ha_laundry_sample(int key,const char *state,bool available,int64_t now)
+/* 0: no completion; 1: reset only after a gap; 2: fresh completion sound. */
+static int ha_laundry_sample(int key,const char *state,bool available,int64_t now)
 {
     xSemaphoreTake(ha_mutex,portMAX_DELAY);
     bool notify=room_laundry_observe(&laundry_tracker[key-3],state,available,now);
-    xSemaphoreGive(ha_mutex);return notify;
+    int result=notify?2:laundry_tracker[key-3].completed?1:0;
+    xSemaphoreGive(ha_mutex);return result;
 }
 static bool ha_read(int key,char *buffer,size_t capacity)
 {
@@ -121,7 +123,12 @@ static bool ha_read(int key,char *buffer,size_t capacity)
     cJSON *j=cJSON_ParseWithLengthOpts(buffer,n+1,NULL,true);
     bool valid=cJSON_IsObject(j)&&!strcmp(ha_string(j,"entity_id"),ha_specs[key].entity)&&cJSON_IsString(cJSON_GetObjectItemCaseSensitive(j,"state"));
     if(valid){ha_state_t s=ha_normalize(key,j);xSemaphoreTake(ha_mutex,portMAX_DELAY);ha_states[key]=s;xSemaphoreGive(ha_mutex);
-        if(key>=3&&key<=6&&ha_laundry_sample(key,s.state,s.available,s.at))room_audio_laundry_done(key);
+        if(key>=3&&key<=6){
+            int completion=ha_laundry_sample(key,s.state,s.available,s.at);
+            if(completion==2)room_audio_laundry_done(key);
+            else if(completion==1)room_audio_set_notify(key,false);
+            if(completion)ESP_LOGI("room_ha","%s cycle ended: Notify reset to Off%s",ha_specs[key].label,completion==1?" (no stale sound)":"");
+        }
     }
     cJSON_Delete(j);if(!valid){ha_laundry_lost();ha_global_error(0);}return valid;
 }
