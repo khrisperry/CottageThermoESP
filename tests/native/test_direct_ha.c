@@ -10,18 +10,20 @@
 #include <string.h>
 static int64_t fake_time=1000000;
 static int gets,posts,frames,fail_code,missing=-1;
+static int semaphore_count,io_locked;
 static bool uncertain,unsupported,bad_temp;
 static char sent_path[160],sent_body[256];
 #include "../../touchscreen/main/room_ha.c"
 int64_t esp_timer_get_time(void){return fake_time;}
-int xSemaphoreTake(void *p,int n){return 1;}
-int xSemaphoreGive(void *p){return 1;}
-void *xSemaphoreCreateMutex(void){return (void*)1;}
+int xSemaphoreTake(void *p,int n){if(p==ha_io_mutex){assert(!io_locked);io_locked=1;}return 1;}
+int xSemaphoreGive(void *p){if(p==ha_io_mutex){assert(io_locked);io_locked=0;}return 1;}
+void *xSemaphoreCreateMutex(void){return (void*)(uintptr_t)++semaphore_count;}
 int xTaskCreate(void(*f)(void*),const char*n,int a,void*b,int c,void*d){return 1;}
 void vTaskDelay(int n){}
 void *heap_caps_malloc(size_t n,int cap){return malloc(n);}
-esp_err_t room_http(const char *origin,const char *header,const char *token,const char *path,const char *post,void *out,size_t cap,int timeout,int *status,int *length)
+esp_err_t room_http_keepalive(room_http_session_t **session,const char *origin,const char *header,const char *token,const char *path,const char *post,void *out,size_t cap,int timeout,int *status,int *length)
 {
+ assert(io_locked);assert(session==&ha_session);
  assert(!strcmp(origin,"https://cottageha.greenledges.net:8123"));assert(!strcmp(header,"Authorization"));assert(!strcmp(token,"Bearer test-long-lived-token"));
  *length=0;*status=fail_code?fail_code:200;if(fail_code)return 0;
  if(post){++posts;snprintf(sent_path,sizeof(sent_path),"%s",path);snprintf(sent_body,sizeof(sent_body),"%s",post);if(uncertain){*status=0;return ESP_FAIL;}*length=snprintf(out,cap,"[]");return 0;}
@@ -49,6 +51,8 @@ int main(void)
  char *json=cJSON_PrintUnformatted(root);assert(!strstr(json,"never-return-this"));assert(!strstr(json,COTTAGE_HA_TOKEN));free(json);cJSON_Delete(root);
  command(7,"on","request-01",true);assert(!strcmp(sent_path,"/api/services/input_boolean/turn_on"));assert(strstr(sent_body,"input_boolean.kids_heat"));assert(!strstr(sent_body,"climate"));int before=posts;command(7,"on","request-01",true);assert(posts==before);
  command(0,"off","request-02",true);assert(!strcmp(sent_path,"/api/services/light/turn_off"));command(2,"stop","request-03",true);assert(!strcmp(sent_path,"/api/services/cover/stop_cover"));command(9,"start","request-04",true);assert(!strcmp(sent_path,"/api/services/vacuum/start"));
+ fail_code=503;ha_poll_once();root=room_ha_status();assert(cJSON_IsTrue(cJSON_GetObjectItem(root,"connected")));assert(cJSON_IsTrue(cJSON_GetObjectItem(item(root,0),"available")));cJSON_Delete(root);fail_code=0;
+ ha_command_waiting=true;before=gets;ha_poll_once();assert(gets==before);ha_command_waiting=false;
  uncertain=true;command(9,"stop","request-05",false);before=posts;uncertain=false;ha_poll_once();command(9,"stop","request-05",false);assert(posts==before);
  missing=3;ha_poll_once();root=room_ha_status();assert(cJSON_IsFalse(cJSON_GetObjectItem(item(root,3),"available")));assert(cJSON_IsTrue(cJSON_GetObjectItem(item(root,0),"available")));cJSON_Delete(root);missing=-1;
  unsupported=true;bad_temp=true;ha_poll_once();root=room_ha_status();assert(cJSON_GetArraySize(cJSON_GetObjectItem(item(root,2),"actions"))==0);assert(cJSON_IsFalse(cJSON_GetObjectItem(item(root,8),"available")));cJSON_Delete(root);unsupported=false;bad_temp=false;

@@ -26,6 +26,11 @@ try {
         else { $configText += [Environment]::NewLine + 'CONFIG_ESP_MAIN_TASK_STACK_SIZE=16384' + [Environment]::NewLine }
         [IO.File]::WriteAllText($configPath,$configText,[Text.UTF8Encoding]::new($false))
     }
+    # Existing sdkconfig values win over defaults: migrate TLS allocations too.
+    $configText=Get-Content $configPath -Raw
+    $configText=[regex]::Replace($configText,'(?m)^(?:CONFIG_MBEDTLS_(?:INTERNAL|EXTERNAL|DEFAULT|CUSTOM|IRAM_8BIT)_MEM_ALLOC=.*|# CONFIG_MBEDTLS_(?:INTERNAL|EXTERNAL|DEFAULT|CUSTOM|IRAM_8BIT)_MEM_ALLOC is not set)\r?\n?','')
+    $configText += [Environment]::NewLine + 'CONFIG_MBEDTLS_EXTERNAL_MEM_ALLOC=y' + [Environment]::NewLine
+    [IO.File]::WriteAllText($configPath,$configText,[Text.UTF8Encoding]::new($false))
     if ($Configure) {
         & idf.py @idfArgs menuconfig
         if ($LASTEXITCODE -ne 0) { throw '4B configuration failed' }

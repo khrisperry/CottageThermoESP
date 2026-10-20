@@ -28,3 +28,7 @@ target_include_directories(empty_ha_test PRIVATE stubs "${CMAKE_CURRENT_BINARY_D
 target_link_libraries(empty_ha_test PRIVATE lvgl m)
 
 add_executable(wifi_portal_test test_wifi_portal.c)
+
+add_executable(keepalive_test test_keepalive.c)
+target_include_directories(keepalive_test PRIVATE transport_stubs ../../touchscreen/main)
+target_compile_options(keepalive_test PRIVATE -Wall -Wextra -Werror -Wno-unused-parameter)

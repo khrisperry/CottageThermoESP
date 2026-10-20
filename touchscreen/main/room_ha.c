@@ -24,7 +24,9 @@ typedef struct {char id[81];int key,action;bool accepted;} ha_request_t;
 static ha_state_t ha_states[HA_COUNT];
 static ha_request_t ha_requests[HA_IDS];
 static unsigned ha_next;
-static SemaphoreHandle_t ha_mutex,ha_command_mutex;
+static SemaphoreHandle_t ha_mutex,ha_command_mutex,ha_io_mutex;
+static room_http_session_t *ha_session;
+static atomic_bool ha_command_waiting;
 static char ha_error[120]="Waiting for Home Assistant";
 static atomic_bool ha_auth_failed;
 static const char *ha_actions[]={"on","off","open","stop","close","start"};
@@ -42,9 +44,10 @@ static const char *ha_service(int key,int action)
 static void ha_global_error(int code)
 {
     xSemaphoreTake(ha_mutex,portMAX_DELAY);
-    for(int k=0;k<HA_COUNT;++k)ha_states[k].available=false;
+    if(code==401||code==403||ha_auth_failed)
+        for(int k=0;k<HA_COUNT;++k)ha_states[k].available=false;
     if(code==401||code==403||ha_auth_failed){ha_auth_failed=true;snprintf(ha_error,sizeof(ha_error),"HA token rejected; update secrets.h and reflash");}
-    else snprintf(ha_error,sizeof(ha_error),"Home Assistant unavailable; check Wi-Fi, time, URL and token");
+    else snprintf(ha_error,sizeof(ha_error),"HA request failed; reconnecting (recent state retained)");
     xSemaphoreGive(ha_mutex);
 }
 static esp_err_t ha_http(const char *path,const char *post,void *buffer,size_t capacity,int *code,int *length)
@@ -56,7 +59,10 @@ static esp_err_t ha_http(const char *path,const char *post,void *buffer,size_t c
     if(len>2048||strpbrk(COTTAGE_HA_TOKEN,"\r\n"))return ESP_ERR_INVALID_ARG;
     char *bearer=malloc(len+8);if(!bearer)return ESP_ERR_NO_MEM;
     snprintf(bearer,len+8,"Bearer %s",COTTAGE_HA_TOKEN);
-    esp_err_t err=room_http(COTTAGE_HA_URL,"Authorization",bearer,path,post,buffer,capacity,post?10000:7000,code,length);
+    xSemaphoreTake(ha_io_mutex,portMAX_DELAY);
+    esp_err_t err=ha_auth_failed?ESP_ERR_INVALID_STATE:room_http_keepalive(&ha_session,COTTAGE_HA_URL,"Authorization",bearer,path,post,buffer,capacity,post?10000:7000,code,length);
+    if(*code==401||*code==403)ha_auth_failed=true;
+    xSemaphoreGive(ha_io_mutex);
     /* No requests are repeated automatically, including ambiguous service timeouts. */
     memset(bearer,0,len+8);free(bearer);
     if(*code==401||*code==403)ha_global_error(*code);
@@ -102,15 +108,19 @@ static void ha_poll_once(void)
     char *buffer=heap_caps_malloc(32768,MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT);
     if(!buffer){ha_global_error(0);return;}
     bool ok=true;
-    for(int k=0;k<HA_COUNT;++k)if(!ha_read(k,buffer,32768)){ok=false;break;}
+    for(int k=0;k<HA_COUNT;++k){
+        /* Release I/O between entities so a user command goes next. */
+        if(ha_command_waiting){ok=false;break;}
+        if(!ha_read(k,buffer,32768)){ok=false;break;}
+    }
     free(buffer);
     if(ok){xSemaphoreTake(ha_mutex,portMAX_DELAY);ha_error[0]=0;xSemaphoreGive(ha_mutex);}
 }
 static void ha_task(void *arg){for(;;){ha_poll_once();vTaskDelay(pdMS_TO_TICKS(5000));}}
 void room_ha_start(void)
 {
-    ha_mutex=xSemaphoreCreateMutex();ha_command_mutex=xSemaphoreCreateMutex();
-    ESP_ERROR_CHECK(ha_mutex&&ha_command_mutex?ESP_OK:ESP_ERR_NO_MEM);
+    ha_mutex=xSemaphoreCreateMutex();ha_command_mutex=xSemaphoreCreateMutex();ha_io_mutex=xSemaphoreCreateMutex();
+    ESP_ERROR_CHECK(ha_mutex&&ha_command_mutex&&ha_io_mutex?ESP_OK:ESP_ERR_NO_MEM);
     if(!*COTTAGE_HA_TOKEN)snprintf(ha_error,sizeof(ha_error),"Add your HA long-lived token to touchscreen/secrets.h and rebuild");
     ESP_ERROR_CHECK(xTaskCreate(ha_task,"home_assistant",10240,NULL,3,NULL)==pdPASS?ESP_OK:ESP_ERR_NO_MEM);
 }
@@ -149,12 +159,14 @@ cJSON *room_ha_command(cJSON *p,int *code)
         if(!ha_fresh(state)||!(state.actions&(1U<<a))){xSemaphoreGive(ha_command_mutex);*code=409;return ha_result("Device unavailable or action unsupported");}
         unsigned slot=ha_next++%HA_IDS;ha_request_t *r=&ha_requests[slot];*r=(ha_request_t){.key=k,.action=a};snprintf(r->id,sizeof(r->id),"%s",rid);
         char path[128],payload[180];snprintf(path,sizeof(path),"/api/services/%s/%s",ha_specs[k].domain,ha_service(k,a));snprintf(payload,sizeof(payload),"{\"entity_id\":\"%s\"}",ha_specs[k].entity);
+        ha_command_waiting=true;
         char *response=heap_caps_malloc(65536,MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT);int status=0,n;
         if(response){esp_err_t err=ha_http(path,payload,response,65536,&status,&n);accepted=err==ESP_OK&&status>=200&&status<300;r->accepted=accepted;
             if(!accepted)ha_global_error(status);
             else ha_read(k,response,65536);
             free(response);
         }
+        ha_command_waiting=false;
     }
     xSemaphoreGive(ha_command_mutex);*code=200;cJSON *j=cJSON_CreateObject();cJSON_AddBoolToObject(j,"accepted",accepted);cJSON_AddStringToObject(j,"outcome",accepted?"service_completed":"unknown");cJSON_AddStringToObject(j,"request_id",rid);
     if(!accepted)cJSON_AddStringToObject(j,"message","Outcome unknown; check device state before retrying");
@@ -163,7 +175,7 @@ cJSON *room_ha_command(cJSON *p,int *code)
 esp_err_t room_ha_camera(void *buffer,size_t capacity,int *status,int *length)
 {
     *status=503;*length=0;xSemaphoreTake(ha_mutex,portMAX_DELAY);bool available=ha_fresh(ha_states[10]);xSemaphoreGive(ha_mutex);
-    if(!available)return ESP_ERR_INVALID_STATE;
+    if(!available||ha_command_waiting)return ESP_ERR_INVALID_STATE;
     char path[180];snprintf(path,sizeof(path),"/api/camera_proxy/%s?width=480&height=320",ha_specs[10].entity);
     return ha_http(path,NULL,buffer,capacity,status,length);
 }
