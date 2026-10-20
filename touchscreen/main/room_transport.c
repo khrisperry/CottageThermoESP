@@ -96,8 +96,10 @@ esp_err_t room_http_keepalive(room_http_session_t **session,
     if(err==ESP_OK)err=esp_http_client_set_timeout_ms(h,timeout_ms);
     if(err==ESP_OK)err=esp_http_client_set_header(h,header,token);
     if(err==ESP_OK)err=esp_http_client_set_method(h,post?HTTP_METHOD_POST:HTTP_METHOD_GET);
-    if(err==ESP_OK)err=esp_http_client_set_post_field(h,post,post?strlen(post):0);
+    /* IDF 6.0.1 set_post_field(NULL) deletes Content-Type and returns
+     * ESP_ERR_NOT_FOUND if absent. Seed it before both GET reset and POST. */
     if(err==ESP_OK)err=esp_http_client_set_header(h,"Content-Type","application/json");
+    if(err==ESP_OK)err=esp_http_client_set_post_field(h,post,post?strlen(post):0);
     if(err==ESP_OK)err=esp_http_client_set_user_data(h,&response);
     if(err==ESP_OK){
         /* Exactly one attempt, including POST on a dead keep-alive connection. */

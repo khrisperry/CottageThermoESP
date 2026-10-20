@@ -1,6 +1,6 @@
 # Cottage room panel — Waveshare ESP32-S3-Touch-LCD-4B
 
-Version 0.6.2 provides the **native 480×480 LCD and capacitive touch interface**. This is for the **4B**, with 16 MB flash and 8 MB octal PSRAM. It uses Waveshare BSP 2.0.0, LVGL 9.2.0 and ESP LVGL port 2.6.2, compiled with ESP-IDF 6.0.1. The dependency lock pins the tested graph. **The ESP connects directly to Home Assistant using your long-lived token; no bridge process, bridge address or bridge token is required.** No device has been flashed or physically verified by the coding environment.
+Version 0.6.3 provides the **native 480×480 LCD and capacitive touch interface**. This is for the **4B**, with 16 MB flash and 8 MB octal PSRAM. It uses Waveshare BSP 2.0.0, LVGL 9.2.0 and ESP LVGL port 2.6.2, compiled with ESP-IDF 6.0.1. The dependency lock pins the tested graph. **The ESP connects directly to Home Assistant using your long-lived token; no bridge process, bridge address or bridge token is required.** No device has been flashed or physically verified by the coding environment.
 
 ## Native pages
 
@@ -65,7 +65,7 @@ The browser-only fallback is available by disabling the native display setting; 
 
 ## Validation
 
-- v0.5.0 compiled under ESP-IDF 6.0.1 and the user confirmed its local build. The user confirmed the v0.6.1 captive portal and direct HA controls work on the board. v0.6.2 addresses TLS allocation failures observed when polling overlaps button commands. Its source/API changes have been reviewed against IDF 6.0.1 but **have not been compiled or hardware tested in the unavailable coding workspace**. Run the local build above, then repeatedly toggle lights while polling and viewing the camera.
+- v0.5.0 compiled under ESP-IDF 6.0.1 and the user confirmed its local build. The user confirmed the v0.6.1 captive portal and direct HA controls work on the board. v0.6.2 addresses TLS allocation failures observed when polling overlaps button commands. v0.6.3 fixes a request-setup regression that prevented the first HA GET from reaching the network, and adds HA startup/failure/connected logs. These source/API changes have been reviewed against IDF 6.0.1 but **have not been compiled or hardware tested in the unavailable coding workspace**. Run the local build above, then repeatedly toggle lights while polling and viewing the camera.
 - `tests/native` uses real LVGL on a host with mocked network/RTOS. It renders the same C UI and checks swipe navigation, control routing, target-only changes, stale/expired requests, unknown outcomes, the probe pin guard and return to Climate. It does not validate the physical RGB/touch electronics.
 - Direct HA host checks exercise the production C client with a fake transport: exact eleven entities, bearer header, service paths, filtered attributes, missing/stale data, unsupported features, request deduplication, unknown outcomes, camera size request and authentication backoff. A separate empty-token test proves no HA requests are sent without configuration. No real cottage HA token is available to the coding environment; the user has confirmed direct ESP connectivity; the v0.6.2 connection reuse changes still require local validation.
 - Existing browser checks continue. The earlier PC bridge remains an optional test helper, but is not used by the ESP.

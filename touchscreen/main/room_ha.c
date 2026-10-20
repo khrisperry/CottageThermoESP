@@ -10,6 +10,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "esp_timer.h"
+#include "esp_log.h"
 #include "esp_heap_caps.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -65,6 +66,11 @@ static esp_err_t ha_http(const char *path,const char *post,void *buffer,size_t c
     xSemaphoreGive(ha_io_mutex);
     /* No requests are repeated automatically, including ambiguous service timeouts. */
     memset(bearer,0,len+8);free(bearer);
+    if(err!=ESP_OK||*code>=300){
+        const char *hint=err==ESP_ERR_INVALID_STATE?"clock/client not ready":
+            err==ESP_ERR_INVALID_ARG?"invalid HA configuration":"transport or HTTP error";
+        ESP_LOGW("room_ha","HA request failed: %s; err=0x%x HTTP=%d",hint,(unsigned)err,*code);
+    }
     if(*code==401||*code==403)ha_global_error(*code);
     return err;
 }
@@ -114,7 +120,10 @@ static void ha_poll_once(void)
         if(!ha_read(k,buffer,32768)){ok=false;break;}
     }
     free(buffer);
-    if(ok){xSemaphoreTake(ha_mutex,portMAX_DELAY);ha_error[0]=0;xSemaphoreGive(ha_mutex);}
+    if(ok){
+        xSemaphoreTake(ha_mutex,portMAX_DELAY);bool recovered=ha_error[0]!=0;ha_error[0]=0;xSemaphoreGive(ha_mutex);
+        if(recovered)ESP_LOGI("room_ha","Home Assistant connected; entity poll complete");
+    }
 }
 static void ha_task(void *arg){for(;;){ha_poll_once();vTaskDelay(pdMS_TO_TICKS(5000));}}
 void room_ha_start(void)
@@ -122,6 +131,8 @@ void room_ha_start(void)
     ha_mutex=xSemaphoreCreateMutex();ha_command_mutex=xSemaphoreCreateMutex();ha_io_mutex=xSemaphoreCreateMutex();
     ESP_ERROR_CHECK(ha_mutex&&ha_command_mutex&&ha_io_mutex?ESP_OK:ESP_ERR_NO_MEM);
     if(!*COTTAGE_HA_TOKEN)snprintf(ha_error,sizeof(ha_error),"Add your HA long-lived token to touchscreen/secrets.h and rebuild");
+    if(*COTTAGE_HA_TOKEN)ESP_LOGI("room_ha","Direct HA client started; waiting for Wi-Fi and valid system time");
+    else ESP_LOGW("room_ha","HA disabled: add long-lived token to touchscreen/secrets.h");
     ESP_ERROR_CHECK(xTaskCreate(ha_task,"home_assistant",10240,NULL,3,NULL)==pdPASS?ESP_OK:ESP_ERR_NO_MEM);
 }
 cJSON *room_ha_status(void)

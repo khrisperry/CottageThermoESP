@@ -24,3 +24,5 @@ Version 0.6.2 adds `keepalive_test`, exercising the production transport with a 
 ./direct_ha_test
 ./empty_ha_test
 ```
+
+Version 0.6.3 corrects initial GET setup: IDF 6.0.1 returns `ESP_ERR_NOT_FOUND` when `set_post_field(NULL, 0)` deletes a missing Content-Type. The transport now sets Content-Type before resetting the body. The fixture models the actual missing-header behavior and checks GET → POST → GET. HA startup, request failures and successful polling now produce credential-free diagnostics. Source/API review only; C compilation/tests remain unavailable in the coding workspace.

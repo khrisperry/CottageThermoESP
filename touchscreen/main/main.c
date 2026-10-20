@@ -127,5 +127,5 @@ void app_main(void)
     esp_sntp_setoperatingmode(SNTP_OPMODE_POLL);esp_sntp_setservername(0,"pool.ntp.org");esp_sntp_init();
     if(probe && strlen(CONFIG_ROOM_API_TOKEN)==32)xTaskCreate(sensor_task,"room_probe",6144,NULL,5,NULL);
     else ESP_LOGW(TAG,"Probe reporting disabled: configure probe pins/type and 32-character pairing token");
-    ESP_LOGI(TAG,"Room client v0.6.2; native display and browser services ready");
+    ESP_LOGI(TAG,"Room client v0.6.3; native display and browser services ready");
 }

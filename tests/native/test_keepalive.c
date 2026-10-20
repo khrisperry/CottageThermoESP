@@ -11,6 +11,7 @@ struct fake_client {
     esp_http_client_method_t method;
     const char *body;
     int body_len,status;
+    bool content_type;
     char url[320];
 };
 static struct fake_client client;
@@ -35,9 +36,23 @@ esp_err_t esp_http_client_cleanup(esp_http_client_handle_t h){++cleanups;return 
 esp_err_t esp_http_client_set_url(esp_http_client_handle_t h,const char *url){snprintf(h->url,sizeof(h->url),"%s",url);return ESP_OK;}
 esp_err_t esp_http_client_set_timeout_ms(esp_http_client_handle_t h,int timeout){assert(timeout>0);return ESP_OK;}
 esp_err_t esp_http_client_set_header(esp_http_client_handle_t h,const char *key,const char *value)
-{if(!strcmp(key,"Authorization"))assert(!strcmp(value,"Bearer fixture"));return ESP_OK;}
+{
+    if(!strcmp(key,"Authorization"))assert(!strcmp(value,"Bearer fixture"));
+    if(!strcmp(key,"Content-Type")){
+        if(!value&&!h->content_type)return ESP_ERR_NOT_FOUND;
+        h->content_type=value!=NULL;
+    }
+    return ESP_OK;
+}
 esp_err_t esp_http_client_set_method(esp_http_client_handle_t h,esp_http_client_method_t method){h->method=method;return ESP_OK;}
-esp_err_t esp_http_client_set_post_field(esp_http_client_handle_t h,const char *body,int len){h->body=body;h->body_len=len;return ESP_OK;}
+/* Match IDF 6.0.1: clearing an absent Content-Type is NOT_FOUND, as is
+ * reading an absent Content-Type while setting a POST body. */
+esp_err_t esp_http_client_set_post_field(esp_http_client_handle_t h,const char *body,int len)
+{
+    h->body=body;h->body_len=body?len:0;
+    if(!body)return esp_http_client_set_header(h,"Content-Type",NULL);
+    return h->content_type?ESP_OK:ESP_ERR_NOT_FOUND;
+}
 esp_err_t esp_http_client_set_user_data(esp_http_client_handle_t h,void *p){h->user=p;return ESP_OK;}
 esp_err_t esp_http_client_perform(esp_http_client_handle_t h)
 {
@@ -63,13 +78,15 @@ static esp_err_t request(room_http_session_t **s,const char *path,const char *po
 int main(void)
 {
     room_http_session_t *s=NULL;char out[32];int code,n;
+    /* Prove the fixture reproduces the first-GET failure from v0.6.2. */
+    assert(esp_http_client_set_post_field(&client,NULL,0)==ESP_ERR_NOT_FOUND);
     for(int k=0;k<11;++k)assert(request(&s,"/api/states/light.fixture",NULL,out,sizeof(out),&code,&n)==ESP_OK);
     assert(inits==1&&attempts==11&&cleanups==0&&streaming_calls==0);
     assert(code==200&&n==2&&!strcmp(out,"{}")&&client.user==NULL);
     assert(request(&s,"/api/services/light/turn_on","{}",out,sizeof(out),&code,&n)==ESP_OK);
-    assert(client.method==HTTP_METHOD_POST&&client.body_len==2&&inits==1);
+    assert(client.method==HTTP_METHOD_POST&&client.body_len==2&&client.content_type&&inits==1);
     assert(request(&s,"/api/states/light.fixture",NULL,out,sizeof(out),&code,&n)==ESP_OK);
-    assert(client.method==HTTP_METHOD_GET&&client.body==NULL&&client.body_len==0);
+    assert(client.method==HTTP_METHOD_GET&&client.body==NULL&&client.body_len==0&&!client.content_type);
     fail_next=1;int before=attempts;
     assert(request(&s,"/api/services/light/turn_on","{}",out,sizeof(out),&code,&n)==ESP_FAIL);
     assert(attempts==before+1&&cleanups==1&&s->client==NULL&&n==0);
