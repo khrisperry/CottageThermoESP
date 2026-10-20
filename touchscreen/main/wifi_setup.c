@@ -250,8 +250,12 @@ void room_wifi_start(void)
     ESP_ERROR_CHECK(esp_event_handler_register(IP_EVENT,ESP_EVENT_ANY_ID,wifi_event,NULL));
     uint8_t mac[6];ESP_ERROR_CHECK(esp_read_mac(mac,ESP_MAC_WIFI_STA));
     snprintf(setup_ssid,sizeof(setup_ssid),"CottageThermo-%02X%02X-Setup",mac[4],mac[5]);
-    wifi_config_t ap={0};snprintf((char*)ap.ap.ssid,sizeof(ap.ap.ssid),"%s",setup_ssid);
-    ap.ap.ssid_len=strlen(setup_ssid);ap.ap.authmode=WIFI_AUTH_OPEN;ap.ap.channel=1;ap.ap.max_connection=4;
+    wifi_config_t ap={0};
+    size_t setup_length=strlen(setup_ssid);
+    ESP_ERROR_CHECK(setup_length<=sizeof(ap.ap.ssid)?ESP_OK:ESP_ERR_INVALID_SIZE);
+    /* ESP-IDF stores an SSID as up to 32 bytes plus its explicit length. */
+    memcpy(ap.ap.ssid,setup_ssid,setup_length);
+    ap.ap.ssid_len=setup_length;ap.ap.authmode=WIFI_AUTH_OPEN;ap.ap.channel=1;ap.ap.max_connection=4;
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_APSTA));ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_AP,&ap));
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
     esp_netif_ip_info_t ip={0};ip.ip.addr=inet_addr("192.168.4.1");ip.gw=ip.ip;ip.netmask.addr=inet_addr("255.255.255.0");
