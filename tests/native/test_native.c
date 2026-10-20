@@ -28,6 +28,7 @@ lv_display_t *bsp_display_start(void){return lv_display_get_default();}
 void bsp_display_rotate(lv_display_t *d,lv_display_rotation_t r){lv_display_set_rotation(d,r);}
 int bsp_display_brightness_set(int n){return 0;}
 void *bsp_i2c_get_handle(void){return (void*)47;}
+const char *room_settings_controller_url(void){return CONFIG_ROOM_CONTROLLER_URL;}
 void room_wifi_request_setup(void){wifi_setup_requested=true;}
 bool room_wifi_setup_hint(char *buffer,size_t size){return false;}
 static char ha_json[4096];
@@ -82,11 +83,24 @@ int main(void)
  touch(310,70,true);touch(230,70,true);touch(150,70,true);touch(60,70,true);touch(60,70,false);
  assert(visible_page==2);assert(queue_count==no_commands);select_page(0);
  render("climate.ppm");select_page(1);render("home.ppm");select_page(2);render("laundry.ppm");select_page(3);render("camera.ppm");
+ /* Different devices accept taps while one is in flight; only that row locks. */
+ click(control[0][0]);command_t first=queued;
+ refresh(NULL);assert(lv_obj_has_state(control[0][0],LV_STATE_DISABLED));assert(!lv_obj_has_state(control[1][0],LV_STATE_DISABLED));
+ click(control[1][0]);command_t second=queued;
+ assert(first.item==0&&second.item==1&&(model.pending&3U)==3U);
+ int queued_before=queue_count;click(control[0][0]);assert(queue_count==queued_before);
+ execute(first);assert(!(model.pending&1U)&&(model.pending&2U));
+ execute(second);assert(model.pending==0);posts=0;
+ assert(lv_obj_get_height(body[1])==364);
+ assert(lv_obj_has_flag(notice,LV_OBJ_FLAG_HIDDEN));
+ assert(bulb_head[0]&&bulb_head[1]&&activity_ring[3]&&activity_ring[6]);
+ assert(room_visual_state("Washing",true)==ROOM_VIS_ACTIVE);
+ assert(room_visual_state("Not in Use",true)==ROOM_VIS_IDLE);
  /* Kids input_boolean stays on the HA command path. No furnace mutation. */
  click(control[7][0]);assert(queued.item==7&&queued.action==0);assert(model.pending);execute(queued);assert(posts==1);assert(!strcmp(last_path,"/api/ha/command"));assert(strstr(last_post,"kids_heat"));
  unknown=true;click(control[9][3]);execute(queued);assert(strstr(model.notice,"Outcome unknown"));unknown=false;
  /* Stale requests expire rather than replay after network work. */
- click(control[0][0]);int before=posts;now+=3000000;execute(queued);assert(posts==before);assert(strstr(model.notice,"expired"));
+ click(control[0][0]);int before=posts;now+=11000000;execute(queued);assert(posts==before);assert(strstr(model.notice,"expired"));
  now+=11000000;refresh(NULL);assert(lv_obj_has_state(control[0][0],LV_STATE_DISABLED));int count=queue_count;click(control[0][0]);assert(queue_count==count);assert(!camera_current(model.generation));
  populate();click(plus_button);click(apply_button);assert(queued.item==-1&&queued.target==67.5f);execute(queued);assert(!strcmp(last_path,"/api/config"));assert(strstr(last_post,"67.5"));
  assert(room_display_probe_bus(1,2)==NULL);assert(room_display_probe_bus(47,48)==(void*)47);

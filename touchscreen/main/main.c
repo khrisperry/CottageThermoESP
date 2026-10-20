@@ -21,6 +21,7 @@
 #include "room_transport.h"
 #include "room_ha.h"
 #include "wifi_setup.h"
+#include "room_settings.h"
 
 static const char *TAG="room_thermostat";
 static i2c_master_dev_handle_t probe;
@@ -30,7 +31,7 @@ extern const unsigned char page_end[] asm("_binary_room_html_end");
 static esp_err_t exchange(const char *path,const char *payload,char *out,size_t cap,int *status)
 {
     int length;
-    return room_http(CONFIG_ROOM_CONTROLLER_URL,"X-Thermo-Token",CONFIG_ROOM_API_TOKEN,
+    return room_http(room_settings_controller_url(),"X-Thermo-Token",CONFIG_ROOM_API_TOKEN,
                      path,payload,out,cap,3000,status,&length);
 }
 static uint8_t crc(const uint8_t *p)
@@ -103,6 +104,7 @@ static esp_err_t proxy(httpd_req_t *r)
 void app_main(void)
 {
     ESP_ERROR_CHECK(nvs_flash_init());ESP_ERROR_CHECK(esp_netif_init());ESP_ERROR_CHECK(esp_event_loop_create_default());
+    room_settings_init();
     room_wifi_start();
     room_ha_start();
     room_display_start();
@@ -118,14 +120,15 @@ void app_main(void)
         i2c_device_config_t dev={.dev_addr_length=I2C_ADDR_BIT_LEN_7,.device_address=0x44,.scl_speed_hz=100000};
         if(bus)ESP_ERROR_CHECK(i2c_master_bus_add_device(bus,&dev,&probe));
     }
-    httpd_config_t cfg=HTTPD_DEFAULT_CONFIG();cfg.stack_size=8192;cfg.max_uri_handlers=16;httpd_handle_t h;ESP_ERROR_CHECK(httpd_start(&h,&cfg));
+    httpd_config_t cfg=HTTPD_DEFAULT_CONFIG();cfg.stack_size=8192;cfg.max_uri_handlers=20;httpd_handle_t h;ESP_ERROR_CHECK(httpd_start(&h,&cfg));
     httpd_uri_t routes[]={ {.uri="/",.method=HTTP_GET,.handler=root},
         {.uri="/api/status",.method=HTTP_GET,.handler=proxy}, {.uri="/api/target",.method=HTTP_POST,.handler=proxy}};
     for(unsigned i=0;i<3;++i)ESP_ERROR_CHECK(httpd_register_uri_handler(h,&routes[i]));
     ha_panel_register(h);
     room_wifi_register(h);
+    room_settings_register(h);
     esp_sntp_setoperatingmode(SNTP_OPMODE_POLL);esp_sntp_setservername(0,"pool.ntp.org");esp_sntp_init();
     if(probe && strlen(CONFIG_ROOM_API_TOKEN)==32)xTaskCreate(sensor_task,"room_probe",6144,NULL,5,NULL);
     else ESP_LOGW(TAG,"Probe reporting disabled: configure probe pins/type and 32-character pairing token");
-    ESP_LOGI(TAG,"Room client v0.7.1; native display and browser services ready");
+    ESP_LOGI(TAG,"Room client v0.8.0; native display and browser services ready");
 }

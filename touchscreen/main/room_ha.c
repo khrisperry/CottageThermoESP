@@ -1,7 +1,7 @@
 /* Direct HA REST client. The bearer credential is never put in a UI response,
  * URL, log or retry queue. TLS is verified by room_transport. */
 #include "room_ha.h"
-#include "room_secrets.h"
+#include "room_settings.h"
 #include "room_transport.h"
 #include <math.h>
 #include <stdint.h>
@@ -47,7 +47,7 @@ static void ha_global_error(int code)
     xSemaphoreTake(ha_mutex,portMAX_DELAY);
     if(code==401||code==403||ha_auth_failed)
         for(int k=0;k<HA_COUNT;++k)ha_states[k].available=false;
-    if(code==401||code==403||ha_auth_failed){ha_auth_failed=true;snprintf(ha_error,sizeof(ha_error),"HA token rejected; update secrets.h and reflash");}
+    if(code==401||code==403||ha_auth_failed){ha_auth_failed=true;snprintf(ha_error,sizeof(ha_error),"HA token rejected; update token in device settings and restart");}
     else snprintf(ha_error,sizeof(ha_error),"HA request failed; reconnecting (recent state retained)");
     xSemaphoreGive(ha_mutex);
 }
@@ -55,13 +55,13 @@ static esp_err_t ha_http(const char *path,const char *post,void *buffer,size_t c
 {
     *code=0;*length=0;
     /* Only the configured HTTPS origin receives this credential. */
-    if(ha_auth_failed||!*COTTAGE_HA_TOKEN||strncmp(COTTAGE_HA_URL,"https://",8))return ESP_ERR_INVALID_STATE;
-    size_t len=strlen(COTTAGE_HA_TOKEN);
-    if(len>2048||strpbrk(COTTAGE_HA_TOKEN,"\r\n"))return ESP_ERR_INVALID_ARG;
+    if(ha_auth_failed||!*room_settings_ha_token()||strncmp(room_settings_ha_url(),"https://",8))return ESP_ERR_INVALID_STATE;
+    size_t len=strlen(room_settings_ha_token());
+    if(len>2048||strpbrk(room_settings_ha_token(),"\r\n"))return ESP_ERR_INVALID_ARG;
     char *bearer=malloc(len+8);if(!bearer)return ESP_ERR_NO_MEM;
-    snprintf(bearer,len+8,"Bearer %s",COTTAGE_HA_TOKEN);
+    snprintf(bearer,len+8,"Bearer %s",room_settings_ha_token());
     xSemaphoreTake(ha_io_mutex,portMAX_DELAY);
-    esp_err_t err=ha_auth_failed?ESP_ERR_INVALID_STATE:room_http_keepalive(&ha_session,COTTAGE_HA_URL,"Authorization",bearer,path,post,buffer,capacity,post?10000:(strstr(path,"/api/camera_proxy/")==path?15000:7000),code,length);
+    esp_err_t err=ha_auth_failed?ESP_ERR_INVALID_STATE:room_http_keepalive(&ha_session,room_settings_ha_url(),"Authorization",bearer,path,post,buffer,capacity,post?10000:(strstr(path,"/api/camera_proxy/")==path?15000:7000),code,length);
     if(*code==401||*code==403)ha_auth_failed=true;
     xSemaphoreGive(ha_io_mutex);
     /* No requests are repeated automatically, including ambiguous service timeouts. */
@@ -110,7 +110,7 @@ static bool ha_read(int key,char *buffer,size_t capacity)
 }
 static void ha_poll_once(void)
 {
-    if(!*COTTAGE_HA_TOKEN||ha_auth_failed)return;
+    if(!*room_settings_ha_token()||ha_auth_failed)return;
     char *buffer=heap_caps_malloc(32768,MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT);
     if(!buffer){ha_global_error(0);return;}
     bool ok=true;
@@ -130,9 +130,9 @@ void room_ha_start(void)
 {
     ha_mutex=xSemaphoreCreateMutex();ha_command_mutex=xSemaphoreCreateMutex();ha_io_mutex=xSemaphoreCreateMutex();
     ESP_ERROR_CHECK(ha_mutex&&ha_command_mutex&&ha_io_mutex?ESP_OK:ESP_ERR_NO_MEM);
-    if(!*COTTAGE_HA_TOKEN)snprintf(ha_error,sizeof(ha_error),"Add your HA long-lived token to touchscreen/secrets.h and rebuild");
-    if(*COTTAGE_HA_TOKEN)ESP_LOGI("room_ha","Direct HA client started; waiting for Wi-Fi and valid system time");
-    else ESP_LOGW("room_ha","HA disabled: add long-lived token to touchscreen/secrets.h");
+    if(!*room_settings_ha_token())snprintf(ha_error,sizeof(ha_error),"Add your HA long-lived token in device settings");
+    if(*room_settings_ha_token())ESP_LOGI("room_ha","Direct HA client started; waiting for Wi-Fi and valid system time");
+    else ESP_LOGW("room_ha","HA disabled: add long-lived token in /settings");
     ESP_ERROR_CHECK(xTaskCreate(ha_task,"home_assistant",10240,NULL,3,NULL)==pdPASS?ESP_OK:ESP_ERR_NO_MEM);
 }
 cJSON *room_ha_status(void)
@@ -148,7 +148,7 @@ cJSON *room_ha_status(void)
         cJSON_AddItemToArray(array,item);
     }
     cJSON_AddStringToObject(root,"error",ha_error);xSemaphoreGive(ha_mutex);
-    cJSON_AddBoolToObject(root,"configured",*COTTAGE_HA_TOKEN!=0);cJSON_AddBoolToObject(root,"connected",connected);cJSON_AddBoolToObject(root,"room_client",true);return root;
+    cJSON_AddBoolToObject(root,"configured",*room_settings_ha_token()!=0);cJSON_AddBoolToObject(root,"connected",connected);cJSON_AddBoolToObject(root,"room_client",true);return root;
 }
 static cJSON *ha_result(const char *message){cJSON *j=cJSON_CreateObject();cJSON_AddStringToObject(j,"error",message);return j;}
 cJSON *room_ha_command(cJSON *p,int *code)

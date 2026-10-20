@@ -21,18 +21,23 @@
 #include "jpeg_decoder.h"
 #include "room_transport.h"
 #include "room_ha.h"
+#include "room_settings.h"
 #include "wifi_setup.h"
 #include "room_camera_size.h"
+#include "room_visual_state.h"
 
 #define COUNT 11
 #define FRESH_US 10000000LL
+#define COMMAND_TTL_US 10000000LL
+#define CLIMATE_PENDING (1U<<COUNT)
 static const char *TAG="room_display";
 static const char *keys[COUNT]={"deck","breezeway","blinds","washer1","washer2","dryer1","dryer2","kids_heat","kids_temp","vacuum","camera"};
 static const char *actions[]={"on","off","open","stop","close","start"};
 typedef struct { bool available; unsigned actions; char state[128]; } item_t;
 typedef struct {
     item_t items[COUNT]; int64_t ha_at,climate_at;
-    bool ha_ok,climate_ok,has_temp,has_target,simulation,pending;
+    bool ha_ok,climate_ok,has_temp,has_target,simulation;
+    unsigned pending;int64_t notice_until;
     float temp,target; char mode[32],reason[80],notice[128],ha_error[128];
     unsigned page,generation;
 } model_t;
@@ -43,6 +48,7 @@ static QueueHandle_t commands;
 static lv_obj_t *body[4],*nav[4],*connection,*notice,*temp_label,*target_label,*mode_label,*reason_label;
 static lv_obj_t *states[COUNT],*control[COUNT][6],*minus_button,*plus_button,*apply_button,*camera_image,*camera_note,*wifi_button;
 static lv_obj_t *temperature_ring,*heat_badge,*camera_frame,*camera_status,*tile[COUNT],*icon_badge[COUNT];
+static lv_obj_t *bulb_head[COUNT],*bulb_stem[COUNT],*bulb_base[COUNT],*activity_ring[COUNT];
 static lv_image_dsc_t image_desc;
 static void *image_pixels;
 static float draft=65;
@@ -51,7 +57,7 @@ static int64_t last_touch;
 static unsigned visible_page;
 
 static model_t snapshot(void) { model_t m; xSemaphoreTake(mutex,portMAX_DELAY);m=model;xSemaphoreGive(mutex);return m; }
-static void message(const char *text) { xSemaphoreTake(mutex,portMAX_DELAY);snprintf(model.notice,sizeof(model.notice),"%s",text);xSemaphoreGive(mutex); }
+static void message(const char *text) { xSemaphoreTake(mutex,portMAX_DELAY);snprintf(model.notice,sizeof(model.notice),"%s",text);model.notice_until=esp_timer_get_time()+7000000;xSemaphoreGive(mutex); }
 static const char *str(cJSON *j,const char *key) { cJSON *v=cJSON_GetObjectItemCaseSensitive(j,key);return cJSON_IsString(v)?v->valuestring:""; }
 static bool number(cJSON *j,const char *key,float *out) { cJSON *v=cJSON_GetObjectItemCaseSensitive(j,key);if(!cJSON_IsNumber(v)||!isfinite(v->valuedouble))return false;*out=v->valuedouble;return true; }
 static bool yes(cJSON *j,const char *key) { return cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(j,key)); }
@@ -62,7 +68,7 @@ static cJSON *json_request(bool ha,const char *path,const char *post,int *code)
         cJSON *payload=cJSON_Parse(post);cJSON *result=room_ha_command(payload,code);cJSON_Delete(payload);if(*code!=200){cJSON_Delete(result);return NULL;}return result;
     }
     *code=0;char *buffer=malloc(8192);if(!buffer)return NULL;
-    int n;esp_err_t err=room_http(CONFIG_ROOM_CONTROLLER_URL,"X-Thermo-Token",CONFIG_ROOM_API_TOKEN,
+    int n;esp_err_t err=room_http(room_settings_controller_url(),"X-Thermo-Token",CONFIG_ROOM_API_TOKEN,
         path,post,buffer,8192,post?20000:3000,code,&n);
     cJSON *j=err==ESP_OK&&*code==200?cJSON_ParseWithLengthOpts(buffer,n+1,NULL,true):NULL;
     free(buffer);if(!cJSON_IsObject(j)){cJSON_Delete(j);return NULL;}return j;
@@ -104,7 +110,7 @@ static void poll_climate(void)
 static bool current(int64_t at) { return at>0 && esp_timer_get_time()-at<FRESH_US; }
 static void execute(command_t c)
 {
-    model_t m=snapshot();bool allowed=esp_timer_get_time()-c.at<2000000;
+    model_t m=snapshot();bool allowed=esp_timer_get_time()-c.at<COMMAND_TTL_US;
     if(c.item<0)allowed=allowed&&m.climate_ok&&m.has_target&&current(m.climate_at)&&c.target>=45&&c.target<=80;
     else allowed=allowed&&current(m.ha_at)&&m.items[c.item].available&&(m.items[c.item].actions&(1U<<c.action));
     if(!allowed)message("Request expired or device unavailable; nothing sent");
@@ -115,23 +121,27 @@ static void execute(command_t c)
         cJSON *j=json_request(c.item>=0,c.item<0?"/api/config":"/api/ha/command",payload,&code);
         if(!j)message(code>=400?"Request rejected; check state before retrying":"Connection lost; outcome unknown. Check device state");
         else if(c.item>=0&&!yes(j,"accepted"))message("Outcome unknown; check device state before retrying");
-        else message(c.item<0?"Target saved; checking controller":"Service completed; checking device state");
+        else if(c.item<0)message("Target saved");
         cJSON_Delete(j);
         if(c.item<0)poll_climate();else poll_ha();
     }
-    xSemaphoreTake(mutex,portMAX_DELAY);model.pending=false;xSemaphoreGive(mutex);
+    xSemaphoreTake(mutex,portMAX_DELAY);model.pending&=~(c.item<0?CLIMATE_PENDING:1U<<c.item);xSemaphoreGive(mutex);
+}
+/* Polling and command dispatch have separate tasks. An offline controller
+ * must not block Home taps or stop local HA status refreshes. */
+static void command_task(void *arg)
+{
+    command_t c;
+    for(;;)if(xQueueReceive(commands,&c,portMAX_DELAY)==pdTRUE)execute(c);
 }
 static void network_task(void *arg)
 {
     int64_t ha_due=0,climate_due=0;
-    for(;;) {
-        command_t c;
-        if(xQueueReceive(commands,&c,pdMS_TO_TICKS(100))==pdTRUE){execute(c);continue;}
+    for(;;){
         int64_t now=esp_timer_get_time();
-        /* A slow request cannot block touch or replay an old command. */
-        if(now>=ha_due){poll_ha();ha_due=esp_timer_get_time()+3000000;}
-        if(uxQueueMessagesWaiting(commands))continue;
+        if(now>=ha_due){poll_ha();ha_due=esp_timer_get_time()+1000000;}
         if(now>=climate_due){poll_climate();climate_due=esp_timer_get_time()+5000000;}
+        vTaskDelay(pdMS_TO_TICKS(100));
     }
 }
 static bool camera_current(unsigned generation)
@@ -191,7 +201,7 @@ static void camera_task(void *arg)
                         lv_image_set_src(camera_image,&image_desc);
                         uint32_t scale=256;
                         if(info.width>432)scale=432*256/info.width;
-                        if(info.height*scale/256>244)scale=244*256/info.height;
+                        if(info.height*scale/256>274)scale=274*256/info.height;
                         lv_image_set_scale(camera_image,scale);lv_obj_align(camera_image,LV_ALIGN_CENTER,0,0);
                         lv_obj_remove_flag(camera_image,LV_OBJ_FLAG_HIDDEN);
                         lv_label_set_text(camera_note,"Auto-refreshing snapshots");
@@ -230,13 +240,14 @@ static void gesture(lv_event_t *e)
 static void send_event(lv_event_t *e)
 {
     intptr_t id=(intptr_t)lv_event_get_user_data(e);model_t m=snapshot();last_touch=esp_timer_get_time();
-    if(m.pending)return;
-    if(id==-2||id==-3){if(m.climate_ok&&m.has_target&&current(m.climate_at)){draft=fmaxf(45,fminf(80,draft+(id==-2?-.5f:.5f)));editing=true;}return;}
+    if(id==-2||id==-3){if(!(m.pending&CLIMATE_PENDING)&&m.climate_ok&&m.has_target&&current(m.climate_at)){draft=fmaxf(45,fminf(80,draft+(id==-2?-.5f:.5f)));editing=true;}return;}
     command_t c={.item=id<0?-1:id/6,.action=id<0?0:id%6,.target=draft,.at=esp_timer_get_time()};
+    unsigned pending_bit=c.item<0?CLIMATE_PENDING:1U<<c.item;
+    if(m.pending&pending_bit)return;
     if(c.item<0){if(!m.climate_ok||!m.has_target||!current(m.climate_at))return;}
     else if(!current(m.ha_at)||!m.items[c.item].available||!(m.items[c.item].actions&(1U<<c.action)))return;
-    xSemaphoreTake(mutex,portMAX_DELAY);model.pending=true;snprintf(model.notice,sizeof(model.notice),"Sending request...");xSemaphoreGive(mutex);
-    if(xQueueSend(commands,&c,0)!=pdTRUE){xSemaphoreTake(mutex,portMAX_DELAY);model.pending=false;xSemaphoreGive(mutex);message("Busy; request not queued");}
+    xSemaphoreTake(mutex,portMAX_DELAY);model.pending|=pending_bit;xSemaphoreGive(mutex);
+    if(xQueueSend(commands,&c,0)!=pdTRUE){xSemaphoreTake(mutex,portMAX_DELAY);model.pending&=~pending_bit;xSemaphoreGive(mutex);message("Busy; request not queued");}
     editing=false;
 }
 /* Native styling uses LVGL primitives, so no browser or bitmap UI is required. */
@@ -283,8 +294,8 @@ static void refresh(lv_timer_t *timer)
     lv_label_set_text_fmt(connection,LV_SYMBOL_WIFI "  HA %s",ha?"ONLINE":"OFFLINE");
     tint(connection,ha?MINT:MUTED);
     lv_label_set_text(heat_badge,climate?"HEAT ONLINE":"HEAT OFFLINE");tint(heat_badge,climate?AMBER:MUTED);
-    char wifi_hint[96];
-    lv_label_set_text(notice,room_wifi_setup_hint(wifi_hint,sizeof(wifi_hint))?wifi_hint:(*m.notice?m.notice:(*m.ha_error?m.ha_error:"Swipe to explore your cottage")));
+    if(*m.notice&&now<m.notice_until){lv_label_set_text(notice,m.notice);lv_obj_remove_flag(notice,LV_OBJ_FLAG_HIDDEN);}
+    else lv_obj_add_flag(notice,LV_OBJ_FLAG_HIDDEN);
     if(!editing&&climate&&m.has_target)draft=m.target;
     char text[80];
     if(climate&&m.has_temp){snprintf(text,sizeof(text),"%.1f F",m.temp);lv_label_set_text(temp_label,text);}
@@ -295,17 +306,46 @@ static void refresh(lv_timer_t *timer)
     lv_obj_set_style_arc_color(temperature_ring,lv_color_hex(climate?AMBER:EDGE),LV_PART_INDICATOR);
     lv_label_set_text_fmt(mode_label,"%s%s",climate?m.mode:"Controller offline",climate?(m.simulation?" / simulation":" / bench"):"");
     lv_label_set_text(reason_label,climate?m.reason:"Home controls are available on the Home page");
-    enabled(minus_button,climate&&m.has_target&&!m.pending);enabled(plus_button,climate&&m.has_target&&!m.pending);enabled(apply_button,climate&&m.has_target&&!m.pending);
+    enabled(minus_button,climate&&m.has_target&&!(m.pending&CLIMATE_PENDING));enabled(plus_button,climate&&m.has_target&&!(m.pending&CLIMATE_PENDING));enabled(apply_button,climate&&m.has_target&&!(m.pending&CLIMATE_PENDING));
     for(int k=0;k<COUNT;++k){
         bool available=ha&&m.items[k].available;
-        bool active=available&&(!strcmp(m.items[k].state,"on")||!strcmp(m.items[k].state,"Running")||!strcmp(m.items[k].state,"running")||!strcmp(m.items[k].state,"cleaning"));
-        if(states[k]){lv_label_set_text(states[k],available?m.items[k].state:"Unavailable");tint(states[k],active?MINT:MUTED);}
-        if(icon_badge[k])tint(icon_badge[k],active?MINT:(available?BLUE:MUTED));
-        if(tile[k])lv_obj_set_style_border_color(tile[k],lv_color_hex(active?0x377869:EDGE),0);
+        bool laundry=k>=3&&k<=6;
+        room_visual_t visual=available?room_visual_state(m.items[k].state,laundry):ROOM_VIS_UNKNOWN;
+        bool active=visual==ROOM_VIS_ACTIVE;
+        uint32_t color=active?(laundry?(k<5?BLUE:AMBER):(k==0||k==1?0xffd54a:k==7?AMBER:MINT)):
+            visual==ROOM_VIS_DONE?MINT:visual==ROOM_VIS_ERROR?0xff7979:visual==ROOM_VIS_PAUSED?AMBER:MUTED;
+        bool pending=(m.pending&(1U<<k))!=0;
+        if(states[k]){lv_label_set_text(states[k],pending?"Sending...":available?m.items[k].state:"Unavailable");tint(states[k],pending?AMBER:color);}
+        if(icon_badge[k]){
+            const char *symbol=k==2?((!strcmp(m.items[k].state,"closed")||!strcmp(m.items[k].state,"closing"))?LV_SYMBOL_DOWN:LV_SYMBOL_UP):
+                k==9?(!strcmp(m.items[k].state,"docked")?LV_SYMBOL_HOME:LV_SYMBOL_REFRESH):LV_SYMBOL_CHARGE;
+            if(laundry)symbol=visual==ROOM_VIS_DONE?LV_SYMBOL_OK:visual==ROOM_VIS_ERROR?LV_SYMBOL_WARNING:
+                visual==ROOM_VIS_PAUSED?LV_SYMBOL_PAUSE:LV_SYMBOL_LOOP;
+            lv_label_set_text(icon_badge[k],symbol);tint(icon_badge[k],color);
+        }
+        if(tile[k]){
+            uint32_t background=active?(laundry?(k<5?0x142d45:0x392c1c):(k<2?0x332d1a:0x16342f)):
+                visual==ROOM_VIS_DONE?0x16342f:visual==ROOM_VIS_ERROR?0x3e2028:CARD;
+            lv_obj_set_style_bg_color(tile[k],lv_color_hex(background),0);
+            lv_obj_set_style_border_color(tile[k],lv_color_hex(pending?AMBER:(active||visual==ROOM_VIS_DONE||visual==ROOM_VIS_ERROR)?color:EDGE),0);
+        }
+        if(bulb_head[k]){
+            uint32_t fill=available&&active?0xffd54a:0x303b49;
+            lv_obj_set_style_bg_color(bulb_head[k],lv_color_hex(fill),0);
+            lv_obj_set_style_border_color(bulb_head[k],lv_color_hex(available&&active?0xffe68c:0x647386),0);
+            lv_obj_set_style_bg_color(bulb_stem[k],lv_color_hex(fill),0);
+            lv_obj_set_style_bg_color(bulb_base[k],lv_color_hex(available&&active?0xffd54a:0x647386),0);
+        }
+        if(activity_ring[k]){
+            lv_obj_set_style_arc_color(activity_ring[k],lv_color_hex(color),LV_PART_INDICATOR);
+            lv_arc_set_rotation(activity_ring[k],active?(unsigned)(now/3000)%360:0);
+            lv_arc_set_angles(activity_ring[k],0,active?100:360);
+            lv_obj_set_style_arc_opa(activity_ring[k],available?LV_OPA_COVER:LV_OPA_40,LV_PART_INDICATOR);
+        }
         for(int a=0;a<6;++a)if(control[k][a]){
-            enabled(control[k][a],available&&!m.pending&&(m.items[k].actions&(1U<<a)));
+            enabled(control[k][a],available&&!(m.pending&(1U<<k))&&(m.items[k].actions&(1U<<a)));
             bool selected=available&&((a==0&&!strcmp(m.items[k].state,"on"))||(a==1&&!strcmp(m.items[k].state,"off")));
-            lv_obj_set_style_bg_color(control[k][a],lv_color_hex(selected?MINT:EDGE),0);
+            lv_obj_set_style_bg_color(control[k][a],lv_color_hex(selected?(k<2?0xffd54a:MINT):EDGE),0);
             tint(control[k][a],selected?INK:TEXT);
         }
     }
@@ -328,13 +368,16 @@ static void build_ui(void)
     wifi_button=button(screen,LV_SYMBOL_SETTINGS "  Wi-Fi",364,10,100,34,wifi_setup_event,0);
     const char *nav_text[]={LV_SYMBOL_HOME "  Climate",LV_SYMBOL_POWER "  Home",LV_SYMBOL_LOOP "  Laundry",LV_SYMBOL_VIDEO "  Camera"};
     for(int n=0;n<4;++n){
-        body[n]=lv_obj_create(screen);lv_obj_remove_style_all(body[n]);lv_obj_set_pos(body[n],12,57);lv_obj_set_size(body[n],456,329);
+        body[n]=lv_obj_create(screen);lv_obj_remove_style_all(body[n]);lv_obj_set_pos(body[n],12,57);lv_obj_set_size(body[n],456,364);
         lv_obj_remove_flag(body[n],LV_OBJ_FLAG_SCROLLABLE|LV_OBJ_FLAG_CLICKABLE);lv_obj_add_flag(body[n],LV_OBJ_FLAG_GESTURE_BUBBLE);
         nav[n]=button(screen,nav_text[n],12+n*116,429,108,44,nav_event,n);
         lv_obj_set_style_text_font(nav[n],&lv_font_montserrat_14,0);
     }
-    lv_obj_t *notice_panel=panel(screen,12,390,456,31,CARD,10);
-    notice=label(notice_panel,"Waiting for first update",10,6,436,&lv_font_montserrat_14);tint(notice,MUTED);lv_label_set_long_mode(notice,LV_LABEL_LONG_DOT);lv_obj_set_height(notice,20);
+    /* Transient error toast overlays content; no persistent footer takes space. */
+    notice=label(screen,"",24,379,432,&lv_font_montserrat_14);tint(notice,AMBER);
+    lv_obj_set_style_bg_color(notice,lv_color_hex(CARD),0);lv_obj_set_style_bg_opa(notice,LV_OPA_COVER,0);
+    lv_obj_set_style_pad_all(notice,8,0);lv_obj_set_style_radius(notice,10,0);
+    lv_label_set_long_mode(notice,LV_LABEL_LONG_DOT);lv_obj_set_height(notice,42);lv_obj_add_flag(notice,LV_OBJ_FLAG_HIDDEN);
     /* A real, non-interactive dial: target changes still require the Set button. */
     temperature_ring=lv_arc_create(body[0]);lv_obj_set_size(temperature_ring,218,218);lv_obj_set_pos(temperature_ring,119,0);
     lv_arc_set_range(temperature_ring,45,80);lv_arc_set_bg_angles(temperature_ring,135,405);
@@ -347,16 +390,22 @@ static void build_ui(void)
     target_label=label(body[0],"Target unavailable",0,137,456,&lv_font_montserrat_20);centered(target_label);tint(target_label,AMBER);
     mode_label=label(body[0],"Controller offline",0,203,456,&lv_font_montserrat_16);centered(mode_label);tint(mode_label,AMBER);
     reason_label=label(body[0],"Waiting for status",12,231,432,&lv_font_montserrat_14);centered(reason_label);tint(reason_label,MUTED);lv_label_set_long_mode(reason_label,LV_LABEL_LONG_DOT);lv_obj_set_height(reason_label,24);
-    minus_button=button(body[0],"-",0,274,76,52,send_event,-2);
-    apply_button=button(body[0],"Set target",88,274,280,52,send_event,-1);
-    plus_button=button(body[0],"+",380,274,76,52,send_event,-3);
+    minus_button=button(body[0],"-",0,306,76,54,send_event,-2);
+    apply_button=button(body[0],"Set target",88,306,280,54,send_event,-1);
+    plus_button=button(body[0],"+",380,306,76,54,send_event,-3);
     lv_obj_set_style_bg_color(apply_button,lv_color_hex(AMBER),0);tint(apply_button,INK);
     const int rows[]={0,1,2,7,9};
     const char *names[]={"Deck lights","Breezeway lights","Blinds","Kids heat","Vacuum"};
     const char *symbols[]={LV_SYMBOL_POWER,LV_SYMBOL_POWER,LV_SYMBOL_UP,LV_SYMBOL_CHARGE,LV_SYMBOL_HOME};
     for(int row=0;row<5;++row){
-        int key=rows[row];tile[key]=panel(body[1],0,row*66,456,60,CARD,13);
-        lv_obj_t *p=tile[key];icon_badge[key]=label(p,symbols[row],13,18,28,&lv_font_montserrat_24);tint(icon_badge[key],BLUE);
+        int key=rows[row];tile[key]=panel(body[1],0,row*73,456,67,CARD,13);
+        lv_obj_t *p=tile[key];if(key<2){
+            /* Bulb silhouette drawn locally: dark glass when off, yellow when on. */
+            lv_obj_t *bulb=panel(p,8,9,36,48,CARD,0);lv_obj_set_style_bg_opa(bulb,LV_OPA_TRANSP,0);lv_obj_set_style_border_width(bulb,0,0);
+            bulb_head[key]=panel(bulb,5,0,26,29,0x303b49,13);
+            bulb_stem[key]=panel(bulb,12,23,12,12,0x303b49,3);lv_obj_set_style_border_width(bulb_stem[key],0,0);
+            bulb_base[key]=panel(bulb,11,37,14,4,0x647386,2);lv_obj_set_style_border_width(bulb_base[key],0,0);
+        } else {icon_badge[key]=label(p,symbols[row],13,21,28,&lv_font_montserrat_24);tint(icon_badge[key],BLUE);}
         label(p,names[row],52,8,186,&lv_font_montserrat_16);
         states[key]=label(p,"Unavailable",52,33,key==7?80:184,&lv_font_montserrat_14);lv_label_set_long_mode(states[key],LV_LABEL_LONG_DOT);lv_obj_set_height(states[key],22);
         if(key==2){control_button(p,"Open",key,2,240,9,66);control_button(p,"Stop",key,3,312,9,66);control_button(p,"Close",key,4,384,9,66);}
@@ -366,24 +415,29 @@ static void build_ui(void)
     }
     const char *laundry[]={"Washer 1","Washer 2","Dryer 1","Dryer 2"};
     for(int n=0;n<4;++n){
-        int key=n+3;tile[key]=panel(body[2],(n%2)*234,(n/2)*153,222,141,CARD,18);
+        int key=n+3;tile[key]=panel(body[2],(n%2)*234,(n/2)*184,222,174,CARD,18);
         lv_obj_t *p=tile[key];icon_badge[key]=label(p,LV_SYMBOL_LOOP,16,14,40,&lv_font_montserrat_28);tint(icon_badge[key],BLUE);
-        lv_obj_t *kind=label(p,n<2?"WASH":"DRY",72,21,130,&lv_font_montserrat_14);tint(kind,MUTED);
-        label(p,laundry[n],16,58,190,&lv_font_montserrat_20);
-        states[key]=label(p,"Unavailable",16,94,190,&lv_font_montserrat_16);lv_label_set_long_mode(states[key],LV_LABEL_LONG_DOT);lv_obj_set_height(states[key],36);
+        lv_obj_t *kind=label(p,n<2?"WASH":"DRY",62,24,78,&lv_font_montserrat_14);tint(kind,MUTED);
+        label(p,laundry[n],16,86,190,&lv_font_montserrat_20);
+        activity_ring[key]=lv_arc_create(p);lv_obj_set_pos(activity_ring[key],148,13);lv_obj_set_size(activity_ring[key],56,56);
+        lv_arc_set_bg_angles(activity_ring[key],0,360);lv_arc_set_angles(activity_ring[key],0,360);
+        lv_obj_remove_style(activity_ring[key],NULL,LV_PART_KNOB);lv_obj_remove_flag(activity_ring[key],LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_add_flag(activity_ring[key],LV_OBJ_FLAG_GESTURE_BUBBLE);
+        lv_obj_set_style_arc_width(activity_ring[key],4,LV_PART_MAIN);lv_obj_set_style_arc_width(activity_ring[key],4,LV_PART_INDICATOR);
+        lv_obj_set_style_arc_color(activity_ring[key],lv_color_hex(EDGE),LV_PART_MAIN);
+        states[key]=label(p,"Unavailable",16,124,190,&lv_font_montserrat_20);lv_label_set_long_mode(states[key],LV_LABEL_LONG_DOT);lv_obj_set_height(states[key],36);
     }
-    lv_obj_t *laundry_hint=label(body[2],"Live appliance status from Home Assistant",0,309,456,&lv_font_montserrat_14);centered(laundry_hint);tint(laundry_hint,MUTED);
     lv_obj_t *camera_title=label(body[3],"Parking lot",0,1,240,&lv_font_montserrat_24);
     (void)camera_title;
     camera_status=label(body[3],LV_SYMBOL_VIDEO "  CONNECTING",252,7,204,&lv_font_montserrat_14);tint(camera_status,MINT);
-    camera_frame=panel(body[3],0,40,456,260,0x05090e,16);
+    camera_frame=panel(body[3],0,40,456,290,0x05090e,16);
     camera_image=lv_image_create(camera_frame);lv_obj_add_flag(camera_image,LV_OBJ_FLAG_HIDDEN);lv_obj_add_flag(camera_image,LV_OBJ_FLAG_GESTURE_BUBBLE);
-    camera_note=label(body[3],"Loading camera...",0,308,456,&lv_font_montserrat_14);centered(camera_note);tint(camera_note,MUTED);
+    camera_note=label(body[3],"Loading camera...",0,341,456,&lv_font_montserrat_14);centered(camera_note);tint(camera_note,MUTED);
     lv_timer_create(refresh,250,NULL);select_page(0);refresh(NULL);
 }
 void room_display_start(void)
 {
-    mutex=xSemaphoreCreateMutex();commands=xQueueCreate(1,sizeof(command_t));
+    mutex=xSemaphoreCreateMutex();commands=xQueueCreate(8,sizeof(command_t));
     ESP_ERROR_CHECK(mutex&&commands?ESP_OK:ESP_ERR_NO_MEM);
     ESP_ERROR_CHECK(bsp_display_start()?ESP_OK:ESP_FAIL);
     if(bsp_display_lock(0)){
@@ -393,6 +447,7 @@ void room_display_start(void)
         build_ui();bsp_display_unlock();
     }
     ESP_ERROR_CHECK(bsp_display_brightness_set(80));
+    ESP_ERROR_CHECK(xTaskCreate(command_task,"room_commands",10240,NULL,3,NULL)==pdPASS?ESP_OK:ESP_ERR_NO_MEM);
     ESP_ERROR_CHECK(xTaskCreate(network_task,"room_network",10240,NULL,3,NULL)==pdPASS?ESP_OK:ESP_ERR_NO_MEM);
     ESP_ERROR_CHECK(xTaskCreate(camera_task,"room_camera",8192,NULL,2,NULL)==pdPASS?ESP_OK:ESP_ERR_NO_MEM);
     ESP_LOGI(TAG,"Native 4B ready: Climate / Home / Laundry / Camera");

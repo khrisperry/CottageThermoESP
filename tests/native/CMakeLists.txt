@@ -35,3 +35,6 @@ target_compile_options(keepalive_test PRIVATE -Wall -Wextra -Werror -Wno-unused-
 
 add_executable(camera_size_test test_camera_size.c)
 target_compile_options(camera_size_test PRIVATE -Wall -Wextra -Werror)
+
+add_executable(visual_state_test test_visual_state.c)
+target_compile_options(visual_state_test PRIVATE -Wall -Wextra -Werror)
