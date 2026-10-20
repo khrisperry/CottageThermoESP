@@ -29,6 +29,13 @@ int main(void)
     length=query(packet,1);packet[12]=0xc0;assert(!portal_dns_reply(packet,length,sizeof(packet)));
     length=query(packet,1);packet[12]=64;assert(!portal_dns_reply(packet,length,sizeof(packet)));
     length=query(packet,1);assert(!portal_dns_reply(packet,length-3,sizeof(packet)));
+    assert(portal_setup_address((uint8_t[]){192,168,4,1},4));
+    assert(!portal_setup_address((uint8_t[]){192,168,60,40},4));
+    uint8_t mapped[16]={0};mapped[10]=mapped[11]=0xff;mapped[12]=192;mapped[13]=168;mapped[14]=4;mapped[15]=1;
+    assert(portal_setup_address(mapped,sizeof(mapped)));
+    mapped[14]=60;assert(!portal_setup_address(mapped,sizeof(mapped)));
+    mapped[0]=0xfe;mapped[1]=0x80;assert(!portal_setup_address(mapped,sizeof(mapped)));
+    assert(!portal_setup_address(mapped,8));
     puts("PASS: Wi-Fi profile limits and captive DNS A/AAAA/malformed-packet checks");
     return 0;
 }

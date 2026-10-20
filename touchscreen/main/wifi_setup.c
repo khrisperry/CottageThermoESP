@@ -26,7 +26,7 @@
 
 #define PROFILE_MAGIC 0x43575031u
 #define DISCONNECTED_BIT 1
-#define SETUP_URL "http://192.168.4.1/"
+#define SETUP_URL "http://192.168.4.1/wifi"
 static const char *TAG="room_wifi";
 typedef struct {uint32_t magic;char ssid[33],password[65];} profile_t;
 typedef struct {
@@ -275,9 +275,19 @@ void room_wifi_start(void)
 bool room_wifi_setup_request(httpd_req_t *r)
 {
     if(!get_state().portal)return false;
-    struct sockaddr_in address;socklen_t length=sizeof(address);
-    return getsockname(httpd_req_to_sockfd(r),(struct sockaddr*)&address,&length)==0&&
-        address.sin_family==AF_INET&&address.sin_addr.s_addr==inet_addr("192.168.4.1");
+    struct sockaddr_storage address={0};socklen_t length=sizeof(address);
+    if(getsockname(httpd_req_to_sockfd(r),(struct sockaddr*)&address,&length)!=0)return false;
+    if(address.ss_family==AF_INET&&length>=sizeof(struct sockaddr_in)){
+        const struct sockaddr_in *v4=(const struct sockaddr_in*)&address;
+        return portal_setup_address((const uint8_t*)&v4->sin_addr,4);
+    }
+#if CONFIG_LWIP_IPV6
+    if(address.ss_family==AF_INET6&&length>=sizeof(struct sockaddr_in6)){
+        const struct sockaddr_in6 *v6=(const struct sockaddr_in6*)&address;
+        return portal_setup_address((const uint8_t*)&v6->sin6_addr,16);
+    }
+#endif
+    return false;
 }
 static esp_err_t json_reply(httpd_req_t *r,int code,cJSON *j)
 {

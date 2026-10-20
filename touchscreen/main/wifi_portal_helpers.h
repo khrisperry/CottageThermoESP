@@ -39,3 +39,13 @@ static inline size_t portal_dns_reply(uint8_t *packet,size_t length,size_t capac
     }
     return end;
 }
+
+/* The HTTP server uses IPv4-mapped IPv6 sockets when LWIP_IPV6 is enabled. */
+static inline bool portal_setup_address(const uint8_t *bytes,size_t size)
+{
+    static const uint8_t ap[4]={192,168,4,1};
+    if(size==4)return !memcmp(bytes,ap,sizeof(ap));
+    if(size!=16)return false;
+    for(size_t n=0;n<10;++n)if(bytes[n])return false;
+    return bytes[10]==0xff&&bytes[11]==0xff&&!memcmp(bytes+12,ap,sizeof(ap));
+}
