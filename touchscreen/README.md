@@ -1,31 +1,69 @@
-# Room thermostat client v0.2.0
+# Cottage room panel — Waveshare ESP32-S3-Touch-LCD-4B
 
-A separately buildable ESP-IDF **6.0.1 / ESP32-S3** room client. Implemented now: direct authenticated controller communication, browser thermostat UI, setpoint changes, reconnect behavior, and external **SHT31 or SHT4x** probe reporting with CRC validation. No fabricated temperature is sent when the probe is missing or fails.
+Version 0.4.0 adds the **native 480×480 LCD and capacitive touch interface**. This is for the **4B**, with 16 MB flash and 8 MB octal PSRAM. It uses Waveshare BSP 2.0.0, LVGL 9.2.0 and ESP LVGL port 2.6.2, compiled with ESP-IDF 6.0.1. The dependency lock pins the tested graph. No device has been flashed or physically verified by the coding environment.
 
-**The physical LCD/touch/LVGL board adapter is not implemented.** The project specification still names the Waveshare ESP32-S3-Touch-LCD-4B as a candidate; exact board revision, display/touch drivers and probe wiring must be confirmed before assigning GPIOs. This project can build now without a probe or LCD. Browser UI is served by the room ESP itself; use its IP printed in the serial monitor.
+## Native pages
 
-## Build/configure
+- **Climate** is the default. Shows the controller's reported temperature, effective target, operating mode and reason. Adjust in 0.5°F steps with −/+, then tap **Set target**. That writes only `target_f` (45–80°F); it cannot arm the servo, switch operating mode or start calibration.
+- **Home** provides explicit Deck/Breezeway On/Off, blinds Open/Stop/Close, Kids Heat On/Off with its separate temperature, and vacuum Start/Stop. Unsupported or unavailable requests are disabled.
+- **Laundry** shows the four status sensor strings, without invented progress or completion estimates.
+- **Camera** fetches the bridge's scaled JPEGs only while visible, up to one per second. Old images hide on failure, stale data or navigation. An already-running read may finish within its timeout, but its result is discarded after a page change; no further frames are requested. Full-motion video remains separate work.
 
-From a VSCode ESP-IDF PowerShell terminal:
+Swipe left/right or tap the bottom navigation. After 60 seconds without navigation or a control tap, it returns to Climate and stops camera requests. Network work runs in separate tasks; the display task performs no network I/O. Reads refresh every 3–5 seconds; controls disable when the last successful read is more than 10 seconds old. One pending user request is allowed, expires after two seconds if the worker has not begun it, and is never automatically replayed. An uncertain command result asks you to inspect state before intentionally trying again.
 
-```powershell
-cd C:\Users\kperry\Documents\GitHub\CottageThermoESP\touchscreen
-# First build of this project only:
-idf.py set-target esp32s3
-idf.py menuconfig
-idf.py build
-# Flash only after confirming the target board, flash size, USB console and its COM port:
-# idf.py -p COMxx flash monitor
-```
+The browser interfaces remain at `/` (Climate) and `/home` (HA). On the ESP both require the locally configured room pairing token for API access. The native panel uses the same configured upstream credentials directly, without a pairing screen.
 
-Under **Cottage room thermostat**, enter the controller pairing token from its USB monitor. Default network is the open `CottageThermoBench` AP and controller URL `http://192.168.4.1`. Both devices can alternatively use the same LAN (configure each SSID/password and controller address). Credentials stay in ignored `sdkconfig`; do not commit them. The default 8 MB flash/USB console profile must be checked against the actual room board before flashing.
+## Windows build and first hardware test
 
-Probe defaults to **disabled**, pins **-1**. When wired and verified, select `1` (SHT31, address 0x44) or `2` (SHT4x, address 0x44) and set the external probe's SDA/SCL. Use board-appropriate 3.3 V wiring/pullups and mount the probe away from screen/CPU heat. Readings are sent every 15 seconds. I2C failure/CRC mismatch/out-of-range reading sends nothing, allowing the controller's stale timeout to work. Failed network reports are discarded, not replayed after reconnect. SHT31 and SHT4x use separate measurement command/timing paths.
+1. Update the `feature/thermostat-foundation` checkout. In a **VSCode ESP-IDF 6.0.1 terminal**, from repository root:
 
-Open the room client's printed IP in a browser, enter the same pairing token and change the target. The client never stores the committed setpoint locally and cannot arm the servo or set the controller's operating mode. Controller restarts, unavailability and missing fresh readings appear explicitly; old room temperature is cleared from the UI on connection loss. Entering a target overrides a controller schedule until it is re-enabled there.
+   ```powershell
+   .\tools\build-room-4b.ps1 -Configure
+   ```
 
-Transport is paired local HTTP for this attended development setup. Production encrypted pairing, MQTT, physical LCD integration and signed OTA remain separate work.
+   This creates an ignored **touchscreen/sdkconfig.4b** and **touchscreen/build-4b/**, separate from the old browser-only configuration. Existing Wi-Fi/token settings from `sdkconfig` are **not automatically copied**. Set the fields under **Cottage room thermostat**:
 
-## Home Assistant panel (v0.3.0)
+   | Setting | Value |
+   |---|---|
+   | Wi-Fi SSID / password | LAN Wi-Fi that can reach the bridge and furnace controller |
+   | Controller URL | Actual controller LAN URL; leave the default if testing HA alone |
+   | Controller pairing token | Its 32-character token; optional for HA-only testing |
+   | HA bridge URL | `http://<PC-or-LXC-LAN-IP>:8087`, no trailing slash |
+   | HA bridge client token | The separate bridge token printed by the running bridge, **not the HA access token** |
+   | Native Waveshare 4B display | Enabled |
+   | Rotate display and touch 180 degrees | Enable if required by your mounting |
+   | External probe | Keep disabled until wired and confirmed |
 
-User confirmed Waveshare **ESP32-S3-Touch-LCD-4B** on 2026-10-20. The room client now embeds `/home` for Home/Laundry/Camera controls and forwards compact requests to the local HA bridge. See [../ha_bridge/README.md](../ha_bridge/README.md) for the exact mappings, secure local credential setup, Windows validation and optional Proxmox deployment. The physical 4B LCD/touch adapter is still pending. The furnace controller and its simulation/bench interlocks are unchanged.
+2. For a Windows-hosted bridge, restart it with LAN binding:
+
+   ```powershell
+   powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\ha_bridge\start-local.ps1 -BindAddress 0.0.0.0
+   ```
+
+   Allow its port on the private LAN if Windows Firewall prompts. The ESP cannot reach `127.0.0.1` on the PC. A newly generated bridge token changes on restart; keep that bridge process running during the test, or configure a stable `COTTAGE_BRIDGE_TOKEN` privately in the bridge process environment. If the token changes, update the ESP's menuconfig before rebuilding. Keep the HA access token only on the bridge host.
+
+3. Connect the **4B display**, identify its COM port, then explicitly flash:
+
+   ```powershell
+   .\tools\build-room-4b.ps1 -Flash -Monitor -Port COMxx
+   ```
+
+   Replace `COMxx` with its actual port. The script builds without flashing unless `-Flash` is specified. Serial monitor exits with Ctrl+]. The display DHCP hostname is `CottageThermostat`.
+
+4. Confirm the screen orientation, touch alignment and all four pages. Test Deck On/Off first, then the remaining HA controls. Open/leave Camera and confirm the old picture disappears. Stop the bridge and check that Home controls disable. With no furnace controller connected, Climate correctly shows unavailable values while HA pages remain usable. Verify live camera colors, touch responsiveness and absence of RGB artifacts on the physical unit.
+
+## Probe and controller separation
+
+The native 4B uses the board I2C bus on **SDA GPIO47 / SCL GPIO48** for touch and the IO expander. An optional SHT31/SHT4x probe must share that bus at address 0x44 using 3.3V-compatible wiring; select its type and these pins in menuconfig only after confirming wiring. Other GPIO selections are rejected for the probe in native mode, preventing accidental reuse of LCD pins. The BSP owns I2C initialization. No secondary bus is initialized over display pins.
+
+Valid CRC-checked room samples go directly to the independent controller every 15 seconds and are never queued for later replay. Kids temperature remains display-only and is never reported as a furnace temperature. The controller retains its existing simulation/bench protections and settings. **Servo movement and mechanics remain unverified.**
+
+The browser-only fallback is available by disabling the native display setting; its generic probe pins must then be configured explicitly. Native builds require the 16 MB/PSRAM hardware profile in the new defaults; do not flash an old 8 MB browser build expecting a native LCD.
+
+## Validation
+
+- Native room image compiles under ESP-IDF 6.0.1; 4 MB application partition leaves substantial space.
+- `tests/native` uses real LVGL on a host with mocked network/RTOS. It renders the same C UI and checks swipe navigation, control routing, target-only changes, stale/expired requests, unknown outcomes, the probe pin guard and return to Climate. It does not validate the physical RGB/touch electronics.
+- The existing controller/browser and bridge tests continue separately. No live HA commands are sent by automated checks.
+
+Hardware/API sources: [Waveshare 4B examples](https://docs.waveshare.net/ESP32-S3-Touch-LCD-4B/ESP-IDF/), [Waveshare BSP](https://components.espressif.com/components/waveshare/esp32_s3_touch_lcd_4b/versions/2.0.0), [LVGL 9.2](https://docs.lvgl.io/9.2/).

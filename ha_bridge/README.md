@@ -2,7 +2,7 @@
 
 This host service runs on a Windows PC for initial validation, then can run beside the ship tracker in the Proxmox LXC. Home Assistant authentication, TLS and JPEG scaling stay on the host. The ESP receives a small state document and sends allowlisted requests. **This module has no furnace servo or main thermostat control endpoint.**
 
-Target display confirmed by Khris: **Waveshare ESP32-S3-Touch-LCD-4B**. The current implementation provides a browser Home/Laundry/Camera panel and an ESP-IDF room-client proxy. **The physical 4B LCD/touch/LVGL adapter remains pending**; a successful firmware build does not display this page on the LCD yet.
+Target display confirmed by Khris: **Waveshare ESP32-S3-Touch-LCD-4B**. The current implementation provides a browser Home/Laundry/Camera panel and an ESP-IDF room-client proxy. Version 0.4.0 now also includes a native 4B LCD/touch/LVGL panel; see `../touchscreen/README.md` for its dedicated build/configuration instructions. The native display has compiled and passed host UI checks; physical board validation remains pending.
 
 ## Supplied configuration
 
@@ -57,7 +57,7 @@ No deployment or service installation is performed automatically. Actual LXC add
 
 ## ESP room-client setup
 
-Build `touchscreen` with ESP-IDF 6.0.1. Under **Cottage room thermostat**, keep the existing controller pairing token and configure:
+Build the dedicated 4B profile using `tools/build-room-4b.ps1` with ESP-IDF 6.0.1. Under **Cottage room thermostat**, keep the existing controller pairing token and configure:
 
 - `ROOM_HA_BRIDGE_URL`: bridge LAN URL, e.g. `http://<LXC-LAN-IP>:8087`, no trailing slash.
 - `ROOM_HA_BRIDGE_TOKEN`: the bridge client token, **not HA_TOKEN**.
@@ -65,7 +65,7 @@ Build `touchscreen` with ESP-IDF 6.0.1. Under **Cottage room thermostat**, keep 
 
 After flashing to the verified room board, visit its browser UI and select **Home · Laundry · Camera**. Use the **room controller-pairing token** on this page; the firmware attaches the separate bridge token upstream. The same HTML is embedded in firmware and served by the bridge. An HTTPS bridge URL uses the ESP certificate bundle and requires valid NTP time; plain local HTTP does not. Credentials in generated `sdkconfig` remain ignored by git.
 
-The confirmed 4B has 16 MB flash/8 MB PSRAM, but its dedicated display initialization, external probe pin assignment and full native screen integration are still separate work. Do not assume the board-independent development defaults are a complete 4B hardware profile.
+The 4B build now uses 16 MB flash/8 MB octal PSRAM, the Waveshare display/touch BSP and a shared board I2C probe bus (SDA47/SCL48). Keep the probe disabled until physically wired and confirmed. Native pages and browser pages use the same bridge mapping.
 
 ## Behavior, limits and endpoints
 

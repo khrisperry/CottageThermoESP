@@ -65,3 +65,13 @@ Update this file with: date, branch/commit SHA, hardware board and wiring, firmw
 - Four provided laundry status sensors are displayed as reported, without fictional countdowns.
 - First camera implementation is on-demand JPEG live view up to 1 fps; full-motion streaming and physical LCD adapter remain pending.
 - HA token and bridge host address are configured locally. No live HA connection or physical device action has been tested by the coding environment.
+
+## 2026-10-20 Native 4B milestone
+
+- User confirmed the HA webpage works with their entities; continue to native display.
+- Native Climate/Home/Laundry/Camera implemented using Waveshare 4B BSP 2.0.0, LVGL 9.2.0 and ESP LVGL port 2.6.2. Newest port 2.9.0 did not compile against LVGL 9.2; tested versions are pinned.
+- Dedicated 16 MB/octal PSRAM profile uses local sdkconfig.4b and a 4 MB app partition.
+- Display network and JPEG decode are off the LVGL task. Camera work stops when leaving the page; idle returns to Climate after 60 seconds.
+- Optional external probe shares BSP-owned I2C SDA47/SCL48. Other pins are rejected in native mode.
+- Controller servo/mode/arming logic remains unchanged; only explicit target changes are available on the room screen. Ship tracker page/full-motion camera remain future work.
+- Firmware compile and host LVGL interaction/layout checks passed. Physical LCD/touch orientation, camera color and live device checks await user flashing.

@@ -6,6 +6,10 @@ if (-not (Get-Command idf.py -ErrorAction SilentlyContinue)) {
 $repoRoot=Split-Path -Parent $PSScriptRoot
 $projects=if ($Project -eq 'both') { @('controller','touchscreen') } else { @($Project) }
 foreach ($name in $projects) {
+    if ($name -eq 'touchscreen') {
+        & (Join-Path $PSScriptRoot 'build-room-4b.ps1')
+        continue
+    }
     $projectPath=Join-Path $repoRoot $name
     Push-Location $projectPath
     try {

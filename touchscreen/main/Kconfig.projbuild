@@ -1,4 +1,14 @@
 menu "Cottage room thermostat"
+    config ROOM_NATIVE_DISPLAY
+        bool "Native Waveshare ESP32-S3-Touch-LCD-4B display"
+        default y
+        help
+            Use only on the confirmed 4B (480x480, 16 MB flash, octal PSRAM).
+            External probe shares the board I2C bus on SDA47/SCL48.
+    config ROOM_DISPLAY_ROTATE_180
+        bool "Rotate display and touch 180 degrees"
+        depends on ROOM_NATIVE_DISPLAY
+        default n
     config ROOM_WIFI_SSID
         string "Controller bench AP or LAN SSID"
         default "CottageThermoBench"

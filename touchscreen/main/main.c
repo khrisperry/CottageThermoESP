@@ -1,4 +1,4 @@
-/* Board-independent room-client foundation. LCD board adapter remains separate. */
+/* Independent room client with native Waveshare 4B and browser panels. */
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -17,6 +17,8 @@
 #include "cJSON.h"
 #include "esp_sntp.h"
 #include "ha_panel.h"
+#include "room_display.h"
+#include "room_transport.h"
 
 static const char *TAG="room_thermostat";
 static i2c_master_dev_handle_t probe;
@@ -25,28 +27,9 @@ extern const unsigned char page_end[] asm("_binary_room_html_end");
 // Each HTTP client is owned by its caller. Shared controller settings live upstream only.
 static esp_err_t exchange(const char *path,const char *payload,char *out,size_t cap,int *status)
 {
-    char url[256];
-    if(snprintf(url,sizeof(url),"%s%s",CONFIG_ROOM_CONTROLLER_URL,path)>=(int)sizeof(url))return ESP_ERR_INVALID_ARG;
-    esp_http_client_config_t cfg={.url=url,.timeout_ms=3000,.disable_auto_redirect=true};
-    esp_http_client_handle_t h=esp_http_client_init(&cfg);if(!h)return ESP_ERR_NO_MEM;
-    esp_http_client_set_header(h,"X-Thermo-Token",CONFIG_ROOM_API_TOKEN);
-    if(payload) {
-        esp_http_client_set_method(h,HTTP_METHOD_POST);
-        esp_http_client_set_header(h,"Content-Type","application/json");
-    }
-    esp_err_t err=esp_http_client_open(h,payload?strlen(payload):0);
-    if(err==ESP_OK && payload) {
-        int len=strlen(payload),at=0;
-        while(at<len) {int n=esp_http_client_write(h,payload+at,len-at);if(n<=0){err=ESP_FAIL;break;}at+=n;}
-    }
-    if(err==ESP_OK && esp_http_client_fetch_headers(h)<0)err=ESP_FAIL;
-    if(err==ESP_OK) {
-        *status=esp_http_client_get_status_code(h);
-        int n=esp_http_client_read_response(h,out,cap-1);
-        if(n<0 || n>=(int)cap-1 || !esp_http_client_is_complete_data_received(h))err=ESP_FAIL;
-        else out[n]=0;
-    }
-    esp_http_client_close(h);esp_http_client_cleanup(h);return err;
+    int length;
+    return room_http(CONFIG_ROOM_CONTROLLER_URL,"X-Thermo-Token",CONFIG_ROOM_API_TOKEN,
+                     path,payload,out,cap,3000,status,&length);
 }
 static uint8_t crc(const uint8_t *p)
 {
@@ -124,20 +107,27 @@ static void wifi_event(void *arg,esp_event_base_t base,int32_t id,void *data)
 void app_main(void)
 {
     ESP_ERROR_CHECK(nvs_flash_init());ESP_ERROR_CHECK(esp_netif_init());ESP_ERROR_CHECK(esp_event_loop_create_default());
-    esp_netif_create_default_wifi_sta();wifi_init_config_t init=WIFI_INIT_CONFIG_DEFAULT();ESP_ERROR_CHECK(esp_wifi_init(&init));
+    esp_netif_t *netif=esp_netif_create_default_wifi_sta();
+    ESP_ERROR_CHECK(esp_netif_set_hostname(netif,"CottageThermostat"));
+    wifi_init_config_t init=WIFI_INIT_CONFIG_DEFAULT();ESP_ERROR_CHECK(esp_wifi_init(&init));
     ESP_ERROR_CHECK(esp_wifi_set_storage(WIFI_STORAGE_RAM));
     ESP_ERROR_CHECK(esp_event_handler_register(WIFI_EVENT,ESP_EVENT_ANY_ID,wifi_event,NULL));
     ESP_ERROR_CHECK(esp_event_handler_register(IP_EVENT,IP_EVENT_STA_GOT_IP,wifi_event,NULL));
     wifi_config_t sta={0};snprintf((char*)sta.sta.ssid,sizeof(sta.sta.ssid),"%s",CONFIG_ROOM_WIFI_SSID);
     snprintf((char*)sta.sta.password,sizeof(sta.sta.password),"%s",CONFIG_ROOM_WIFI_PASSWORD);
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA,&sta));ESP_ERROR_CHECK(esp_wifi_start());
+    room_display_start();
     if(CONFIG_ROOM_SENSOR && CONFIG_ROOM_SDA>=0 && CONFIG_ROOM_SCL>=0 && CONFIG_ROOM_SDA!=CONFIG_ROOM_SCL) {
-        i2c_master_bus_handle_t bus;
+        i2c_master_bus_handle_t bus=NULL;
+#if CONFIG_ROOM_NATIVE_DISPLAY
+        bus=room_display_probe_bus(CONFIG_ROOM_SDA,CONFIG_ROOM_SCL);
+#else
         i2c_master_bus_config_t cfg={.i2c_port=I2C_NUM_0,.sda_io_num=CONFIG_ROOM_SDA,.scl_io_num=CONFIG_ROOM_SCL,
             .clk_source=I2C_CLK_SRC_DEFAULT,.glitch_ignore_cnt=7,.flags.enable_internal_pullup=true};
         ESP_ERROR_CHECK(i2c_new_master_bus(&cfg,&bus));
+#endif
         i2c_device_config_t dev={.dev_addr_length=I2C_ADDR_BIT_LEN_7,.device_address=0x44,.scl_speed_hz=100000};
-        ESP_ERROR_CHECK(i2c_master_bus_add_device(bus,&dev,&probe));
+        if(bus)ESP_ERROR_CHECK(i2c_master_bus_add_device(bus,&dev,&probe));
     }
     httpd_config_t cfg=HTTPD_DEFAULT_CONFIG();cfg.stack_size=8192;cfg.max_uri_handlers=12;httpd_handle_t h;ESP_ERROR_CHECK(httpd_start(&h,&cfg));
     httpd_uri_t routes[]={ {.uri="/",.method=HTTP_GET,.handler=root},
@@ -147,5 +137,5 @@ void app_main(void)
     esp_sntp_setoperatingmode(SNTP_OPMODE_POLL);esp_sntp_setservername(0,"pool.ntp.org");esp_sntp_init();
     if(probe && strlen(CONFIG_ROOM_API_TOKEN)==32)xTaskCreate(sensor_task,"room_probe",6144,NULL,5,NULL);
     else ESP_LOGW(TAG,"Probe reporting disabled: configure probe pins/type and 32-character pairing token");
-    ESP_LOGI(TAG,"Room client v0.3.0; browser UI ready; LCD board driver not configured");
+    ESP_LOGI(TAG,"Room client v0.4.0; native display and browser services ready");
 }

@@ -2,7 +2,7 @@
 
 ESP-IDF smart thermostat / mechanical knob actuator project for a **Williams model 1773512 direct-vent cottage furnace**.
 
-> **Status: v0.2.0 thermostat development firmware.** Controller and room client are separate ESP-IDF 6.0.1 projects. Automatic output defaults to simulation; physical servo commands are explicitly armed bench operations. Mechanical travel/torque, encoder feedback and appliance integration remain unverified.
+> **Status: controller v0.2.0; native 4B room panel v0.4.0.** Controller and room client are separate ESP-IDF 6.0.1 projects. Automatic output defaults to simulation; physical servo commands are explicitly armed bench operations. Mechanical travel/torque, encoder feedback and appliance integration remain unverified.
 
 ## Start here when resuming the project
 
@@ -12,13 +12,13 @@ ESP-IDF smart thermostat / mechanical knob actuator project for a **Williams mod
 4. **[docs/DECISIONS_AND_OPEN_QUESTIONS.md](docs/DECISIONS_AND_OPEN_QUESTIONS.md)** — confirmed decisions, unknowns, next session checklist.
 5. **[hardware/cap_fit_kit.scad](hardware/cap_fit_kit.scad)** — parametric **test coupons**, not a verified knob/servo coupling.
 6. **[controller/README.md](controller/README.md)** — controller setup, modes, calibration and bench movement.
-7. **[touchscreen/README.md](touchscreen/README.md)** — buildable room client, probe support and physical LCD adapter status.
+7. **[touchscreen/README.md](touchscreen/README.md)** — native 4B build, Wi-Fi/bridge setup and first hardware checks.
 8. **[docs/LOCAL_VALIDATION.md](docs/LOCAL_VALIDATION.md)** — local build/test steps and next cottage visit.
 9. **[docs/API.md](docs/API.md)** — direct paired API, schedules and data freshness.
 
 ## Home Assistant development
 
-The room client v0.3.0 adds a Home/Laundry/Camera browser panel and compact bridge API. [ha_bridge/README.md](ha_bridge/README.md) includes the confirmed entity mappings, local token setup and Windows/Proxmox instructions. The physical 4B LCD adapter remains pending.
+The room client provides native Climate/Home/Laundry/Camera pages with touch/swipe navigation, alongside the browser panel and compact bridge API. [ha_bridge/README.md](ha_bridge/README.md) includes the confirmed entity mappings, local token setup and Windows/Proxmox instructions. Native firmware compiles and passes host UI checks; physical RGB/touch/camera testing remains pending.
 
 ## Goal
 
@@ -30,13 +30,13 @@ The room client v0.3.0 adds a Home/Laundry/Camera browser panel and compact brid
 
 ## Software now implemented
 
-Persistent modes/target/calibration, measured-map interpolation, fractional dial commands, source freshness/disagreement checks, movement limits, weekly schedules in Detroit time, paired web/API access, optional LAN Wi-Fi, events and six-hour sample CSV export. The room client reports CRC-checked SHT31/SHT4x samples and presents a browser thermostat; exact LCD/touch board integration remains pending.
+Persistent modes/target/calibration, measured-map interpolation, fractional dial commands, source freshness/disagreement checks, movement limits, weekly schedules in Detroit time, paired web/API access, optional LAN Wi-Fi, events and six-hour sample CSV export. The room client reports CRC-checked SHT31/SHT4x samples and presents browser and native 4B interfaces. Native display electronics and probe wiring await physical validation.
 
 ```text
 controller/    AtomS3 Lite controller + bench web UI
-touchscreen/ room client + external probe + browser UI (LCD adapter pending)
+touchscreen/ native 4B + external probe + browser UI
 shared/thermo/ hardware-independent thermostat engine
-tests/        native engine and optional browser checks
+tests/        engine, LVGL host, HA bridge and browser checks
 tools/        Windows local build helper
 hardware/     CAD, reference models and tests
 docs/         specification, API, validation and engineering decisions
