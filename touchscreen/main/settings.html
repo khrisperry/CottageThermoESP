@@ -5,7 +5,7 @@
 <section class="card" id="content"></section><section class="card"><p id="message" role="status" aria-live="polite"></p><small>Tokens, keys and passwords are never returned after saving.</small></section></main></div>
 <script>
 'use strict';const $=id=>document.getElementById(id);let config=null,lastStatus=null,page='Overview',timer=null,uploading=false,reconnecting=false,reconnectBoot=null;
-const pages=['Overview','Wi-Fi','Home Assistant','MQTT monitoring','Controller','ESP-NOW','Ship tracking','Sound & display','System'];
+const pages=['Overview','Wi-Fi','Home Assistant','MQTT thermostat','Controller','ESP-NOW','Ship tracking','Sound & display','System'];
 function el(tag,text,cls){const n=document.createElement(tag);if(text!==undefined)n.textContent=String(text);if(cls)n.className=cls;return n;}
 function badge(text,kind){return el('span',text,'badge '+(['ok','offline','unconfigured','standby','fallback'].includes(kind)?kind:'standby'));}
 function field(parent,label,id,value='',type='text',placeholder=''){const wrap=el('div');const l=el('label',label);l.htmlFor=id;const i=el('input');i.id=id;i.type=type;i.value=value||'';i.placeholder=placeholder;i.autocomplete=type==='password'?'new-password':'off';if(type==='password'){const secret=el('div',undefined,'secret');const show=el('button','Show');show.type='button';show.onclick=()=>{i.type=i.type==='password'?'text':'password';show.textContent=i.type==='password'?'Show':'Hide'};secret.append(i,show);wrap.append(l,secret);}else wrap.append(l,i);parent.append(wrap);return i;}
@@ -31,14 +31,14 @@ function render(){
   c.insertBefore(el('p','Direct connection for lights, blinds, laundry, kids heat, vacuum and camera. This token is separate from MQTT credentials.'),form);
   field(grid,'Home Assistant URL','ha',config.ha_url,'url');field(grid,'Long-lived token','token','','password',config.token_configured?keep:'No token saved').maxLength=2048;
   check(grid,'Clear the saved token','clear');actions(form,'ha',()=>({ha_url:$('ha').value.trim(),ha_token:$('token').value,clear_token:$('clear').checked}));
- }else if(page==='MQTT monitoring'){
-  c.insertBefore(el('p','The wall thermostat connects directly to your broker. Home Assistant receives read-only room temperature, target and controller connection sensors. There are no MQTT control commands; the thermostat operates without HA or the broker.'),form);
-  const m=config.mqtt;check(grid,'Enable MQTT monitoring','enabled',m.enabled);field(grid,'Broker host / IP','brokerHost',m.broker.replace(/^mqtts?:\/\//,'').replace(/:\d+$/,''),'text','192.168.60.63');
+ }else if(page==='MQTT thermostat'){
+  c.insertBefore(el('p','The wall thermostat connects directly to your broker. Home Assistant can adjust the thermostat target through a Climate entity. Requests use the same queue and controller validation as touchscreen changes. HA has no direct servo or mode control; the thermostat operates without HA or the broker.'),form);
+  const m=config.mqtt;check(grid,'Enable MQTT thermostat','enabled',m.enabled);field(grid,'Broker host / IP','brokerHost',m.broker.replace(/^mqtts?:\/\//,'').replace(/:\d+$/,''),'text','192.168.60.63');
   field(grid,'Port','port',m.broker.match(/:(\d+)$/)?.[1]||(/mqtts:/.test(m.broker)?8883:1883),'number');
   field(grid,'Username','username',m.username);field(grid,'Password','password','','password',m.password_configured?keep:'MQTT password');check(grid,'Clear saved MQTT password','clearPassword');
   check(grid,'Use TLS (verified certificate)','tls',m.broker.startsWith('mqtts://'));field(grid,'Discovery prefix','prefix',m.prefix);field(grid,'Device name','name',m.name);
   const row=actions(form,'mqtt',()=>({enabled:$('enabled').checked,broker:($('tls').checked?'mqtts://':'mqtt://')+$('brokerHost').value.trim()+':'+$('port').value,username:$('username').value,password:$('password').value,clear_password:$('clearPassword').checked,prefix:$('prefix').value.trim(),name:$('name').value.trim()}));
-  const state=el('p',lastStatus?.mqtt?.status||'Waiting for MQTT status');state.id='mqttDetail';state.className='full';grid.append(state);const test=el('button','Republish HA discovery');test.type='button';test.id='mqttReannounce';test.disabled=!lastStatus?.mqtt?.connected;test.onclick=async()=>{try{await request({section:'mqtt_test'});message('Read-only HA discovery queued.');}catch(e){message(e.message)}};row.append(test);
+  const state=el('p',lastStatus?.mqtt?.status||'Waiting for MQTT status');state.id='mqttDetail';state.className='full';grid.append(state);const test=el('button','Republish HA discovery');test.type='button';test.id='mqttReannounce';test.disabled=!lastStatus?.mqtt?.connected;test.onclick=async()=>{try{await request({section:'mqtt_test'});message('HA Climate discovery queued.');}catch(e){message(e.message)}};row.append(test);
  }else if(page==='Controller'){
   field(grid,'Thermostat controller IP, name or URL','controller',config.controller);field(grid,'Controller pairing token','controllerToken','','password',config.controller_token_configured?keep:'32-character token from controller monitor').maxLength=32;
   actions(form,'controller',()=>({controller:$('controller').value.trim(),controller_token:$('controllerToken').value.trim()}));

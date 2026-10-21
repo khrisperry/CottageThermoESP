@@ -186,7 +186,7 @@ static esp_err_t save(httpd_req_t *r)
         if(err==ESP_OK){err=nvs_set_blob(nvs,"profile",next,sizeof(*next));if(err==ESP_OK)err=nvs_commit(nvs);nvs_close(nvs);}
         memset(next,0,sizeof(*next));free(next);
         if(err!=ESP_OK)return reply(r,500,"Could not save. Previous settings remain active.");
-        bool scheduled=room_settings_reboot_later();return reply(r,200,scheduled?"Saved. Display restarting. MQTT monitoring connects directly from this display; radio pairing syncs separately.":"Saved. Restart the display manually to apply settings.");
+        bool scheduled=room_settings_reboot_later();return reply(r,200,scheduled?"Saved. Display restarting. MQTT connects directly from this display; radio pairing syncs separately.":"Saved. Restart the display manually to apply settings.");
     }
     memset(next,0,sizeof(*next));free(next);return reply(r,200,"Request accepted. Live status reflects the result.");
 }

@@ -1,6 +1,6 @@
 # Connectivity and climate review — 2026-10-21
 
-> **Current architecture (display 0.12.0 / controller 0.4.1):** [Standalone MQTT monitoring](STANDALONE_MQTT_MONITORING.md) supersedes the historical MQTT climate-control and controller-broker setup below. HA receives read-only sensors; only the thermostat controls the servo.
+> **Current architecture (display 0.12.1 / controller 0.4.1):** [Standalone thermostat and MQTT Climate](STANDALONE_MQTT_MONITORING.md) supersedes the historical MQTT climate-control and controller-broker setup below. HA adjusts the target through the wall thermostat Climate entity; only the thermostat/controller system controls the servo.
 
 > Latest update: [Panel v0.11.0 / controller v0.4.0 — dashboard, ships and OTA](DEVICE_DASHBOARD_SHIPS_OTA.md). That document supersedes the original versions, status colors, reserved ship service, compile-only integration setup and partition sizes below.
 

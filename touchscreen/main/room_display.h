@@ -16,3 +16,6 @@ void room_display_set_camera_fill(bool fill);
 
 /* Read-only local snapshot for MQTT; never polls or changes the controller. */
 cJSON *room_display_mqtt_state(void);
+
+/* Shared target-only command queue for touchscreen and HA; no raw servo control. */
+bool room_display_request_target(float target_f);

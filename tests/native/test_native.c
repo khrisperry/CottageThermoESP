@@ -203,8 +203,12 @@ select_page(2);render("laundry.ppm");select_page(3);render("camera.ppm");
  /* HA/MQTT availability cannot gate direct thermostat setpoint changes. */
  model.ha_ok=false;model.climate_ok=true;model.climate_at=now;model.has_target=true;model.target=67;room_display_probe_sample(68);refresh(NULL);
  assert(!lv_obj_has_state(apply_button,LV_STATE_DISABLED));click(plus_button);click(apply_button);before=posts;execute(queued);assert(posts==before+1&&!strcmp(last_path,"/api/config"));
+ /* HA targets share the touchscreen queue and freshness/pending/expiry rules. */
+ assert(!room_display_request_target(NAN)&&!room_display_request_target(81));
+ assert(room_display_request_target(70.5f));assert(!room_display_request_target(71));before=posts;execute(queued);assert(posts==before+1&&strstr(last_post,"70.5"));
+ assert(room_display_request_target(71));before=posts;now+=11000000;execute(queued);assert(posts==before);model.climate_at=now;
  cJSON *telemetry=room_display_mqtt_state();assert(cJSON_IsTrue(cJSON_GetObjectItem(telemetry,"controller_online")));assert(cJSON_GetObjectItem(telemetry,"temperature_f")->valuedouble==68);cJSON_Delete(telemetry);
- now+=11000000;telemetry=room_display_mqtt_state();assert(cJSON_IsFalse(cJSON_GetObjectItem(telemetry,"controller_online"))&&cJSON_IsTrue(cJSON_GetObjectItem(telemetry,"sensor_fresh")));cJSON_Delete(telemetry);
+ now+=11000000;assert(!room_display_request_target(70));telemetry=room_display_mqtt_state();assert(cJSON_IsFalse(cJSON_GetObjectItem(telemetry,"controller_online"))&&cJSON_IsTrue(cJSON_GetObjectItem(telemetry,"sensor_fresh")));cJSON_Delete(telemetry);
  puts("PASS: native LVGL pages/swipes, HA commands, unknown outcomes, expired requests, stale controls, target-only climate, probe guard and idle return");
  return 0;
 }

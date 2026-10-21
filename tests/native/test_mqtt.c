@@ -1,11 +1,12 @@
-/* Real wall MQTT publisher. The fake broker has no actuator command API. */
+/* Real wall MQTT client; HA targets enter the thermostat queue, not the servo. */
 #include <assert.h>
 #include <stdio.h>
 #include <string.h>
 #include "../../touchscreen/main/room_mqtt.c"
 #include "../../controller/main/controller_mqtt.c"
 static cottage_integration_t fixture={.mqtt_enabled=true,.prefix="homeassistant",.name="Cottage thermostat",.broker="mqtt://192.0.2.30:1883",.username="user",.password="fixture-password"};
-static unsigned subscriptions,discoveries,states;static bool controller_up=false,sensor_up=true;static char last_state[512];
+static unsigned subscriptions,discoveries,states,requests;static float requested;static bool controller_up=false,sensor_up=true;static char last_state[512];
+bool room_display_request_target(float target){if(!controller_up)return false;++requests;requested=target;return true;}
 const cottage_integration_t *room_settings_integrations(void){return &fixture;}
 bool room_wifi_connected(void){return true;}
 int esp_read_mac(uint8_t *m,int type){memset(m,2,6);return ESP_OK;}
@@ -13,7 +14,7 @@ void vTaskPrioritySet(void *task,unsigned priority){assert(priority==0);}
 int xTaskCreate(void(*fn)(void*),const char *name,int stack,void *a,int priority,void *out){assert(stack==8192);return pdPASS;}
 void vTaskDelay(int n){}
 void vTaskDelete(void *task){}
-static esp_app_desc_t app={.version="0.12.0"};
+static esp_app_desc_t app={.version="0.12.1"};
 const esp_app_desc_t *esp_app_get_description(void){return &app;}
 int esp_crt_bundle_attach(void *p){return ESP_OK;}
 int esp_mqtt_client_destroy(void *p){return ESP_OK;}
@@ -26,27 +27,36 @@ int esp_mqtt_client_start(void *c){return ESP_OK;}
 cJSON *room_display_mqtt_state(void){cJSON *j=cJSON_CreateObject();cJSON_AddBoolToObject(j,"controller_online",controller_up);cJSON_AddBoolToObject(j,"sensor_fresh",sensor_up);if(sensor_up)cJSON_AddNumberToObject(j,"temperature_f",67);else cJSON_AddNullToObject(j,"temperature_f");cJSON_AddNullToObject(j,"target_f");return j;}
 int esp_mqtt_client_publish(void *c,const char *topic,const char *data,int n,int qos,int retain){
  assert(!strstr(topic,"/set"));
- if(strstr(topic,"/config")){++discoveries;assert(qos==1&&retain);assert(!strstr(data,"command_topic")&&!strstr(data,"password")&&!strstr(data,"fixture-password"));assert(!strstr(topic,"/climate/"));}
+ if(strstr(topic,"/config")){++discoveries;assert(qos==1&&retain);assert(!strstr(data,"mode_command_topic")&&!strstr(data,"power_command_topic")&&!strstr(data,"servo")&&!strstr(data,"password")&&!strstr(data,"fixture-password"));if(strstr(topic,"/climate/"))assert(strstr(data,"temperature_command_topic"));else assert(!strstr(data,"command_topic"));}
  if(strstr(topic,"/state")){++states;snprintf(last_state,sizeof(last_state),"%s",data);}
  return 1;
 }
 int esp_mqtt_client_subscribe(void *c,const char *topic,int qos){
- assert(!strcmp(topic,"homeassistant/status"));++subscriptions;
+ assert(!strcmp(topic,"homeassistant/status")||!strcmp(topic,target_topic));++subscriptions;if(strcmp(topic,"homeassistant/status"))return 1;
  esp_mqtt_event_t e={.topic="homeassistant/status",.topic_len=20,.data="online",.data_len=6,.total_data_len=6,.retain=true};mqtt_event(NULL,NULL,MQTT_EVENT_DATA,&e);return 1;
 }
 int main(void){
  controller_mqtt_start();assert(!controller_mqtt_configured()&&!controller_mqtt_online());
  room_mqtt_start();assert(room_mqtt_state()==1);assert(connect_client()); /* No controller check gates broker startup. */
- mqtt_event(NULL,NULL,MQTT_EVENT_BEFORE_CONNECT,NULL);mqtt_event(NULL,NULL,MQTT_EVENT_CONNECTED,NULL);cycle();assert(room_mqtt_state()==2&&subscriptions==1&&discoveries==3&&states==1);
+ mqtt_event(NULL,NULL,MQTT_EVENT_BEFORE_CONNECT,NULL);mqtt_event(NULL,NULL,MQTT_EVENT_CONNECTED,NULL);cycle();assert(room_mqtt_state()==2&&subscriptions==2&&discoveries==4&&states==1);
  assert(strstr(last_state,"\"controller_online\":false")&&strstr(last_state,"67"));
  for(unsigned n=0;n<10;++n)cycle();
- assert(discoveries==3&&subscriptions==1);
+ assert(discoveries==4&&subscriptions==2);
  char topic[128];snprintf(topic,sizeof(topic),"%s/target/set",base);esp_mqtt_event_t command={.topic=topic,.topic_len=(int)strlen(topic),.data="80",.data_len=2,.total_data_len=2};
- mqtt_event(NULL,NULL,MQTT_EVENT_DATA,&command);cycle();assert(discoveries==3&&!controller_up); /* Broker commands have no effect. */
- assert(room_mqtt_reannounce());cycle();assert(discoveries==6);
+ mqtt_event(NULL,NULL,MQTT_EVENT_DATA,&command);cycle();assert(discoveries==4&&!controller_up&&!requests); /* Broker commands have no effect. */
+ controller_up=true;mqtt_event(NULL,NULL,MQTT_EVENT_DATA,&command);assert(requests==1&&requested==80);
+ const char *bad[]={"81","44.9","NaN","inf","69junk","69 70","0x45","1e2","","+","69\0junk"};
+ for(unsigned i=0;i<sizeof(bad)/sizeof(*bad);++i){command.data=(char*)bad[i];command.data_len=command.total_data_len=i==10?7:(int)strlen(bad[i]);mqtt_event(NULL,NULL,MQTT_EVENT_DATA,&command);}assert(requests==1);
+ command.data="68.5";command.data_len=command.total_data_len=4;command.retain=true;mqtt_event(NULL,NULL,MQTT_EVENT_DATA,&command);assert(requests==1);
+ command.retain=false;command.dup=true;mqtt_event(NULL,NULL,MQTT_EVENT_DATA,&command);assert(requests==1);
+ command.dup=false;command.total_data_len=8;mqtt_event(NULL,NULL,MQTT_EVENT_DATA,&command);assert(requests==1);
+ command.total_data_len=4;command.current_data_offset=2;mqtt_event(NULL,NULL,MQTT_EVENT_DATA,&command);assert(requests==1);
+ command.current_data_offset=0;mqtt_event(NULL,NULL,MQTT_EVENT_DATA,&command);assert(requests==2&&requested==68.5f);
+ char *saved_topic=command.topic;command.topic="cottage/servo/set";command.topic_len=(int)strlen(command.topic);mqtt_event(NULL,NULL,MQTT_EVENT_DATA,&command);assert(requests==2);command.topic=saved_topic;command.topic_len=(int)strlen(command.topic);
+ assert(room_mqtt_reannounce());cycle();assert(discoveries==8);
  sensor_up=false;cycle();assert(strstr(last_state,"\"temperature_f\":null"));
  esp_mqtt_error_codes_t error={.error_type=MQTT_ERROR_TYPE_CONNECTION_REFUSED,.connect_return_code=5};esp_mqtt_event_t e={.error_handle=&error};mqtt_event(NULL,NULL,MQTT_EVENT_ERROR,&e);assert(room_mqtt_state()==1&&strstr(description(),"credentials"));
  mqtt_event(NULL,NULL,MQTT_EVENT_DISCONNECTED,NULL);assert(!room_mqtt_reannounce());unsigned count=states;cycle();assert(states==count);
- mqtt_event(NULL,NULL,MQTT_EVENT_CONNECTED,NULL);cycle();assert(subscriptions==2&&discoveries==9);
- puts("PASS: wall MQTT starts without controller, read-only discovery, only HA birth subscription, ignored command injection, stale sensor clearing, auth diagnostics and reconnect");
+ mqtt_event(NULL,NULL,MQTT_EVENT_CONNECTED,NULL);cycle();assert(subscriptions==4&&discoveries==12);
+ puts("PASS: wall Climate discovery, thermostat target queue, range/payload/retained/duplicate/fragment guards, offline rejection, no servo control, freshness/auth/reconnect");
 }

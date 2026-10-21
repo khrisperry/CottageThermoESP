@@ -291,10 +291,20 @@ static void gesture(lv_event_t *e)
     lv_dir_t d=lv_indev_get_gesture_dir(input);
     if(d==LV_DIR_LEFT||d==LV_DIR_RIGHT){select_page((visible_page+(d==LV_DIR_LEFT?1:4))%5);lv_indev_wait_release(input);}
 }
+bool room_display_request_target(float target)
+{
+    if(!mutex||!commands||!isfinite(target)||target<45||target>80)return false;
+    command_t c={.item=-1,.target=target,.at=esp_timer_get_time()};
+    xSemaphoreTake(mutex,portMAX_DELAY);
+    bool ready=model.climate_ok&&model.has_target&&current(model.climate_at)&&!(model.pending&CLIMATE_PENDING);
+    if(ready){model.pending|=CLIMATE_PENDING;if(xQueueSend(commands,&c,0)!=pdTRUE){model.pending&=~CLIMATE_PENDING;ready=false;}}
+    xSemaphoreGive(mutex);return ready;
+}
 static void send_event(lv_event_t *e)
 {
     intptr_t id=(intptr_t)lv_event_get_user_data(e);static model_t m;copy_model(&m);last_touch=esp_timer_get_time();
     if(id==-2||id==-3){if(!(m.pending&CLIMATE_PENDING)&&m.climate_ok&&m.has_target&&current(m.climate_at)){draft=fmaxf(45,fminf(80,draft+(id==-2?-.5f:.5f)));editing=true;}return;}
+    if(id<0){if(room_display_request_target(draft))editing=false;return;}
     command_t c={.item=id<0?-1:id/6,.action=id<0?0:id%6,.target=draft,.at=esp_timer_get_time()};
     unsigned pending_bit=c.item<0?CLIMATE_PENDING:1U<<c.item;
     if(m.pending&pending_bit)return;
@@ -404,7 +414,7 @@ static void diagnostics_event(lv_event_t *e)
         diagnostic_close_button=button(diagnostic_modal,"Close",342,12,94,34,diagnostics_close,0);
         label(diagnostic_modal,"SERVICE",24,60,176,&lv_font_montserrat_14);
         label(diagnostic_modal,"STATUS",224,60,208,&lv_font_montserrat_14);
-        const char *names[]={"Wi-Fi","Home Assistant","Heat controller","ESP-NOW","Local sensor","Ship tracking","MQTT monitoring"};
+        const char *names[]={"Wi-Fi","Home Assistant","Heat controller","ESP-NOW","Local sensor","Ship tracking","MQTT thermostat"};
         for(unsigned i=0;i<7;++i){
             label(diagnostic_modal,names[i],24,91+i*31,190,&lv_font_montserrat_16);
             diagnostic_badges[i]=panel(diagnostic_modal,220,86+i*31,212,28,CARD,8);
@@ -524,7 +534,7 @@ cJSON *room_display_status(void)
         .ship_configured=room_settings_ships_enabled(),.ship_online=room_ships_online()};
     room_health_status_t h=room_health_status(health);cJSON *j=cJSON_CreateObject();
     cJSON_AddStringToObject(j,"summary",h.text);cJSON_AddStringToObject(j,"summary_kind",h.color==0x64dfc4?"ok":h.color==0xffa24c?"fallback":h.color==0xf5cc65?"unconfigured":"offline");cJSON *a=cJSON_AddArrayToObject(j,"services");
-    const char *names[]={"Wi-Fi","Home Assistant","Heat controller","ESP-NOW","Local sensor","Ship tracking","MQTT monitoring"};
+    const char *names[]={"Wi-Fi","Home Assistant","Heat controller","ESP-NOW","Local sensor","Ship tracking","MQTT thermostat"};
     bool ship_service=room_ships_service_online();
     bool probe=m.probe_at&&esp_timer_get_time()-m.probe_at<30000000;
     int mq=room_mqtt_state();
