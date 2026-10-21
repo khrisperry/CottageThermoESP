@@ -3,6 +3,14 @@ menu "Cottage thermostat"
         int "Servo signal GPIO (AtomS3 Lite rear G38)"
         range 0 48
         default 38
+    config THERMO_ENCODER_SDA
+        int "AS5600 bench SDA GPIO"
+        range 0 48
+        default 6
+    config THERMO_ENCODER_SCL
+        int "AS5600 bench SCL GPIO"
+        range 0 48
+        default 7
     config THERMO_AP_SSID
         string "Open bench access point SSID"
         default "CottageThermoBench"

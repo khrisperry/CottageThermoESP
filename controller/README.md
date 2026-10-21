@@ -66,3 +66,19 @@ Do not supply motor current from a GPIO/3.3 V pin. Stop PWM is not a brake or gu
 Hardware-dependent gates remain actual travel/endpoints/torque, coupling, independent angle feedback, board wiring and installation validation. Controller OTA/rollback, active learning and weather/occupancy context remain future work. MQTT monitoring belongs to the wall display.
 
 For the exact API see [../docs/API.md](../docs/API.md); for pre-visit steps see [../docs/LOCAL_VALIDATION.md](../docs/LOCAL_VALIDATION.md).
+
+## AS5600 read-only bench test (v0.5.4)
+
+Wire VCC to 3.3 V, GND to ground, SDA to G6 (GPIO6), SCL to G7 (GPIO7).
+OUT/GPO/DIR are unused by this I²C test. The default I²C address is 0x36,
+polled twice per second at 100 kHz. Pins can be changed in menuconfig.
+Open the controller webpage's **AS5600 magnetic encoder** section. With a
+centered magnet, expect **Magnet detected · Field OK** and angle changes
+when rotating by hand. The webpage refreshes every three seconds; serial logs
+report every five seconds and on I²C availability changes. The angle wraps at
+360 degrees. Missing/weak/strong magnets suppress the usable angle. Failed or
+stale reads never retain a valid angle. Reconnecting the sensor recovers polling.
+No arming is required, and this feature never moves the servo, writes encoder
+configuration, or verifies the calibrated furnace dial position.
+
+Register reference: https://look.ams-osram.com/m/7059eac7531a86fd/original/AS5600-DS000365.pdf

@@ -26,6 +26,7 @@
 #include "thermo.h"
 #include "thermo_radio.h"
 #include "controller_mqtt.h"
+#include "controller_encoder.h"
 #include "controller_integrations.h"
 #include <stdatomic.h>
 #include "network_profile.h"
@@ -201,7 +202,7 @@ static esp_err_t get_api(httpd_req_t *r)
         }
     } else {
         j=cJSON_CreateObject();
-        cJSON_AddStringToObject(j,"version","0.5.3");
+        cJSON_AddStringToObject(j,"version","0.5.4");
         cJSON_AddBoolToObject(j,"simulation",state.simulated);
         cJSON_AddBoolToObject(j,"bench_armed",armed);
         cJSON_AddNumberToObject(j,"arm_remaining_ms",armed && armed_until>now_ms()?armed_until-now_ms():0);
@@ -209,7 +210,26 @@ static esp_err_t get_api(httpd_req_t *r)
         cJSON_AddNumberToObject(j,"last_command_us",last_pulse);
         cJSON_AddBoolToObject(j,"position_synchronized",state.synchronized);
         cJSON_AddBoolToObject(j,"position_measured",false);
-        cJSON_AddStringToObject(j,"position_feedback","Not installed");
+        cJSON_AddStringToObject(j,"position_feedback","AS5600 bench telemetry only; dial position unverified");
+        controller_encoder_sample_t enc=controller_encoder_snapshot();
+        bool fresh=enc.online && now_ms()>=enc.at_ms && now_ms()-enc.at_ms<=2000;
+        bool valid=fresh && enc.magnet_detected && !enc.too_weak && !enc.too_strong;
+        cJSON *e=cJSON_AddObjectToObject(j,"encoder");
+        cJSON_AddBoolToObject(e,"online",fresh);
+        cJSON_AddBoolToObject(e,"angle_valid",valid);
+        cJSON_AddStringToObject(e,"error",enc.online && !fresh?"Stale reading":esp_err_to_name(enc.error));
+        cJSON_AddNumberToObject(e,"sda_gpio",CONFIG_THERMO_ENCODER_SDA);
+        cJSON_AddNumberToObject(e,"scl_gpio",CONFIG_THERMO_ENCODER_SCL);
+        if(fresh) {
+            cJSON_AddBoolToObject(e,"magnet_detected",enc.magnet_detected);
+            cJSON_AddBoolToObject(e,"too_weak",enc.too_weak);
+            cJSON_AddBoolToObject(e,"too_strong",enc.too_strong);
+            cJSON_AddNumberToObject(e,"age_ms",now_ms()-enc.at_ms);
+            if(valid) {
+                cJSON_AddNumberToObject(e,"raw_angle",enc.raw_angle);
+                cJSON_AddNumberToObject(e,"angle_deg",enc.raw_angle*360.0/4096.0);
+            }
+        }
         cJSON *net=cJSON_AddObjectToObject(j,"network");
         cJSON_AddStringToObject(net,"hostname","CottageThermoController");
         cJSON_AddStringToObject(net,"station_mac",station_mac);
@@ -553,6 +573,7 @@ void app_main(void)
     controller_integrations_init();
     network_start();
     controller_mqtt_start();
+    controller_encoder_start();
     if(strlen(network.ssid)) {
         esp_sntp_setoperatingmode(SNTP_OPMODE_POLL);esp_sntp_setservername(0,"pool.ntp.org");esp_sntp_init();
     }
