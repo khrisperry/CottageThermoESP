@@ -42,12 +42,12 @@ int esp_mqtt_client_subscribe(void *c,const char *topic,int qos){
 int main(void){
  controller_mqtt_start();assert(!controller_mqtt_configured()&&!controller_mqtt_online());
  room_mqtt_start();assert(room_mqtt_state()==1);wifi_up=false;service_once();assert(!mqtt&&!starts&&!client_running);wifi_up=true;service_once();assert(client_running&&starts==1); /* No controller availability check gates broker startup. */
- mqtt_event(NULL,NULL,MQTT_EVENT_BEFORE_CONNECT,NULL);mqtt_event(NULL,NULL,MQTT_EVENT_CONNECTED,NULL);cycle();assert(room_mqtt_state()==2&&subscriptions==2&&discoveries==4&&states==1);
+ mqtt_event(NULL,NULL,MQTT_EVENT_BEFORE_CONNECT,NULL);mqtt_event(NULL,NULL,MQTT_EVENT_CONNECTED,NULL);cycle();assert(room_mqtt_state()==2&&subscriptions==2&&discoveries==ROOM_MQTT_ENTITY_COUNT&&states==1);
  assert(strstr(last_state,"\"controller_online\":false")&&strstr(last_state,"67"));
  for(unsigned n=0;n<10;++n)cycle();
- assert(discoveries==4&&subscriptions==2);
+ assert(discoveries==ROOM_MQTT_ENTITY_COUNT&&subscriptions==2);
  char topic[128];snprintf(topic,sizeof(topic),"%s/target/set",base);esp_mqtt_event_t command={.topic=topic,.topic_len=(int)strlen(topic),.data="80",.data_len=2,.total_data_len=2};
- mqtt_event(NULL,NULL,MQTT_EVENT_DATA,&command);cycle();assert(discoveries==4&&!controller_up&&!requests); /* Broker commands have no effect. */
+ mqtt_event(NULL,NULL,MQTT_EVENT_DATA,&command);cycle();assert(discoveries==ROOM_MQTT_ENTITY_COUNT&&!controller_up&&!requests); /* Broker commands have no effect. */
  controller_up=true;mqtt_event(NULL,NULL,MQTT_EVENT_DATA,&command);assert(requests==1&&requested==80);
  const char *bad[]={"81","44.9","NaN","inf","69junk","69 70","0x45","1e2","","+","69\0junk"};
  for(unsigned i=0;i<sizeof(bad)/sizeof(*bad);++i){command.data=(char*)bad[i];command.data_len=command.total_data_len=i==10?7:(int)strlen(bad[i]);mqtt_event(NULL,NULL,MQTT_EVENT_DATA,&command);}assert(requests==1);
@@ -57,17 +57,17 @@ int main(void){
  command.total_data_len=4;command.current_data_offset=2;mqtt_event(NULL,NULL,MQTT_EVENT_DATA,&command);assert(requests==1);
  command.current_data_offset=0;mqtt_event(NULL,NULL,MQTT_EVENT_DATA,&command);assert(requests==2&&requested==68.5f);
  char *saved_topic=command.topic;command.topic="cottage/servo/set";command.topic_len=(int)strlen(command.topic);mqtt_event(NULL,NULL,MQTT_EVENT_DATA,&command);assert(requests==2);command.topic=saved_topic;command.topic_len=(int)strlen(command.topic);
- assert(room_mqtt_reannounce());cycle();assert(discoveries==8);
+ assert(room_mqtt_reannounce());cycle();assert(discoveries==2*ROOM_MQTT_ENTITY_COUNT);
  sensor_up=false;cycle();assert(strstr(last_state,"\"temperature_f\":null"));
  esp_mqtt_error_codes_t error={.error_type=MQTT_ERROR_TYPE_CONNECTION_REFUSED,.connect_return_code=5};esp_mqtt_event_t e={.error_handle=&error};mqtt_event(NULL,NULL,MQTT_EVENT_ERROR,&e);assert(room_mqtt_state()==1&&strstr(description(),"credentials"));
  mqtt_event(NULL,NULL,MQTT_EVENT_DISCONNECTED,NULL);assert(!room_mqtt_reannounce());unsigned count=states;cycle();assert(states==count);
- mqtt_event(NULL,NULL,MQTT_EVENT_CONNECTED,NULL);cycle();assert(subscriptions==4&&discoveries==12);
+ mqtt_event(NULL,NULL,MQTT_EVENT_CONNECTED,NULL);cycle();assert(subscriptions==4&&discoveries==3*ROOM_MQTT_ENTITY_COUNT);
  wifi_up=false;service_once();assert(stops==1&&!client_running&&!connected&&stage==1);
  unsigned paused_states=states,paused_discoveries=discoveries,paused_subs=subscriptions;
  for(unsigned n=0;n<30;++n){service_once();cycle();mqtt_event(NULL,NULL,MQTT_EVENT_DATA,&command);}
  assert(starts==1&&stops==1&&states==paused_states&&discoveries==paused_discoveries&&subscriptions==paused_subs&&requests==2);
  wifi_up=true;fallback_up=true;service_once();assert(stage==3&&starts==2&&client_running&&!connected);
- mqtt_event(NULL,NULL,MQTT_EVENT_CONNECTED,NULL);service_once();assert(connected&&subscriptions==paused_subs+2&&discoveries==paused_discoveries+4);
+ mqtt_event(NULL,NULL,MQTT_EVENT_CONNECTED,NULL);service_once();assert(connected&&subscriptions==paused_subs+2&&discoveries==paused_discoveries+ROOM_MQTT_ENTITY_COUNT);
  fallback_up=true;service_once();assert(stops==1&&client_running&&connected);
  for(unsigned n=0;n<30;++n){service_once();}
  assert(starts==2&&stops==1);

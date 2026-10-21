@@ -517,17 +517,35 @@ static void frame_event(lv_event_t *e)
 }
 bool room_display_camera_fill(void){if(!mutex)return false;xSemaphoreTake(mutex,portMAX_DELAY);bool fill=model.camera_fill;xSemaphoreGive(mutex);return fill;}
 void room_display_set_camera_fill(bool fill){if(mutex){xSemaphoreTake(mutex,portMAX_DELAY);model.camera_fill=fill;++model.generation;xSemaphoreGive(mutex);}}
+/* Shared by the webpage and MQTT diagnostics; never gate on controller transport. */
+static void service_words(const model_t *snapshot,const char **words)
+{
+    bool wifi=room_wifi_connected(),radio=room_controller_fallback();
+    bool ha=wifi&&snapshot->ha_ok&&current(snapshot->ha_at),heat=snapshot->climate_ok&&current(snapshot->climate_at);
+    bool ha_configured=*room_settings_ha_token()!=0,ship_configured=room_settings_ships_enabled();
+    bool ship_service=room_ships_service_online(),ship_online=room_ships_online();
+    bool probe=snapshot->probe_at&&esp_timer_get_time()-snapshot->probe_at<30000000;
+    int mq=room_mqtt_state();bool heat_configured=room_controller_radio_ready()||*room_settings_controller_url();
+    const char *values[]={wifi?"Connected":"Disconnected",!ha_configured?"Not configured":ha?"Online":"Offline",
+        !heat_configured?"Not configured":heat?(radio?"ESP-NOW":"Online"):"Offline",!room_controller_radio_ready()?"Not configured":radio&&heat?"Active":"Standby",
+        !CONFIG_ROOM_SENSOR?"Not configured":probe?"Fresh":"No fresh sample",!ship_configured?"Not configured":!ship_service?"Service offline":ship_online?"Online":"AIS feed offline",
+        mq==2?"Connected":mq==0?"Not configured":"Offline"};
+    for(unsigned i=0;i<7;++i)words[i]=values[i];
+}
 cJSON *room_display_mqtt_state(void)
 {
-    int64_t now=esp_timer_get_time();float temperature,target;bool sensor,controller,has_target,simulation;char mode[32];
+    int64_t now=esp_timer_get_time();float temperature,target;bool sensor,controller,has_target,simulation;char mode[32];model_t snapshot={0};
     xSemaphoreTake(mutex,portMAX_DELAY);
     sensor=model.probe_at&&now-model.probe_at<30000000;temperature=model.probe_f;
     controller=model.climate_ok&&current(model.climate_at);has_target=controller&&model.has_target;target=model.target;simulation=model.simulation;
+    snapshot.ha_ok=model.ha_ok;snapshot.ha_at=model.ha_at;snapshot.climate_ok=controller;snapshot.climate_at=model.climate_at;snapshot.probe_at=model.probe_at;
     snprintf(mode,sizeof(mode),"%s",model.mode);xSemaphoreGive(mutex);
     cJSON *j=cJSON_CreateObject();cJSON_AddBoolToObject(j,"sensor_fresh",sensor);cJSON_AddBoolToObject(j,"controller_online",controller);
     if(sensor)cJSON_AddNumberToObject(j,"temperature_f",temperature);else cJSON_AddNullToObject(j,"temperature_f");
     if(has_target)cJSON_AddNumberToObject(j,"target_f",target);else cJSON_AddNullToObject(j,"target_f");
     cJSON_AddStringToObject(j,"mode",controller?mode:"unavailable");cJSON_AddBoolToObject(j,"simulation",simulation);
+    const char *words[7],*service_keys[]={"wifi","ha","controller","espnow","sensor","ships","mqtt"};service_words(&snapshot,words);
+    cJSON *services=cJSON_AddObjectToObject(j,"services");for(unsigned i=0;i<7;++i)cJSON_AddStringToObject(services,service_keys[i],words[i]);
     cJSON_AddStringToObject(j,"temperature_source",CONFIG_ROOM_SENSOR==3?"BMP/BME280 local test":"Local primary probe");return j;
 }
 cJSON *room_display_status(void)
@@ -539,14 +557,10 @@ cJSON *room_display_status(void)
     room_health_status_t h=room_health_status(health);cJSON *j=cJSON_CreateObject();
     cJSON_AddStringToObject(j,"summary",h.text);cJSON_AddStringToObject(j,"summary_kind",h.color==0x64dfc4?"ok":h.color==0xffa24c?"fallback":h.color==0xf5cc65?"unconfigured":"offline");cJSON *a=cJSON_AddArrayToObject(j,"services");
     const char *names[]={"Wi-Fi","Home Assistant","Heat controller","ESP-NOW","Local sensor","Ship tracking","MQTT thermostat"};
-    bool ship_service=room_ships_service_online();
     bool probe=m.probe_at&&esp_timer_get_time()-m.probe_at<30000000;
     int mq=room_mqtt_state();
     bool heat_configured=room_controller_radio_ready()||(*room_settings_controller_url()!=0);
-    const char *words[]={wifi?"Connected":"Disconnected",!health.ha_configured?"Not configured":ha?"Online":"Offline",
-        !heat_configured?"Not configured":heat?(radio?"ESP-NOW":"Online"):"Offline",!room_controller_radio_ready()?"Not configured":radio&&heat?"Active":"Standby",
-        !CONFIG_ROOM_SENSOR?"Not configured":probe?"Fresh":"No fresh sample",!health.ship_configured?"Not configured":!ship_service?"Service offline":health.ship_online?"Online":"AIS feed offline",
-        mq==2?"Connected":mq==0?"Not configured":"Offline"};
+    const char *words[7];service_words(&m,words);
     const char *colors[]={wifi?"ok":"offline",!health.ha_configured?"unconfigured":ha?"ok":"offline",
         !heat_configured?"unconfigured":heat?(radio?"fallback":"ok"):"offline",!room_controller_radio_ready()?"unconfigured":radio&&heat?"fallback":"standby",
         !CONFIG_ROOM_SENSOR?"unconfigured":probe?"ok":"offline",!health.ship_configured?"unconfigured":health.ship_online?"ok":"offline",

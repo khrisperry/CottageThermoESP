@@ -217,6 +217,15 @@ select_page(2);render("laundry.ppm");select_page(3);render("camera.ppm");
  assert(room_display_request_target(71));before=posts;now+=11000000;execute(queued);assert(posts==before);model.climate_at=now;
  cJSON *telemetry=room_display_mqtt_state();assert(cJSON_IsTrue(cJSON_GetObjectItem(telemetry,"controller_online")));assert(cJSON_GetObjectItem(telemetry,"temperature_f")->valuedouble==68);cJSON_Delete(telemetry);
  now+=11000000;assert(!room_display_request_target(70));telemetry=room_display_mqtt_state();assert(cJSON_IsFalse(cJSON_GetObjectItem(telemetry,"controller_online"))&&cJSON_IsTrue(cJSON_GetObjectItem(telemetry,"sensor_fresh")));cJSON_Delete(telemetry);
+ model.ha_ok=true;model.ha_at=now;
+ cJSON *state=room_display_mqtt_state(),*dashboard=room_display_status();
+ const char *service_keys[]={"wifi","ha","controller","espnow","sensor","ships","mqtt"};
+ cJSON *services=cJSON_GetObjectItem(state,"services");assert(cJSON_GetArraySize(services)==7);
+ for(unsigned i=0;i<7;++i)assert(!strcmp(cJSON_GetObjectItem(services,service_keys[i])->valuestring,cJSON_GetObjectItem(cJSON_GetArrayItem(cJSON_GetObjectItem(dashboard,"services"),i),"state")->valuestring));
+ assert(!strcmp(cJSON_GetObjectItem(services,"controller")->valuestring,"Offline"));
+ assert(!strcmp(cJSON_GetObjectItem(services,"ha")->valuestring,"Online"));cJSON_Delete(state);cJSON_Delete(dashboard);
+ model.climate_ok=true;model.climate_at=now;test_fallback=true;state=room_display_mqtt_state();services=cJSON_GetObjectItem(state,"services");
+ assert(!strcmp(cJSON_GetObjectItem(services,"controller")->valuestring,"ESP-NOW"));assert(!strcmp(cJSON_GetObjectItem(services,"espnow")->valuestring,"Active"));cJSON_Delete(state);
  puts("PASS: native LVGL pages/swipes, HA commands, unknown outcomes, expired requests, stale controls, target-only climate, probe guard and idle return");
  return 0;
 }

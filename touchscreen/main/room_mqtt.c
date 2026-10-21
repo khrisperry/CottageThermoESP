@@ -69,9 +69,9 @@ static void mqtt_event(void *arg,esp_event_base_t event_base,int32_t id,void *da
 }
 static bool discovery(void)
 {
-    const char *keys[]={"temperature","target","controller","thermostat"};bool ok=true;
-    for(unsigned i=0;i<4;++i){cJSON *j=room_mqtt_discovery(identity,base,profile->name,esp_app_get_description()->version,i);char *s=cJSON_PrintUnformatted(j);cJSON_Delete(j);
-        if(!s){ok=false;continue;}char topic[224];snprintf(topic,sizeof(topic),"%s/%s/%s/%s/config",profile->prefix,i==3?"climate":i==2?"binary_sensor":"sensor",identity,keys[i]);
+    bool ok=true;
+    for(unsigned i=0;i<ROOM_MQTT_ENTITY_COUNT;++i){cJSON *j=room_mqtt_discovery(identity,base,profile->name,esp_app_get_description()->version,i);char *s=cJSON_PrintUnformatted(j);cJSON_Delete(j);
+        if(!s){ok=false;continue;}char topic[224];snprintf(topic,sizeof(topic),"%s/%s/%s/%s/config",profile->prefix,room_mqtt_component(i),identity,room_mqtt_entity_keys[i]);
         if(esp_mqtt_client_publish(mqtt,topic,s,0,1,1)<0)ok=false;
         free(s);
     }return ok;

@@ -2,13 +2,18 @@
 #include <stdio.h>
 #include <stdbool.h>
 #include "cJSON.h"
+enum { ROOM_MQTT_ENTITY_COUNT=12 };
+static const char *const room_mqtt_entity_keys[]={"temperature","target","controller","thermostat",
+    "wifi_status","ha_status","controller_status","espnow_status","sensor_status","ships_status","mqtt_status","connection"};
+static const char *const room_mqtt_service_keys[]={"wifi","ha","controller","espnow","sensor","ships","mqtt"};
+static inline const char *room_mqtt_component(unsigned entity){return entity==3?"climate":entity==2||entity==11?"binary_sensor":"sensor";}
 /* Climate target requests terminate at the wall thermostat, never at the servo. */
 static inline cJSON *room_mqtt_discovery(const char *id,const char *base,const char *name,const char *version,unsigned entity)
 {
-    const char *keys[]={"temperature","target","controller","thermostat"};
-    const char *names[]={"Room temperature","Target temperature","Controller connection","Thermostat"};
-    if(entity>=4)return NULL;
-    char unique[96];snprintf(unique,sizeof(unique),"%s_%s",id,keys[entity]);
+    const char *names[]={"Room temperature","Target temperature","Controller connection","Thermostat",
+        "Wi-Fi status","Home Assistant status","Heat controller status","ESP-NOW status","Local sensor status","Ship tracking status","MQTT status","Thermostat connection"};
+    if(entity>=ROOM_MQTT_ENTITY_COUNT)return NULL;
+    char unique[96];snprintf(unique,sizeof(unique),"%s_%s",id,room_mqtt_entity_keys[entity]);
     cJSON *j=cJSON_CreateObject();cJSON_AddStringToObject(j,"name",names[entity]);cJSON_AddStringToObject(j,"unique_id",unique);
     cJSON_AddStringToObject(j,"~",base);cJSON_AddStringToObject(j,"json_attributes_topic","~/state");
     if(entity==3){
@@ -22,6 +27,15 @@ static inline cJSON *room_mqtt_discovery(const char *id,const char *base,const c
         cJSON *m=cJSON_AddArrayToObject(j,"modes");cJSON_AddItemToArray(m,cJSON_CreateString("heat"));
         cJSON_AddStringToObject(j,"temperature_unit","F");cJSON_AddNumberToObject(j,"min_temp",45);cJSON_AddNumberToObject(j,"max_temp",80);
         cJSON_AddNumberToObject(j,"temp_step",0.5);cJSON_AddNumberToObject(j,"precision",0.1);cJSON_AddBoolToObject(j,"optimistic",false);cJSON_AddBoolToObject(j,"retain",false);
+    }else if(entity>=4){
+        cJSON_AddStringToObject(j,"entity_category","diagnostic");
+        if(entity==11){
+            cJSON_AddStringToObject(j,"state_topic","~/availability");cJSON_AddStringToObject(j,"device_class","connectivity");
+            cJSON_AddStringToObject(j,"payload_on","online");cJSON_AddStringToObject(j,"payload_off","offline");
+        }else{
+            char value[128];snprintf(value,sizeof(value),"{{ value_json.services.%s | default('Unknown') }}",room_mqtt_service_keys[entity-4]);
+            cJSON_AddStringToObject(j,"state_topic","~/state");cJSON_AddStringToObject(j,"value_template",value);cJSON_AddNumberToObject(j,"expire_after",45);
+        }
     }else{
         cJSON_AddStringToObject(j,"state_topic","~/state");cJSON_AddNumberToObject(j,"expire_after",45);
         cJSON_AddStringToObject(j,"device_class",entity==2?"connectivity":"temperature");
@@ -29,10 +43,12 @@ static inline cJSON *room_mqtt_discovery(const char *id,const char *base,const c
         else{cJSON_AddStringToObject(j,"unit_of_measurement","°F");cJSON_AddStringToObject(j,"state_class","measurement");
             cJSON_AddStringToObject(j,"value_template",entity==0?"{{ value_json.temperature_f if value_json.temperature_f is not none else 'None' }}":"{{ value_json.target_f if value_json.target_f is not none else 'None' }}");}
     }
+    if(entity!=11){
     cJSON *a=cJSON_AddArrayToObject(j,"availability"),*online=cJSON_CreateObject();cJSON_AddStringToObject(online,"topic","~/availability");cJSON_AddItemToArray(a,online);
-    if(entity!=2){cJSON *fresh=cJSON_CreateObject();cJSON_AddStringToObject(fresh,"topic","~/state");
+    if(entity<4&&entity!=2){cJSON *fresh=cJSON_CreateObject();cJSON_AddStringToObject(fresh,"topic","~/state");
         cJSON_AddStringToObject(fresh,"value_template",entity==0?"{{ 'online' if value_json.sensor_fresh else 'offline' }}":"{{ 'online' if value_json.controller_online and value_json.target_f is not none else 'offline' }}");cJSON_AddItemToArray(a,fresh);}
     cJSON_AddStringToObject(j,"availability_mode","all");
+    }
     cJSON *d=cJSON_AddObjectToObject(j,"device"),*ids=cJSON_AddArrayToObject(d,"identifiers");cJSON_AddItemToArray(ids,cJSON_CreateString(id));
     cJSON_AddStringToObject(d,"name",name);cJSON_AddStringToObject(d,"manufacturer","CottageThermoESP");cJSON_AddStringToObject(d,"model","Waveshare 4B standalone thermostat");cJSON_AddStringToObject(d,"sw_version",version);
     return j;

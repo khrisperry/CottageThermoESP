@@ -1,6 +1,6 @@
 # Standalone thermostat and Home Assistant Climate
 
-Display **0.12.1**, controller **0.4.1**. Home Assistant can adjust the thermostat target; it has no direct servo control. This supersedes the display 0.12.0 monitoring-only decision.
+Display **0.13.5**, controller **0.5.2**. Home Assistant can adjust the thermostat target; it has no direct servo control. This supersedes the display 0.12.0 monitoring-only decision.
 
 ## Ownership and standalone operation
 
@@ -31,12 +31,20 @@ Discovery uses the configured prefix (default `homeassistant`). State lives unde
 
 Only two topics are subscribed: HA birth (`homeassistant/status`, for rediscovery) and the display's own `.../target/set`. Target payloads must be complete finite decimal temperatures in range. Retained, duplicate, fragmented, malformed and out-of-range commands are ignored. Unavailable, stale, busy or full-queue requests are rejected; accepted requests expire under the same ten-second queue limit as local changes. No command is sent from the MQTT callback itself.
 
+## Service diagnostics (display 0.13.5)
+
+Seven read-only diagnostic sensors appear on the same MQTT device: **Wi-Fi status**, **Home Assistant status**, **Heat controller status**, **ESP-NOW status**, **Local sensor status**, **Ship tracking status**, and **MQTT status**. These match the webpage service states. Controller status distinguishes Online (LAN) from ESP-NOW; radio status shows Active, Standby, or Not configured. Standby means configured but not currently the controller transport, rather than a successful radio test. Ship tracking distinguishes service failure from an unavailable AIS feed.
+
+Diagnostics use MQTT availability only, so a missing controller or stale local probe cannot hide the other services. Each status expires after 45 seconds without fresh telemetry. **Thermostat connection** is an additional connectivity binary sensor driven by retained MQTT availability/Last Will. It reports disconnected when the broker detects a dropped session. While Wi-Fi or MQTT is down, individual service readings become unavailable; HA cannot receive live ESP-NOW status through a disconnected panel. Publishing and discovery resume after Wi-Fi/MQTT recovery.
+
+After updating the panel, open **Settings → Devices & services → MQTT → Cottage thermostat** in HA (or your configured device name), and look under Diagnostic entities. If needed, use **Republish HA discovery** on the panel's webpage under **Settings → MQTT thermostat**. HA must have MQTT discovery enabled and use the panel's broker. Existing climate and sensor identities stay the same. Service statuses are also available in the state message's `services` object.
+
 ## Configure and update
 
-1. Pull `feature/connectivity-climate-review` and build display 0.12.1. Flash over USB or upload the application bin through the existing device webpage OTA process.
+1. Pull `feature/connectivity-climate-review` and build display 0.13.5. Flash over USB or upload the application bin through the existing device webpage OTA process.
 2. Open `http://DEVICE_IP/settings` → **MQTT thermostat**. Existing broker settings are reused. Enable MQTT, save a broker host/port and credentials, and let the display restart. A plain LAN broker uses `mqtt://HOST:1883`; verified TLS uses `mqtts://HOST:8883` and requires valid system time.
 3. The device Connections page and webpage show the display's broker connection independently of controller availability. Logs use `room_mqtt`, including broker connection/rejection and accepted/rejected thermostat target requests. Saved passwords are never returned by the webpage.
-4. **Republish HA discovery** queues all four entities on an established broker connection without needing the controller. HA must use the same broker. The existing monitoring sensors retain their identities; the Climate entity is added to the same device.
+4. **Republish HA discovery** queues all twelve entities on an established broker connection without needing the controller. HA must use the same broker. The existing monitoring sensors retain their identities; the Climate entity is added to the same device.
 5. Controller 0.4.1 stays unchanged. Update any older controller that previously ran MQTT to remove its legacy direct command path, and remove obsolete controller-owned retained climate discovery/HA entities if present.
 
 Confirmed display port and BME280 test build:
