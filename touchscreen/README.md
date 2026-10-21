@@ -173,3 +173,22 @@ BME280 users can enable the same test with the new alias:
 ```
 
 The existing `-Bmp280Test` option and previously saved probe type 3 also work; discovery identifies either model. Only temperature is read in this test, with BME280 humidity and pressure disabled. Existing local/offline temperature behavior is unchanged. Host checks explicitly cover both accepted IDs and reject BMP180 without resetting it.
+
+## SHT45 primary room probe (v0.13.6)
+
+Power down before replacing the BME280. Connect the SHT45 breakout's 3.3V-compatible supply input to rear H3 pin 4 (3.3V), GND to pin 19/20, SDA to pin 1 (GPIO47), and SCL to pin 3 (GPIO48). Follow the breakout's printed signal labels; cable colors and connector order vary. This is the same BSP-owned I2C bus used by the display's touch controller. The SHT45 is read at address 0x44, 100 kHz. Do not apply servo power to the sensor.
+
+From the repository root in the ESP-IDF PowerShell terminal:
+
+```powershell
+git pull --ff-only
+.\tools\build-room-4b.ps1 -Sht45 -Flash -Monitor -Port COM14
+```
+
+`-Sht45` replaces the saved BME280 selection with primary SHT4x mode (`CONFIG_ROOM_SENSOR=2`) on SDA47/SCL48. Do not combine it with `-Bme280Test`. Selection persists in `touchscreen/sdkconfig.4b`; later builds without either switch keep that selection.
+
+The startup log identifies `SHT45/SHT4x primary probe configured: address 0x44, SDA47/SCL48`; this confirms configuration, not detection. Successful readings follow every 15 seconds as `SHT45/SHT4x room ... F (... C); report acknowledged` (or `not acknowledged` when the controller cannot accept a report). A valid reading updates the main temperature dial and MQTT room temperature even without controller connectivity. Failed/CRC-invalid reads print `No fresh valid probe sample; no temperature report sent`; readings expire after 30 seconds.
+
+Keep the controller in Hold for the initial sensor/communication test. The SHT45 is the primary control probe, so valid samples are sent to the controller, unlike BME280 test readings. Confirm Local sensor shows Fresh, the controller receives source=room, and HA room temperature agrees. Warm the sensor gently by hand and confirm the reading responds, then let it settle away from display/CPU heat. No encoder or servo movement is needed to test temperature sensing.
+
+For a remote sensor, validate using the intended final cable length as well as short bench leads. This firmware uses ordinary I2C; a successful short-wire test does not establish long-cable reliability. Missing hardware is retried without blocking other services.
