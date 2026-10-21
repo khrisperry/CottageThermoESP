@@ -28,7 +28,6 @@ typedef struct {
     cottage_integration_t integrations;
 } settings_t;
 static settings_t current;
-static char admin_code[13];
 static bool reboot_pending;
 extern const unsigned char settings_start[] asm("_binary_settings_html_start");
 extern const unsigned char settings_end[] asm("_binary_settings_html_end");
@@ -39,7 +38,6 @@ const char *room_settings_controller_token(void){return current.controller_token
 const char *room_settings_ship_url(void){return current.ship_url;}
 bool room_settings_ships_enabled(void){return current.ships_enabled;}
 unsigned room_settings_ship_range(void){return current.ship_range;}
-const char *room_settings_admin_code(void){return admin_code;}
 const cottage_integration_t *room_settings_integrations(void){return &current.integrations;}
 bool room_settings_radio_managed(void){return current.radio_managed;}
 static bool printable(const char *s,size_t max)
@@ -80,20 +78,10 @@ void room_settings_init(void)
         }
     }
     if(saved){memset(saved,0,sizeof(*saved));free(saved);}
-    size=sizeof(admin_code);
-    if(nvs_get_str(nvs,"admin_code",admin_code,&size)!=ESP_OK||strlen(admin_code)!=12){
-        uint8_t random[6];esp_fill_random(random,sizeof(random));
-        for(unsigned i=0;i<6;++i)snprintf(admin_code+i*2,3,"%02x",random[i]);
-        ESP_ERROR_CHECK(nvs_set_str(nvs,"admin_code",admin_code));ESP_ERROR_CHECK(nvs_commit(nvs));
-    }
     nvs_close(nvs);
 }
 bool room_web_authorized(httpd_req_t *r,bool mutation)
 {
-    char supplied[40]={0};
-    if(httpd_req_get_hdr_value_str(r,"X-Cottage-Admin",supplied,sizeof(supplied))!=ESP_OK)return false;
-    unsigned diff=strlen(supplied)^strlen(admin_code);for(unsigned i=0;i<12;++i)diff|=(unsigned char)supplied[i]^(unsigned char)admin_code[i];
-    memset(supplied,0,sizeof(supplied));if(diff)return false;
     if(mutation){
         char host[160],origin[180],expected[180];
         if(httpd_req_get_hdr_value_str(r,"Host",host,sizeof(host))!=ESP_OK||strpbrk(host,"/@?#\\ \r\n\t"))return false;
@@ -134,7 +122,6 @@ static cJSON *sanitized(void)
 }
 static esp_err_t get(httpd_req_t *r)
 {
-    if(!room_web_authorized(r,false))return reply(r,403,"Enter the web access code shown in Settings on the display.");
     return json_reply(r,200,sanitized());
 }
 static void reboot_task(void *arg){vTaskDelay(pdMS_TO_TICKS(1500));esp_restart();}
@@ -146,7 +133,7 @@ bool room_settings_reboot_later(void)
 }
 static esp_err_t save(httpd_req_t *r)
 {
-    if(!room_web_authorized(r,true))return reply(r,403,"Unlock settings with the display's web access code, using this device's own webpage.");
+    if(!room_web_authorized(r,true))return reply(r,403,"Use this device's own webpage to change settings.");
     if(reboot_pending||room_ota_busy())return reply(r,409,"A restart or firmware update is in progress.");
     char type[64];if(httpd_req_get_hdr_value_str(r,"Content-Type",type,sizeof(type))!=ESP_OK||strcmp(type,"application/json"))return reply(r,400,"Use application/json.");
     if(r->content_len<=0||r->content_len>4096)return reply(r,400,"Invalid settings size.");

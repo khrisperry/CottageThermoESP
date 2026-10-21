@@ -30,7 +30,7 @@ void vTaskDelete(void*p){}
 void *heap_caps_malloc(size_t n,int cap){return malloc(n);}
 bool bsp_display_lock(uint32_t n){return true;}
 void bsp_display_unlock(void){}
-lv_display_t *bsp_display_start_with_config(const bsp_display_cfg_t *cfg){assert(cfg->lvgl_port_cfg.task_stack==16384);return lv_display_get_default();}
+lv_display_t *bsp_display_start_with_config(const bsp_display_cfg_t *cfg){assert(cfg->lvgl_port_cfg.task_stack==16384&&cfg->lvgl_port_cfg.task_affinity==1);return lv_display_get_default();}
 unsigned uxTaskGetStackHighWaterMark(void *task){return 12000;}
 void bsp_display_rotate(lv_display_t *d,lv_display_rotation_t r){lv_display_set_rotation(d,r);}
 int bsp_display_brightness_set(int n){return 0;}
@@ -48,7 +48,6 @@ bool room_audio_test(void){return true;}
 bool room_audio_notify_enabled(int key){return (test_notify_mask&(1U<<(key-3)))!=0;}
 bool room_audio_set_notify(int key,bool enabled){unsigned bit=1U<<(key-3);test_notify_mask=enabled?test_notify_mask|bit:test_notify_mask&~bit;return true;}
 bool room_ota_busy(void){return false;}
-const char *room_settings_admin_code(void){return "testadmin123";}
 void room_wifi_address(char *buffer,size_t size){snprintf(buffer,size,"%s","192.0.2.10");}
 bool room_settings_ships_enabled(void){return true;}
 unsigned room_settings_ship_range(void){return 30;}
@@ -59,6 +58,7 @@ void room_ships_snapshot(room_ships_t *out){memset(out,0,sizeof(*out));out->serv
  if(test_ships_populated){out->count=out->nearby=3;for(unsigned i=0;i<3;++i){room_ship_t *v=&out->ships[i];v->mmsi=316000001+i;snprintf(v->name,sizeof(v->name),"TEST VESSEL %u",i+1);snprintf(v->kind,sizeof(v->kind),"Cargo");snprintf(v->destination,sizeof(v->destination),"PORT HURON");v->lat=44.3f+i*.02f;v->lon=-83.4f+i*.02f;v->distance=3+i;v->speed_valid=true;v->speed=11.2f;v->age=30;}}
 }
 bool room_ships_online(void){return true;}
+bool room_ships_service_online(void){return true;}
 void *room_ships_take_map(double bounds[4]){
  if(!test_ship_map_pending)return NULL;test_ship_map_pending=false;
  bounds[0]=-84;bounds[1]=44;bounds[2]=-83;bounds[3]=44.6;
@@ -111,6 +111,7 @@ int main(void)
  room_display_start();
  for(unsigned i=0;i<4;++i)refresh(NULL);assert(lvgl_stack_free==12000);
  assert(lv_obj_has_state(control[0][0],LV_STATE_DISABLED));
+ lv_obj_add_state(nav[4],LV_STATE_PRESSED);lv_refr_now(NULL);assert(lv_obj_get_style_shadow_width(nav[4],0)==0);lv_obj_remove_state(nav[4],LV_STATE_PRESSED);
  click(settings_button);assert(model.settings_open&&!lv_obj_has_flag(settings_modal,LV_OBJ_FLAG_HIDDEN));
  lv_slider_set_value(settings_volume,42,LV_ANIM_OFF);lv_obj_send_event(settings_volume,LV_EVENT_RELEASED,NULL);assert(test_volume==42);
  click(settings_camera_button);assert(model.camera_fill);

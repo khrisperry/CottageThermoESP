@@ -42,7 +42,7 @@ static bool valid_header(const uint8_t *data,size_t size)
 }
 static esp_err_t upload(httpd_req_t *r)
 {
-    if(!room_web_authorized(r,true))return reply(r,403,"Unlock settings on this device before uploading firmware.");
+    if(!room_web_authorized(r,true))return reply(r,403,"Use this device's own webpage to upload firmware.");
     char type[64];if(httpd_req_get_hdr_value_str(r,"Content-Type",type,sizeof(type))!=ESP_OK||strcmp(type,"application/octet-stream"))return reply(r,400,"Upload the application .bin as application/octet-stream.");
     const esp_partition_t *slot=esp_ota_get_next_update_partition(NULL),*running=esp_ota_get_running_partition();
     if(!slot||slot==running)return reply(r,409,"No OTA slot available. Install the OTA partition layout once over USB.");

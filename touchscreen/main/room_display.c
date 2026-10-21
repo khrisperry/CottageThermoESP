@@ -8,6 +8,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <inttypes.h>
+#include <limits.h>
 #include "bsp/esp-bsp.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
@@ -331,7 +332,7 @@ static void centered(lv_obj_t *o){lv_obj_set_style_text_align(o,LV_TEXT_ALIGN_CE
 static void tint(lv_obj_t *o,uint32_t color){lv_obj_set_style_text_color(o,lv_color_hex(color),0);}
 static lv_obj_t *button(lv_obj_t *parent,const char *text,int x,int y,int width,int height,lv_event_cb_t cb,intptr_t id)
 {
-    lv_obj_t *o=lv_button_create(parent);lv_obj_set_pos(o,x,y);lv_obj_set_size(o,width,height);
+    lv_obj_t *o=lv_button_create(parent);lv_obj_remove_style_all(o);lv_obj_set_style_bg_opa(o,LV_OPA_COVER,0);lv_obj_set_pos(o,x,y);lv_obj_set_size(o,width,height);
     lv_obj_set_style_bg_color(o,lv_color_hex(EDGE),0);tint(o,TEXT);
     lv_obj_set_style_radius(o,12,0);lv_obj_set_style_shadow_width(o,0,0);
     lv_obj_set_style_border_width(o,0,0);lv_obj_set_style_pad_all(o,0,0);
@@ -378,7 +379,7 @@ static void open_settings(void)
         if(CONFIG_ROOM_SENSOR==3)probe_test_label=label(settings_modal,"BMP/BME280 test: waiting for sensor",24,324,408,&lv_font_montserrat_14);
     }
     char address[64];room_wifi_address(address,sizeof(address));
-    lv_label_set_text_fmt(web_access_label,"Web: %s\nAccess code: %s",address,room_settings_admin_code());
+    lv_label_set_text_fmt(web_access_label,"Web: http://%s/settings",address);
     lv_slider_set_value(settings_volume,(int32_t)room_audio_get_volume(),LV_ANIM_OFF);
     lv_label_set_text_fmt(settings_volume_label,"Volume: %u%%%s",room_audio_get_volume(),room_audio_get_volume()?"":" (muted)");
     xSemaphoreTake(mutex,portMAX_DELAY);model.settings_open=true;++model.generation;bool fill=model.camera_fill;xSemaphoreGive(mutex);
@@ -446,6 +447,8 @@ static void ship_change(lv_event_t *e){
 }
 static void refresh_ships(void)
 {
+    static int64_t last_snapshot=-1,last_age=-1;static unsigned last_selected=UINT_MAX,last_count=UINT_MAX,last_failures=UINT_MAX;
+    static bool last_service,last_feed;
     double bounds[4];void *pixels=room_ships_take_map(bounds);
     if(pixels){
         lv_obj_add_flag(ship_map,LV_OBJ_FLAG_HIDDEN);lv_image_cache_drop(&ship_map_desc);free(ship_map_pixels);ship_map_pixels=pixels;
@@ -454,6 +457,9 @@ static void refresh_ships(void)
         lv_image_set_src(ship_map,&ship_map_desc);lv_image_set_scale(ship_map,154);lv_obj_align(ship_map,LV_ALIGN_CENTER,0,0);
         lv_obj_remove_flag(ship_map,LV_OBJ_FLAG_HIDDEN);
     }
+    int64_t age=esp_timer_get_time()/30000000;
+    if(!pixels&&last_snapshot==ship_view.received_at&&last_selected==selected_ship&&last_count==ship_view.count&&last_failures==ship_view.failures&&last_age==age&&last_service==ship_view.service&&last_feed==ship_view.feed)return;
+    last_snapshot=ship_view.received_at;last_selected=selected_ship;last_count=ship_view.count;last_failures=ship_view.failures;last_age=age;last_service=ship_view.service;last_feed=ship_view.feed;
     bool fresh=ship_view.service;unsigned count=fresh?ship_view.count:0;
     if(selected_ship>=count)selected_ship=0;
     lv_label_set_text_fmt(ship_title,"Ships nearby  /  %u mi",room_settings_ship_range());
@@ -505,12 +511,13 @@ cJSON *room_display_status(void)
     room_health_status_t h=room_health_status(health);cJSON *j=cJSON_CreateObject();
     cJSON_AddStringToObject(j,"summary",h.text);cJSON_AddStringToObject(j,"summary_kind",h.color==0x64dfc4?"ok":h.color==0xffa24c?"fallback":h.color==0xf5cc65?"unconfigured":"offline");cJSON *a=cJSON_AddArrayToObject(j,"services");
     const char *names[]={"Wi-Fi","Home Assistant","Heat controller","ESP-NOW","Local sensor","Ship tracking","MQTT climate"};
+    bool ship_service=room_ships_service_online();
     bool probe=m.probe_at&&esp_timer_get_time()-m.probe_at<30000000;
     int mq=room_controller_mqtt_state();
     bool heat_configured=room_controller_radio_ready()||(strlen(room_settings_controller_token())==32&&*room_settings_controller_url());
     const char *words[]={wifi?"Connected":"Disconnected",!health.ha_configured?"Not configured":ha?"Online":radio?"Paused (ESP-NOW)":"Offline",
         !heat_configured?"Not configured":heat?(radio?"ESP-NOW":"Online"):"Offline",!room_controller_radio_ready()?"Not configured":radio&&heat?"Active":"Standby",
-        !CONFIG_ROOM_SENSOR?"Not configured":probe?"Fresh":"No fresh sample",!health.ship_configured?"Not configured":health.ship_online?"Online":"Offline",
+        !CONFIG_ROOM_SENSOR?"Not configured":probe?"Fresh":"No fresh sample",!health.ship_configured?"Not configured":!ship_service?"Service offline":health.ship_online?"Online":"AIS feed offline",
         mq==2?"Connected":mq==0?"Not configured":"Offline"};
     const char *colors[]={wifi?"ok":"offline",!health.ha_configured?"unconfigured":ha?"ok":radio?"fallback":"offline",
         !heat_configured?"unconfigured":heat?(radio?"fallback":"ok"):"offline",!room_controller_radio_ready()?"unconfigured":radio&&heat?"fallback":"standby",
@@ -529,6 +536,8 @@ cJSON *room_display_status(void)
     cJSON_AddNumberToObject(perf,"free_psram",heap_caps_get_free_size(MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT));
     room_ships_t *ships=malloc(sizeof(*ships));if(ships){room_ships_snapshot(ships);cJSON *p=cJSON_AddObjectToObject(j,"ships");
         cJSON_AddNumberToObject(p,"nearby",ships->nearby);cJSON_AddNumberToObject(p,"count",ships->count);cJSON_AddNumberToObject(p,"request_ms",ships->latency_ms);
+        cJSON_AddBoolToObject(p,"service_online",ships->service);cJSON_AddBoolToObject(p,"feed_online",ships->service&&ships->feed);
+        cJSON_AddStringToObject(p,"last_error",ships->error);cJSON_AddNumberToObject(p,"http_status",ships->http_status);cJSON_AddNumberToObject(p,"transport_error",ships->transport_error);
         cJSON_AddNumberToObject(p,"bytes",ships->bytes);cJSON_AddNumberToObject(p,"failures",ships->failures);free(ships);}
     cJSON_AddStringToObject(j,"integration_sync",room_controller_sync_state());return j;
 }
@@ -565,7 +574,7 @@ static void refresh(lv_timer_t *timer)
             !heat_configured?"Not configured":climate?(radio?"ESP-NOW":"Online"):"Offline",
             !health.radio_configured?"Not configured":radio&&climate?"Active":room_controller_radio_online()?"Ready":"Standby",
             CONFIG_ROOM_SENSOR==0?"Not configured":health.local_sensor?"Fresh":"No fresh sample",
-            !health.ship_configured?"Not configured":health.ship_online?"Online":ship_view.service?"AIS feed offline":"Offline",
+            !health.ship_configured?"Not configured":health.ship_online?"Online":ship_view.service?"AIS feed offline":"Service offline",
             room_controller_mqtt_state()==2?"Connected":room_controller_mqtt_state()==0?"Not configured":"Offline"};
         unsigned kinds[7]={wifi?0:2,!health.ha_configured?1:ha?0:radio?3:2,!heat_configured?1:climate?(radio?3:0):2,
             !health.radio_configured?1:radio&&climate?3:room_controller_radio_online()?0:1,
@@ -776,6 +785,11 @@ void room_display_start(void)
     ESP_ERROR_CHECK(mutex&&commands?ESP_OK:ESP_ERR_NO_MEM);
     bsp_display_cfg_t display_cfg={.lvgl_port_cfg=ESP_LVGL_PORT_INIT_CONFIG()};
     display_cfg.lvgl_port_cfg.task_stack=16384;
+#if CONFIG_FREERTOS_UNICORE
+    display_cfg.lvgl_port_cfg.task_affinity=0;
+#else
+    display_cfg.lvgl_port_cfg.task_affinity=1;
+#endif
     ESP_ERROR_CHECK(bsp_display_start_with_config(&display_cfg)?ESP_OK:ESP_FAIL);
     if(bsp_display_lock(0)){
         #if CONFIG_ROOM_DISPLAY_ROTATE_180

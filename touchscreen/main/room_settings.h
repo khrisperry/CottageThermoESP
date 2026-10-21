@@ -12,7 +12,6 @@ const char *room_settings_controller_token(void);
 const char *room_settings_ship_url(void);
 bool room_settings_ships_enabled(void);
 unsigned room_settings_ship_range(void);
-const char *room_settings_admin_code(void);
 bool room_web_authorized(httpd_req_t *request,bool mutation);
 bool room_settings_reboot_later(void);
 /* Controller-side integration settings are sent only after explicit web save. */

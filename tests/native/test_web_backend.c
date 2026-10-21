@@ -53,18 +53,18 @@ int esp_ota_write(unsigned h,const void*p,size_t n){assert(h==42);++writes;retur
 int esp_ota_end(unsigned h){return bad_end?-1:0;}
 int esp_ota_abort(unsigned h){++aborts;return 0;}
 int esp_ota_set_boot_partition(const esp_partition_t*p){assert(p==&inactive);if(bad_select)return -1;++selects;return 0;}
-static httpd_req_t req(const char *body,size_t size,const char *type){return (httpd_req_t){.body=body,.content_len=size,.headers={{"Host","192.0.2.10"},{"Origin","http://192.0.2.10"},{"Content-Type",type},{"X-Cottage-Admin",admin_code}}};}
+static httpd_req_t req(const char *body,size_t size,const char *type){return (httpd_req_t){.body=body,.content_len=size,.headers={{"Host","192.0.2.10"},{"Origin","http://192.0.2.10"},{"Content-Type",type}}};}
 static void reset_upload(void){busy=false;reboot_pending=false;writes=selects=aborts=begins=0;bad_end=bad_write=bad_begin=bad_select=no_slot=false;}
 int main(int argc,char **argv){
- old_settings_t old={.magic=OLD_MAGIC,.ha="https://ha.example",.token="keep-ha-token",.controller="http://192.0.2.20"};memcpy(stored_profile,&old,sizeof(old));stored_size=sizeof(old);room_settings_init();assert(!strcmp(current.token,"keep-ha-token"));assert(strlen(admin_code)==12);
- httpd_req_t r=req(NULL,0,"application/json");assert(room_web_authorized(&r,true));r.headers[1].value="http://evil.example";assert(!room_web_authorized(&r,true));r=req(NULL,0,"application/json");r.headers[3].value="wrong";get(&r);assert(r.code==403&&!strstr(r.response,"keep-ha-token"));
- r=req(NULL,0,"application/json");get(&r);assert(r.code==200&&!strstr(r.response,"keep-ha-token")&&!strstr(r.response,admin_code));
+ old_settings_t old={.magic=OLD_MAGIC,.ha="https://ha.example",.token="keep-ha-token",.controller="http://192.0.2.20"};memcpy(stored_profile,&old,sizeof(old));stored_size=sizeof(old);room_settings_init();assert(!strcmp(current.token,"keep-ha-token"));assert(room_web_authorized(&(httpd_req_t){0},false));
+ httpd_req_t r=req(NULL,0,"application/json");assert(room_web_authorized(&r,true));r.headers[1].value="http://evil.example";assert(!room_web_authorized(&r,true));
+ r=req(NULL,0,"application/json");get(&r);assert(r.code==200&&!strstr(r.response,"keep-ha-token")); /* Local configuration has no PIN gate. */
  const char *mqtt="{\"section\":\"mqtt\",\"enabled\":true,\"broker\":\"mqtt://192.0.2.30:1883\",\"username\":\"ha\",\"password\":\"\",\"prefix\":\"homeassistant\",\"name\":\"Cottage\"}";
  r=req(mqtt,strlen(mqtt),"application/json");save(&r);assert(r.code==200);reboot_pending=false;memset(&current,0,sizeof(current));room_settings_init();cJSON *sync=room_settings_controller_integrations();cJSON *m=cJSON_GetObjectItem(sync,"mqtt");assert(m&&!cJSON_HasObjectItem(m,"password"));cJSON_Delete(sync); /* Blank never clears an unknown controller password. */
  uint8_t image[4096]={0};esp_image_header_t header={.magic=ESP_IMAGE_HEADER_MAGIC,.chip_id=ESP_CHIP_ID_ESP32S3};esp_app_desc_t desc={.magic_word=ESP_APP_DESC_MAGIC_WORD,.project_name="cottage_thermo_room_4b"};
  memcpy(image,&header,sizeof(header));memcpy(image+sizeof(header)+sizeof(esp_image_segment_header_t),&desc,sizeof(desc));assert(valid_header(image,sizeof(image)));
  if(argc>1){FILE *file=fopen(argv[1],"rb");assert(file);uint8_t actual[1024];assert(fread(actual,1,sizeof(actual),file)==sizeof(actual));fclose(file);assert(valid_header(actual,sizeof(actual)));}
- reset_upload();r=req((char*)image,sizeof(image),"application/octet-stream");r.headers[3].value="wrong";upload(&r);assert(r.code==403&&!begins&&!selects);
+ reset_upload();r=req((char*)image,sizeof(image),"application/octet-stream");r.headers[1].value="http://evil.example";upload(&r);assert(r.code==403&&!begins&&!selects);
  reset_upload();image[0]=0;r=req((char*)image,sizeof(image),"application/octet-stream");upload(&r);assert(r.code==400&&!begins&&!selects);image[0]=ESP_IMAGE_HEADER_MAGIC;
  reset_upload();header.chip_id=0;memcpy(image,&header,sizeof(header));r=req((char*)image,sizeof(image),"application/octet-stream");upload(&r);assert(r.code==400&&!begins);header.chip_id=ESP_CHIP_ID_ESP32S3;memcpy(image,&header,sizeof(header));
  reset_upload();snprintf(desc.project_name,sizeof(desc.project_name),"controller");memcpy(image+sizeof(header)+sizeof(esp_image_segment_header_t),&desc,sizeof(desc));r=req((char*)image,sizeof(image),"application/octet-stream");upload(&r);assert(r.code==400&&!begins);snprintf(desc.project_name,sizeof(desc.project_name),"cottage_thermo_room_4b");memcpy(image+sizeof(header)+sizeof(esp_image_segment_header_t),&desc,sizeof(desc));
@@ -75,5 +75,5 @@ int main(int argc,char **argv){
  reset_upload();bad_end=true;r=req((char*)image,sizeof(image),"application/octet-stream");upload(&r);assert(r.code==400&&!selects&&!aborts);
  reset_upload();bad_select=true;r=req((char*)image,sizeof(image),"application/octet-stream");upload(&r);assert(r.code==400&&!selects);
  reset_upload();r=req((char*)image,sizeof(image),"application/octet-stream");upload(&r);assert(r.code==200&&selects==1&&busy&&reboot_pending);room_ota_confirm_boot();assert(confirms==1);
- puts("PASS: credential migration/redaction, local admin/origin checks, MQTT keep-secret semantics and inactive-slot OTA validation/failure/activation/confirmation");
+ puts("PASS: credential migration/redaction, local origin checks, MQTT keep-secret semantics and inactive-slot OTA validation/failure/activation/confirmation");
 }

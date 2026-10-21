@@ -114,6 +114,6 @@ void app_main(void)
         ESP_ERROR_CHECK(xTaskCreate(sensor_task,"room_probe",6144,NULL,3,NULL)==pdPASS?ESP_OK:ESP_ERR_NO_MEM);
     else ESP_LOGW(TAG,"Local probe disabled: configure probe type and pins");
     room_ota_confirm_boot();
-    ESP_LOGI(TAG,"Room client v0.11.1; native display and browser services ready");
+    ESP_LOGI(TAG,"Room client v0.11.2; native display and browser services ready");
 }
 

@@ -14,6 +14,7 @@ typedef int esp_err_t;
 #define ESP_ERROR_CHECK(x) assert((x)==0)
 #define ESP_LOGI(...) ((void)0)
 #define ESP_LOGE(...) ((void)0)
+#define ESP_LOGW(...) ((void)0)
 #define MALLOC_CAP_INTERNAL 4
 #define MALLOC_CAP_SPIRAM 1
 #define MALLOC_CAP_8BIT 2
@@ -47,7 +48,7 @@ void vTaskDelay(int);
 void *heap_caps_malloc(size_t,int);
 bool bsp_display_lock(uint32_t);
 void bsp_display_unlock(void);
-typedef struct {int task_stack;} lvgl_port_cfg_t;
+typedef struct {int task_stack,task_affinity;} lvgl_port_cfg_t;
 typedef struct {lvgl_port_cfg_t lvgl_port_cfg;} bsp_display_cfg_t;
 #define ESP_LVGL_PORT_INIT_CONFIG() {.task_stack=7168}
 lv_display_t *bsp_display_start_with_config(const bsp_display_cfg_t*);

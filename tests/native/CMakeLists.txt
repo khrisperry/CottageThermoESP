@@ -96,3 +96,9 @@ target_include_directories(integration_config_test PRIVATE web_stubs stubs ../..
 target_compile_options(integration_config_test PRIVATE -Wall -Wextra -Werror -Wno-unused-parameter -Wno-unused-function)
 target_link_libraries(integration_config_test PRIVATE lvgl m)
 add_test(NAME integration_config COMMAND integration_config_test)
+
+add_executable(ship_transport_test test_ship_transport.c ../../touchscreen/main/room_ships_decode.c ../../touchscreen/managed_components/espressif__cjson/cJSON/cJSON.c)
+target_include_directories(ship_transport_test PRIVATE ships_stubs transport_stubs web_stubs stubs ../../touchscreen/main ../../touchscreen/managed_components/espressif__cjson/cJSON)
+target_compile_options(ship_transport_test PRIVATE -Wall -Wextra -Werror -Wno-unused-parameter)
+target_link_libraries(ship_transport_test PRIVATE lvgl m)
+add_test(NAME ship_transport COMMAND ship_transport_test)
