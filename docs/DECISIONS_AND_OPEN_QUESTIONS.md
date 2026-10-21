@@ -45,6 +45,17 @@
 - [ ] Obtain exact HA entity IDs and check sensor freshness/history.
 - [ ] Validate actual unoccupied/occupied HA status before enabling any learning/calibration actions.
 
+## Planned follow-ups — Wi-Fi fallback and HA climate discovery
+
+These are confirmed backlog requirements, not implemented features. Added after the v0.9.4 display/sensor work; implementation is deferred.
+
+- [ ] **ESP-NOW fallback between room panel and furnace controller.** Keep Wi-Fi as the standard transport. When the Wi-Fi/controller link is unavailable, use a securely paired ESP-NOW link for fresh local temperature reports, target changes, acknowledgements and controller status. Coordinate radio channels and discovery, including when only one unit loses Wi-Fi.
+- [ ] **Visible fallback state.** Show an explicit persistent **ESP-NOW** communication indicator; distinguish a working fallback from a controller that is unreachable on both transports.
+- [ ] **Disable Home Assistant features during fallback.** Grey out/disable all HA-dependent lights, blinds, kids heat controls and vacuum controls; mark HA readings unavailable and stop camera requests. Keep local temperature and valid direct thermostat functions available.
+- [ ] **Automatic recovery.** Continue checking for Wi-Fi recovery, confirm the controller link is healthy, synchronize current state and return to Wi-Fi. Re-enable HA features only after their connection and data are fresh. Use shared command IDs, acknowledgements and expiration across transports so an old or duplicate command is not applied during handover.
+- [ ] **Discoverable Home Assistant climate entity.** Expose the complete thermostat as one HA climate device/entity so HA can show local room temperature/current target and change the target through the same controller validation as the touchscreen. Publish supported operating/action state and availability, use a stable identity and avoid duplicate entities after restarts or rediscovery. MQTT Discovery is the existing planned integration; confirm implementation details when this item starts. The controller remains authoritative for targets, actuation limits and supported modes; do not expose raw servo control through ordinary climate commands.
+- [ ] **Validation before enabling fallback.** Test an hour-long Wi-Fi outage and automatic recovery, one-sided connectivity loss, restart during fallback, duplicate/expired commands, stale local readings, HA UI disable/re-enable and HA climate discovery/control/availability.
+
 ## End-of-session handoff template
 
 Update this file with: date, branch/commit SHA, hardware board and wiring, firmware versions, new measurements, test results, unresolved failures, and next command to run. Never replace factual unknowns with assumptions.

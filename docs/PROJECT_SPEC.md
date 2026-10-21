@@ -21,7 +21,7 @@ Last established: 2026-10-17. This document is the authoritative handoff of the 
 **B. Room thermostat/display ESP32-S3**
 - Candidate hardware: **Waveshare ESP32-S3-Touch-LCD-4B** (same family previously used for touchscreen projects). Native ESP-IDF, LVGL UI.
 - Shows current indoor temperature, target temperature, operating mode, dial level, furnace activity, signal/health, predicted ready time; change setpoint by touch.
-- Use a remotely mounted **SHT31/SHT4x** or similar temperature sensor away from LCD/CPU heat; BMP280 is not preferred for room temperature. Display communicates readings and commands directly to controller through Wi-Fi (authenticated local API/WebSocket; BLE optional future fallback/provisioning).
+- Use a remotely mounted **SHT31/SHT4x** or similar temperature sensor away from LCD/CPU heat; BMP280 is not preferred for room temperature. Display communicates readings and commands directly to controller through Wi-Fi (authenticated local API/WebSocket), with a planned paired ESP-NOW fallback when that link is unavailable.
 - Display is a UI/client and primary room sensor. Its restarts/updates must not remove the controller's committed thermostat settings.
 
 **C. Home Assistant optional extension**
@@ -88,7 +88,9 @@ Two distinct models:
 
 - ESP-IDF FreeRTOS, LEDC servo PWM, NVS with schema/version/checks, local web UI.
 - Direct controller-display API with authentication, idempotent commands and acknowledgements, fresh temperature reports and live status.
-- MQTT Home Assistant Discovery for climate and diagnostic sensors, optional broker; independent firmware OTA with rollback, serial diagnostics and local safe UI.
+- **Planned, not implemented:** paired ESP-NOW fallback for room temperature, target changes and controller status when Wi-Fi/controller communication fails. The display must show an explicit ESP-NOW indicator, grey out/disable all HA-dependent features during fallback, and preserve independent local temperature and valid thermostat controls. Coordinate channels/discovery and automatically return to Wi-Fi after verified recovery; use command identity, freshness and acknowledgements across both transports.
+- **Planned, not implemented:** MQTT Home Assistant Discovery for the thermostat as a climate device/entity and diagnostic sensors, optional broker; HA target changes use the same authoritative controller validation as local controls, with stable entity identity and truthful temperature/target/state/availability reporting. See the deferred checklist in DECISIONS_AND_OPEN_QUESTIONS.md.
+- Independent firmware OTA with rollback, serial diagnostics and local safe UI.
 - Event log contains sensor source, readings/age, firmware, position measured vs commanded, fault reason, power-restore, movement outcome.
 - Calibration persistence must survive ESP32 reboots (unlike issues observed in earlier ESPHome implementation).
 
