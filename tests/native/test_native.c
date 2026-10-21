@@ -7,7 +7,7 @@
 static int64_t now=1000000;
 static int posts=0,queue_count=0;
 static char last_path[80],last_post[256];
-static bool unknown=false;
+static bool unknown=false,test_wifi=true,test_fallback=false;
 static unsigned test_notify_mask,test_volume=100;
 #include "../../touchscreen/main/room_display.c"
 static command_t queued;
@@ -30,6 +30,11 @@ lv_display_t *bsp_display_start(void){return lv_display_get_default();}
 void bsp_display_rotate(lv_display_t *d,lv_display_rotation_t r){lv_display_set_rotation(d,r);}
 int bsp_display_brightness_set(int n){return 0;}
 void *bsp_i2c_get_handle(void){return (void*)47;}
+bool room_wifi_connected(void){return test_wifi;}
+const char *room_settings_ha_token(void){return "configured";}
+bool room_controller_fallback(void){return test_fallback;}
+bool room_controller_radio_ready(void){return true;}
+bool room_controller_radio_online(void){return test_fallback;}
 const char *room_settings_controller_url(void){return CONFIG_ROOM_CONTROLLER_URL;}
 unsigned room_audio_get_volume(void){return test_volume;}
 bool room_audio_set_volume(unsigned value){if(value>100)return false;test_volume=value;return true;}
@@ -45,6 +50,8 @@ esp_err_t room_http(const char *origin,const char *header,const char *token,cons
  else body="{\"temperature_f\":65.2,\"target_f\":67,\"simulation\":true,\"mode\":\"hold\",\"reason\":\"simulation\"}";
  *length=snprintf(out,cap,"%s",body);*status=200;return 0;
 }
+cJSON *room_controller_status(void){char buffer[1024];int code,n;room_http("http://controller.test","X-Thermo-Token","test","/api/status",NULL,buffer,sizeof(buffer),1000,&code,&n);return cJSON_Parse(buffer);}
+cJSON *room_controller_target(float target,int *code){char buffer[1024],post[80];int n;snprintf(post,sizeof(post),"{\"target_f\":%.1f}",target);room_http("http://controller.test","X-Thermo-Token","test","/api/config",post,buffer,sizeof(buffer),1000,code,&n);return cJSON_Parse(buffer);}
 cJSON *room_ha_status(void){return cJSON_Parse(ha_json);}
 cJSON *room_ha_command(cJSON *p,int *code){char *post=cJSON_PrintUnformatted(p),buffer[256];int length;room_http("http://ha.test","Authorization","Bearer test","/api/ha/command",post,buffer,sizeof(buffer),1000,code,&length);free(post);return cJSON_Parse(buffer);}
 static uint8_t screen_pixels[480*480*3],draw_pixels[480*480*3];
@@ -83,6 +90,14 @@ int main(void)
  click(settings_camera_button);assert(model.camera_fill);
  click(settings_close_button);assert(!model.settings_open&&lv_obj_has_flag(settings_modal,LV_OBJ_FLAG_HIDDEN));
  populate();refresh(NULL);assert(!lv_obj_has_state(control[0][0],LV_STATE_DISABLED));
+ assert(!strcmp(lv_label_get_text(connection),"Online"));
+ assert(!strcmp(lv_label_get_text(lv_obj_get_child(settings_button,0)),LV_SYMBOL_SETTINGS));
+ click(health_button);refresh(NULL);assert(model.settings_open);assert(strstr(lv_label_get_text(diagnostic_text),"Not configured"));
+ render("connections.ppm");click(diagnostic_close_button);assert(!model.settings_open);
+ test_fallback=true;test_wifi=false;refresh(NULL);
+ assert(strstr(lv_label_get_text(connection),"ESPNOW"));assert(lv_obj_has_state(control[0][0],LV_STATE_DISABLED));
+ int before_fallback=queue_count;click(control[0][0]);assert(before_fallback==queue_count);assert(!camera_current(model.generation));
+ render("fallback.ppm");test_fallback=false;test_wifi=true;populate();refresh(NULL);
  room_display_probe_sample(65.2f);refresh(NULL);
  assert(!strcmp(lv_label_get_text(temp_label),"65.2 F"));assert(!strcmp(model.items[3].state,"Running")); /* Hidden long-dot labels are laid out when shown. */
  click(notify_button[0]);assert(room_audio_notify_enabled(3));assert(!room_audio_notify_enabled(4));

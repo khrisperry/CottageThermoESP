@@ -13,7 +13,7 @@ static int gets,posts,frames,fail_code,missing=-1;
 static int completion_calls,reset_calls;
 static const char *washer_state="Running";
 static int semaphore_count,io_locked;
-static bool uncertain,unsupported,bad_temp;
+static bool uncertain,unsupported,bad_temp,test_fallback,test_wifi=true;
 static char sent_path[160],sent_body[256];
 #include "../../touchscreen/main/room_ha.c"
 const char *room_settings_ha_url(void){return "https://cottageha.greenledges.net:8123";}
@@ -46,6 +46,8 @@ static void command(int key,const char *action,const char *id,bool success)
  char json[256];snprintf(json,sizeof(json),"{\"key\":\"%s\",\"action\":\"%s\",\"request_id\":\"%s\"}",ha_specs[key].key,action,id);
  cJSON *p=cJSON_Parse(json);int code;cJSON *result=room_ha_command(p,&code);assert(code==200);assert(cJSON_IsTrue(cJSON_GetObjectItem(result,"accepted"))==success);cJSON_Delete(p);cJSON_Delete(result);
 }
+bool room_wifi_connected(void){return test_wifi;}
+bool room_controller_fallback(void){return test_fallback;}
 int main(void)
 {
 #ifdef ROOM_HA_EMPTY
@@ -68,6 +70,16 @@ int main(void)
  washer_state="Running";ha_poll_once();
  unsupported=true;bad_temp=true;ha_poll_once();root=room_ha_status();assert(cJSON_GetArraySize(cJSON_GetObjectItem(item(root,2),"actions"))==0);assert(cJSON_IsFalse(cJSON_GetObjectItem(item(root,8),"available")));cJSON_Delete(root);unsupported=false;bad_temp=false;
  ha_poll_once();char frame[10];int code,n;assert(room_ha_camera(frame,sizeof(frame),&code,&n)==0&&code==200&&n==4);assert(frames==1);
+ /* Fallback disables services/camera and invalidates cached HA state. Fresh
+  * reads are required after Wi-Fi recovery before controls re-enable. */
+ test_fallback=true;test_wifi=false;before=posts;int before_frames=frames,before_gets=gets;
+ root=room_ha_status();assert(cJSON_IsFalse(cJSON_GetObjectItem(root,"connected")));cJSON_Delete(root);
+ cJSON *blocked=cJSON_Parse("{\"key\":\"deck\",\"action\":\"on\",\"request_id\":\"blocked-01\"}");
+ root=room_ha_command(blocked,&code);assert(code==503&&posts==before);cJSON_Delete(root);cJSON_Delete(blocked);
+ assert(room_ha_camera(frame,sizeof(frame),&code,&n)!=ESP_OK&&frames==before_frames);
+ ha_poll_once();assert(gets==before_gets);test_fallback=false;test_wifi=true;
+ root=room_ha_status();assert(cJSON_IsFalse(cJSON_GetObjectItem(root,"connected")));cJSON_Delete(root);
+ ha_poll_once();root=room_ha_status();assert(cJSON_IsTrue(cJSON_GetObjectItem(root,"connected")));cJSON_Delete(root);
  fake_time+=31000000;root=room_ha_status();assert(cJSON_IsFalse(cJSON_GetObjectItem(root,"connected")));cJSON_Delete(root);
  cJSON *p=cJSON_Parse("{\"key\":\"furnace\",\"action\":\"on\",\"request_id\":\"invalid-01\"}");root=room_ha_command(p,&code);assert(code==400);cJSON_Delete(root);cJSON_Delete(p);
  fail_code=401;ha_poll_once();assert(ha_auth_failed);before=gets;fail_code=0;ha_poll_once();assert(gets==before);root=room_ha_status();assert(cJSON_IsFalse(cJSON_GetObjectItem(root,"connected")));assert(strstr(ha_string(root,"error"),"token rejected"));cJSON_Delete(root);

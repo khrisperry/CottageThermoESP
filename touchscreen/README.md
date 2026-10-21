@@ -1,6 +1,8 @@
 # Cottage room panel — Waveshare ESP32-S3-Touch-LCD-4B
 
-Version 0.9.4 provides the **native 480×480 LCD and capacitive touch interface**. This is for the **4B**, with 16 MB flash and 8 MB octal PSRAM. It uses Waveshare BSP 2.0.0, LVGL 9.2.0 and ESP LVGL port 2.6.2, compiled with ESP-IDF 6.0.1. The dependency lock pins the tested graph. **The ESP connects directly to Home Assistant using your long-lived token; no bridge process, bridge address or bridge token is required.** No device has been flashed or physically verified by the coding environment.
+Version 0.10.0 provides the **native 480×480 LCD and capacitive touch interface**. This is for the **4B**, with 16 MB flash and 8 MB octal PSRAM. It uses Waveshare BSP 2.0.0, LVGL 9.2.0 and ESP LVGL port 2.6.2, compiled with ESP-IDF 6.0.1. The dependency lock pins the tested graph. **The ESP connects directly to Home Assistant using your long-lived token; no bridge process, bridge address or bridge token is required.** No device has been flashed or physically verified by the coding environment.
+
+The 4B is the planned production display. User tests confirmed the v0.9.4 UI, camera, audio and BME280 temperature test. v0.10.0 adds the tappable unified status/diagnostics pill, gear-only Settings and optional paired fallback. The new controller link requires controller v0.3.0. See [review/setup instructions](../docs/CONNECTIVITY_REVIEW.md) before enabling radio fallback or HA climate discovery. Both firmware builds and host tests pass; live radio/MQTT validation remains pending. Earlier milestone notes below are historical.
 
 ## Device settings
 
@@ -24,7 +26,7 @@ The retired browser Climate/Home dashboards are no longer embedded or served. LA
 
 ## Windows build and first hardware test
 
-1. Pull the `feature/thermostat-foundation` branch. From repository root, create your local credential file **once**:
+1. Use `main` for the reviewed baseline or `feature/connectivity-climate-review` for the new connectivity work. From repository root, create your local credential file **once**:
 
    ```powershell
    Copy-Item .\touchscreen\secrets.h.example .\touchscreen\secrets.h
@@ -60,7 +62,7 @@ The retired browser Climate/Home dashboards are no longer embedded or served. LA
 
 The setup page and credential submission are available only through the setup AP interface. Ordinary LAN requests cannot change Wi-Fi settings. The root path and common HTTP captive-detection requests redirect/show setup on the AP; the normal thermostat browser remains at the station IP. DHCP advertises the local DNS server and portal URI; DNS maps A queries to 192.168.4.1. Automatic popup behavior varies by phone/OS, so the direct address remains supported.
 
-Check the screen orientation, Wi-Fi button, all four pages, successful NVS reconnect after reboot, and fallback after a bad password. Verify the display can reach HA directly. With no furnace controller connected, Climate remains unavailable while HA pages can work. Keep the external probe disabled until wiring is confirmed. To change orientation or controller/probe settings, use `-Configure` as before.
+Check screen orientation, the status pill/diagnostics, gear Settings, all four pages, successful NVS reconnect after reboot, and provisioning after a bad password. Verify the display can reach HA directly. With no furnace controller connected, target controls remain unavailable while fresh local probe readings and HA pages can work. To change orientation or controller/probe settings, use `-Configure` as before.
 
 Camera requests use `/api/camera_proxy/camera.cottagecamptz_fluent?width=480&height=320`, with bearer authentication in the header. Home Assistant does the requested image scaling; no separate host service is involved. Camera requests allow 15 seconds for HA to obtain a still. Camera responses are bounded to 768 KB; the native decoder now accepts larger baseline JPEGs and chooses 1/2, 1/4 or 1/8 decode scaling to keep the decoded output at or below 480×320. Progressive JPEGs, invalid data, images too large even at 1/8 scale and unsupported formats produce specific on-screen errors. Full-motion HLS/WebRTC remains future work. Camera attributes and transient camera tokens are not exposed to the panel.
 

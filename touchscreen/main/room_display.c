@@ -27,6 +27,9 @@
 #include "room_visual_state.h"
 #include "room_feedback.h"
 #include "room_audio.h"
+#include "room_controller.h"
+#include "room_health.h"
+#include "wifi_setup.h"
 
 #define COUNT 11
 #define FRESH_US 10000000LL
@@ -51,9 +54,10 @@ static QueueHandle_t commands;
 static lv_obj_t *body[4],*nav[4],*connection,*notice,*temp_label,*target_label,*mode_label,*reason_label;
 static lv_obj_t *states[COUNT],*control[COUNT][6],*minus_button,*plus_button,*apply_button,*camera_image,*camera_note,*settings_button;
 static lv_obj_t *settings_modal,*settings_volume,*settings_volume_label,*settings_camera_button,*settings_close_button;
-static lv_obj_t *temperature_ring,*heat_badge,*camera_frame,*camera_status,*tile[COUNT],*icon_badge[COUNT];
+static lv_obj_t *temperature_ring,*camera_frame,*camera_status,*tile[COUNT],*icon_badge[COUNT];
 static lv_obj_t *bulb_head[COUNT],*bulb_stem[COUNT],*bulb_base[COUNT],*activity_ring[COUNT];
 static lv_obj_t *notify_button[4],*probe_test_label;
+static lv_obj_t *health_button,*health_dot,*diagnostic_modal,*diagnostic_text,*diagnostic_close_button;
 static lv_obj_t *blind_slats[5],*blind_rail,*heater_fins[4],*heater_rays[3];
 static lv_image_dsc_t image_desc;
 static void *image_pixels;
@@ -78,11 +82,9 @@ static cJSON *json_request(bool ha,const char *path,const char *post,int *code)
         if(!post){*code=200;return room_ha_status();}
         cJSON *payload=cJSON_Parse(post);cJSON *result=room_ha_command(payload,code);cJSON_Delete(payload);if(*code!=200){cJSON_Delete(result);return NULL;}return result;
     }
-    *code=0;char *buffer=malloc(8192);if(!buffer)return NULL;
-    int n;esp_err_t err=room_http(room_settings_controller_url(),"X-Thermo-Token",CONFIG_ROOM_API_TOKEN,
-        path,post,buffer,8192,post?20000:3000,code,&n);
-    cJSON *j=err==ESP_OK&&*code==200?cJSON_ParseWithLengthOpts(buffer,n+1,NULL,true):NULL;
-    free(buffer);if(!cJSON_IsObject(j)){cJSON_Delete(j);return NULL;}return j;
+    if(post){cJSON *p=cJSON_Parse(post);float target=0;bool valid=number(p,"target_f",&target);cJSON_Delete(p);
+        if(!valid){*code=400;return NULL;}return room_controller_target(target,code);}
+    cJSON *j=room_controller_status();*code=j?200:503;return j;
 }
 static void poll_ha(void)
 {
@@ -125,7 +127,7 @@ static void execute(command_t c)
 {
     model_t m=snapshot();bool allowed=esp_timer_get_time()-c.at<COMMAND_TTL_US;
     if(c.item<0)allowed=allowed&&m.climate_ok&&m.has_target&&current(m.climate_at)&&c.target>=45&&c.target<=80;
-    else allowed=allowed&&current(m.ha_at)&&m.items[c.item].available&&(m.items[c.item].actions&(1U<<c.action));
+    else allowed=allowed&&!room_controller_fallback()&&room_wifi_connected()&&current(m.ha_at)&&m.items[c.item].available&&(m.items[c.item].actions&(1U<<c.action));
     if(!allowed)message("Request expired or device unavailable; nothing sent");
     else {
         char payload[200];int code;
@@ -154,13 +156,13 @@ static void network_task(void *arg)
     for(;;){
         int64_t now=esp_timer_get_time();
         if(now>=ha_due){poll_ha();ha_due=esp_timer_get_time()+1000000;}
-        if(now>=climate_due){poll_climate();climate_due=esp_timer_get_time()+5000000;}
+        if(now>=climate_due){poll_climate();climate_due=esp_timer_get_time()+2000000;}
         vTaskDelay(pdMS_TO_TICKS(100));
     }
 }
 static bool camera_current(unsigned generation)
 {
-    model_t m=snapshot();return !m.settings_open && m.page==3 && m.generation==generation && current(m.ha_at)&&m.items[10].available;
+    model_t m=snapshot();return !room_controller_fallback() && room_wifi_connected() && !m.settings_open && m.page==3 && m.generation==generation && current(m.ha_at)&&m.items[10].available;
 }
 /* Caller holds the display lock; ownership of decoded PSRAM pixels transfers here. */
 static void camera_present(void *pixels,unsigned width,unsigned height,unsigned bytes,bool fill)
@@ -242,6 +244,7 @@ static void select_page(unsigned p)
 {
     visible_page=p;last_touch=esp_timer_get_time();
     if(settings_modal)lv_obj_add_flag(settings_modal,LV_OBJ_FLAG_HIDDEN);
+    if(diagnostic_modal)lv_obj_add_flag(diagnostic_modal,LV_OBJ_FLAG_HIDDEN);
     for(unsigned n=0;n<4;++n){if(n==p)lv_obj_remove_flag(body[n],LV_OBJ_FLAG_HIDDEN);else lv_obj_add_flag(body[n],LV_OBJ_FLAG_HIDDEN);
         lv_obj_set_style_bg_color(nav[n],lv_color_hex(n==p?0x64dfc4:0x151f2d),0);lv_obj_set_style_text_color(nav[n],lv_color_hex(n==p?0x0b111b:0x92a3b8),0);}
     xSemaphoreTake(mutex,portMAX_DELAY);model.page=p;model.settings_open=false;++model.generation;xSemaphoreGive(mutex);
@@ -277,7 +280,7 @@ static void send_event(lv_event_t *e)
     unsigned pending_bit=c.item<0?CLIMATE_PENDING:1U<<c.item;
     if(m.pending&pending_bit)return;
     if(c.item<0){if(!m.climate_ok||!m.has_target||!current(m.climate_at))return;}
-    else if(!current(m.ha_at)||!m.items[c.item].available||!(m.items[c.item].actions&(1U<<c.action)))return;
+    else if(room_controller_fallback()||!room_wifi_connected()||!current(m.ha_at)||!m.items[c.item].available||!(m.items[c.item].actions&(1U<<c.action)))return;
     xSemaphoreTake(mutex,portMAX_DELAY);model.pending|=pending_bit;
     if((c.item==0||c.item==1||c.item==7)&&(c.action==0||c.action==1))room_optimistic_begin(&model.optimistic[c.item],c.action==0,c.at);
     xSemaphoreGive(mutex);
@@ -340,6 +343,7 @@ static void settings_camera_event(lv_event_t *e)
 static void open_settings(void)
 {
     last_touch=esp_timer_get_time();
+    if(diagnostic_modal)lv_obj_add_flag(diagnostic_modal,LV_OBJ_FLAG_HIDDEN);
     if(!settings_modal){
         settings_modal=panel(lv_screen_active(),12,57,456,CONFIG_ROOM_SENSOR==3?300:260,CARD,18);
         lv_obj_add_flag(settings_modal,LV_OBJ_FLAG_CLICKABLE);
@@ -361,6 +365,25 @@ static void open_settings(void)
     lv_label_set_text(lv_obj_get_child(settings_camera_button,0),fill?"Camera: Fill (crop edges)":"Camera: Fit (whole image)");
     lv_obj_remove_flag(settings_modal,LV_OBJ_FLAG_HIDDEN);
     lv_obj_move_to_index(settings_modal,-1);
+}
+static void diagnostics_close(lv_event_t *e)
+{
+    (void)e;last_touch=esp_timer_get_time();lv_obj_add_flag(diagnostic_modal,LV_OBJ_FLAG_HIDDEN);
+    xSemaphoreTake(mutex,portMAX_DELAY);model.settings_open=false;++model.generation;xSemaphoreGive(mutex);
+}
+static void diagnostics_event(lv_event_t *e)
+{
+    (void)e;last_touch=esp_timer_get_time();
+    if(settings_modal)lv_obj_add_flag(settings_modal,LV_OBJ_FLAG_HIDDEN);
+    if(!diagnostic_modal){
+        diagnostic_modal=panel(lv_screen_active(),12,57,456,364,CARD,18);
+        lv_obj_add_flag(diagnostic_modal,LV_OBJ_FLAG_CLICKABLE);
+        label(diagnostic_modal,"Connections",20,16,290,&lv_font_montserrat_24);
+        diagnostic_close_button=button(diagnostic_modal,"Close",342,12,94,34,diagnostics_close,0);
+        diagnostic_text=label(diagnostic_modal,"",24,67,408,&lv_font_montserrat_16);
+    }
+    xSemaphoreTake(mutex,portMAX_DELAY);model.settings_open=true;++model.generation;xSemaphoreGive(mutex);
+    lv_obj_remove_flag(diagnostic_modal,LV_OBJ_FLAG_HIDDEN);lv_obj_move_to_index(diagnostic_modal,-1);
 }
 /* Small semantic icons drawn in LVGL, with no external fonts or image buffers. */
 static lv_obj_t *icon_bar(lv_obj_t *p,int x,int y,int w,int h,uint32_t color,int radius)
@@ -397,10 +420,25 @@ static void refresh(lv_timer_t *timer)
         }
         else lv_label_set_text(probe_test_label,"BMP/BME280 test: no fresh reading");
     }
-    bool ha=m.ha_ok&&current(m.ha_at),climate=m.climate_ok&&current(m.climate_at);
-    lv_label_set_text_fmt(connection,LV_SYMBOL_WIFI "  HA %s",ha?"ONLINE":"OFFLINE");
-    tint(connection,ha?MINT:MUTED);
-    lv_label_set_text(heat_badge,climate?"HEAT ONLINE":"HEAT OFFLINE");tint(heat_badge,climate?AMBER:MUTED);
+    bool radio=room_controller_fallback(),wifi=room_wifi_connected();
+    bool ha=!radio&&wifi&&m.ha_ok&&current(m.ha_at),climate=m.climate_ok&&current(m.climate_at);
+    room_health_t health={.wifi=wifi,.ha=ha,.controller=climate,.radio=radio,
+        .local_sensor=m.probe_at&&now-m.probe_at<30000000,
+        .ha_configured=*room_settings_ha_token()!=0,.radio_configured=room_controller_radio_ready()};
+    room_health_status_t status=room_health_status(health);
+    if(status.other_faults)lv_label_set_text_fmt(connection,"%s +%u",status.text,status.other_faults);
+    else lv_label_set_text(connection,status.text);
+    tint(connection,status.color);lv_obj_set_style_bg_color(health_dot,lv_color_hex(status.color),0);
+    lv_obj_set_style_bg_color(lv_screen_active(),lv_color_hex(!ha&&!climate?0x281218:INK),0);
+    if(diagnostic_text&&!lv_obj_has_flag(diagnostic_modal,LV_OBJ_FLAG_HIDDEN)){
+        lv_label_set_text_fmt(diagnostic_text,
+            "Wi-Fi                 %s\n\nHome Assistant   %s\n\nHeat controller    %s\n\nESP-NOW            %s\n\nLocal sensor        %s\n\nShip tracking       Not configured",
+            wifi?"Connected":"Disconnected",
+            !health.ha_configured?"Not configured":radio?"Paused (ESP-NOW)":ha?"Online":"Offline",
+            climate?(radio?"Online / ESP-NOW":"Online / Wi-Fi"):"Offline",
+            !health.radio_configured?"Not configured":room_controller_radio_online()?(radio?"Active":"Ready"):"No recent reply",
+            CONFIG_ROOM_SENSOR==0?"Not configured":health.local_sensor?"Fresh":"No fresh sample");
+    }
     if(*m.notice&&now<m.notice_until){lv_label_set_text(notice,m.notice);lv_obj_remove_flag(notice,LV_OBJ_FLAG_HIDDEN);}
     else lv_obj_add_flag(notice,LV_OBJ_FLAG_HIDDEN);
     if(!editing&&climate&&m.has_target)draft=m.target;
@@ -493,9 +531,11 @@ static void build_ui(void)
     tint(screen,TEXT);lv_obj_set_style_text_font(screen,&lv_font_montserrat_16,0);
     lv_obj_remove_flag(screen,LV_OBJ_FLAG_SCROLLABLE);lv_obj_add_event_cb(screen,gesture,LV_EVENT_GESTURE,NULL);
     label(screen,"Cottage",16,12,138,&lv_font_montserrat_24);
-    connection=label(screen,LV_SYMBOL_WIFI "  HA OFFLINE",160,9,132,&lv_font_montserrat_14);
-    heat_badge=label(screen,"HEAT OFFLINE",160,29,132,&lv_font_montserrat_14);tint(heat_badge,MUTED);
-    settings_button=button(screen,LV_SYMBOL_SETTINGS " Settings",336,10,128,34,settings_event,0);
+    health_button=button(screen,"",157,8,244,40,diagnostics_event,0);
+    health_dot=panel(health_button,12,14,12,12,0xff6464,6);lv_obj_set_style_border_width(health_dot,0,0);
+    connection=label(health_button,"Offline",34,11,204,&lv_font_montserrat_16);
+    lv_obj_set_height(connection,24);lv_obj_remove_flag(connection,LV_OBJ_FLAG_CLICKABLE);
+    settings_button=button(screen,LV_SYMBOL_SETTINGS,416,8,48,40,settings_event,0);
     const char *nav_text[]={LV_SYMBOL_HOME "  Climate",LV_SYMBOL_POWER "  Home",LV_SYMBOL_LOOP "  Laundry",LV_SYMBOL_VIDEO "  Camera"};
     for(int n=0;n<4;++n){
         body[n]=lv_obj_create(screen);lv_obj_remove_style_all(body[n]);lv_obj_set_pos(body[n],12,57);lv_obj_set_size(body[n],456,364);

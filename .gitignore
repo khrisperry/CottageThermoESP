@@ -42,3 +42,6 @@ __pycache__/
 # Direct Home Assistant credentials (compiled locally into the ESP firmware)
 /touchscreen/*secrets.h*
 !/touchscreen/secrets.h.example
+
+/controller/*secrets.h*
+!/controller/secrets.h.example

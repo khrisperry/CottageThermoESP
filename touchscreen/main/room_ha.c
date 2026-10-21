@@ -5,6 +5,8 @@
 #include "room_audio.h"
 #include "room_feedback.h"
 #include "room_transport.h"
+#include "room_controller.h"
+#include "wifi_setup.h"
 #include <math.h>
 #include <stdint.h>
 #include <stdatomic.h>
@@ -58,7 +60,7 @@ static esp_err_t ha_http(const char *path,const char *post,void *buffer,size_t c
 {
     *code=0;*length=0;
     /* Only the configured HTTPS origin receives this credential. */
-    if(ha_auth_failed||!*room_settings_ha_token()||strncmp(room_settings_ha_url(),"https://",8))return ESP_ERR_INVALID_STATE;
+    if(!room_wifi_connected()||room_controller_fallback()||ha_auth_failed||!*room_settings_ha_token()||strncmp(room_settings_ha_url(),"https://",8))return ESP_ERR_INVALID_STATE;
     size_t len=strlen(room_settings_ha_token());
     if(len>2048||strpbrk(room_settings_ha_token(),"\r\n"))return ESP_ERR_INVALID_ARG;
     char *bearer=malloc(len+8);if(!bearer)return ESP_ERR_NO_MEM;
@@ -163,7 +165,7 @@ cJSON *room_ha_status(void)
 {
     cJSON *root=cJSON_CreateObject(),*array=cJSON_AddArrayToObject(root,"items");bool connected=false;
     xSemaphoreTake(ha_mutex,portMAX_DELAY);
-    for(int k=0;k<HA_COUNT;++k){ha_state_t s=ha_states[k];const ha_spec_t *spec=&ha_specs[k];bool available=ha_fresh(s);connected|=available;
+    for(int k=0;k<HA_COUNT;++k){if(room_controller_fallback()||!room_wifi_connected())ha_states[k].available=false;ha_state_t s=ha_states[k];const ha_spec_t *spec=&ha_specs[k];bool available=!room_controller_fallback()&&room_wifi_connected()&&ha_fresh(s);connected|=available;
         cJSON *item=cJSON_CreateObject();cJSON_AddStringToObject(item,"key",spec->key);cJSON_AddStringToObject(item,"label",spec->label);cJSON_AddStringToObject(item,"kind",spec->kind);
         cJSON_AddStringToObject(item,"state",available?s.state:"unavailable");cJSON_AddBoolToObject(item,"available",available);cJSON_AddNumberToObject(item,"sample_us",(double)s.at);cJSON_AddStringToObject(item,"unit",s.unit);
         if(available&&s.has_value)cJSON_AddNumberToObject(item,"value",s.value);
@@ -177,6 +179,7 @@ cJSON *room_ha_status(void)
 static cJSON *ha_result(const char *message){cJSON *j=cJSON_CreateObject();cJSON_AddStringToObject(j,"error",message);return j;}
 cJSON *room_ha_command(cJSON *p,int *code)
 {
+    *code=503;if(room_controller_fallback()||!room_wifi_connected())return ha_result("Home Assistant unavailable during direct fallback");
     *code=400;
     if(!cJSON_IsObject(p)||cJSON_GetArraySize(p)!=3)return ha_result("Expected key, action and request_id");
     const char *key=ha_string(p,"key"),*action=ha_string(p,"action"),*rid=ha_string(p,"request_id");int k=-1,a=-1;

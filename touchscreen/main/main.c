@@ -23,17 +23,11 @@
 #include "wifi_setup.h"
 #include "room_settings.h"
 #include "room_bmp280.h"
+#include "room_controller.h"
 
 static const char *TAG="room_thermostat";
 static i2c_master_dev_handle_t probe;
 static room_bmp280_t bmp280;
-// Each HTTP client is owned by its caller. Shared controller settings live upstream only.
-static esp_err_t exchange(const char *path,const char *payload,char *out,size_t cap,int *status)
-{
-    int length;
-    return room_http(room_settings_controller_url(),"X-Thermo-Token",CONFIG_ROOM_API_TOKEN,
-                     path,payload,out,cap,3000,status,&length);
-}
 static uint8_t crc(const uint8_t *p)
 {
     uint8_t c=0xff;
@@ -61,13 +55,8 @@ static void sensor_task(void *arg)
             if(CONFIG_ROOM_SENSOR==3){
                 ESP_LOGI(TAG,"BMP/BME280 TEST: %.2f F (%.2f C); not sent to controller",f,(f-32.0f)/1.8f);
             } else if(strlen(CONFIG_ROOM_API_TOKEN)==32) {
-                char payload[128],response[256];int status=0;
-                // Timestamp immediately after measurement; do not queue or replay failed samples.
-                int64_t sampled=esp_timer_get_time();
-                snprintf(payload,sizeof(payload),"{\"source\":\"room\",\"temp_f\":%.3f,\"age_ms\":%lld}",
-                    f,(long long)((esp_timer_get_time()-sampled)/1000));
-                esp_err_t err=exchange("/api/temperature",payload,response,sizeof(response),&status);
-                ESP_LOGI(TAG,"Room %.2f F; report %s HTTP %d",f,esp_err_to_name(err),status);
+                bool sent=room_controller_sample(f);
+                ESP_LOGI(TAG,"Room %.2f F; report %s",f,sent?"acknowledged":"not acknowledged");
             } else ESP_LOGI(TAG,"Local room %.2f F; controller reporting not paired",f);
         } else ESP_LOGW(TAG,"No fresh valid probe sample; no temperature report sent");
         vTaskDelay(pdMS_TO_TICKS(15000));
@@ -88,6 +77,7 @@ void app_main(void)
     ESP_ERROR_CHECK(nvs_flash_init());ESP_ERROR_CHECK(esp_netif_init());ESP_ERROR_CHECK(esp_event_loop_create_default());
     room_settings_init();
     room_wifi_start();
+    room_controller_start();
     room_ha_start();
     room_display_start();
     room_audio_start();
@@ -114,6 +104,6 @@ void app_main(void)
     if((CONFIG_ROOM_SENSOR==3&&bmp280.bus)||probe)
         ESP_ERROR_CHECK(xTaskCreate(sensor_task,"room_probe",6144,NULL,3,NULL)==pdPASS?ESP_OK:ESP_ERR_NO_MEM);
     else ESP_LOGW(TAG,"Local probe disabled: configure probe type and pins");
-    ESP_LOGI(TAG,"Room client v0.9.4; native display and browser services ready");
+    ESP_LOGI(TAG,"Room client v0.10.0; native display and browser services ready");
 }
 

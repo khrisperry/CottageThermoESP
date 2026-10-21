@@ -21,7 +21,7 @@ typedef int esp_err_t;
 #define CONFIG_ROOM_HA_BRIDGE_URL "http://ha.test"
 #define CONFIG_ROOM_CONTROLLER_URL "http://controller.test"
 #define CONFIG_ROOM_HA_BRIDGE_TOKEN "test-bridge-token"
-#define CONFIG_ROOM_API_TOKEN "test-room-token"
+#define CONFIG_ROOM_API_TOKEN "0123456789abcdef0123456789abcdef"
 #define BSP_I2C_SDA 47
 #define BSP_I2C_SCL 48
 #define portMAX_DELAY 0

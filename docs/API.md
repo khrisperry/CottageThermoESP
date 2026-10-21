@@ -29,3 +29,7 @@ Freshness: both sources expire after 90 seconds. `age_ms` includes known age sin
 `position_synchronized=true` means an explicit virtual/manual observation established this session's starting command reference. `position_measured` is always **false** until an actual encoder adapter is implemented. Never label commanded pulse as actual shaft angle.
 
 Room client serves its own paired GET `/api/status` proxy and POST `/api/target` accepting **only** `target_f` 45–80. It cannot arm/synchronize/change mode. No automatic mutation retry queue exists. Repeating a setpoint update is idempotent.
+
+## Room transport endpoint (controller v0.3.0)
+
+`POST /api/link` requires the existing `X-Thermo-Token` and a JSON `packet` field containing the exact hex-encoded versioned `tl_packet_t` envelope from `shared/thermo_link/link_protocol.h`. Replies use the same field/envelope. This endpoint serves status, bounded target writes and fresh primary-probe readings only. HTTP 200 carries the application result in the reply packet; transport success is not command acceptance. HTTP and paired ESP-NOW use the same handler, boot nonce, short monotonic lease and sequence guard. Existing browser/bench endpoints are retained. See CONNECTIVITY_REVIEW.md for transport handover and setup; this endpoint adds no raw actuation or arming operations.

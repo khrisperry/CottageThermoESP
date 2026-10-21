@@ -1,6 +1,8 @@
-# Controller v0.2.0 — thermostat development and servo bench
+# Controller v0.3.0 — thermostat development and servo bench
 
 ESP-IDF **6.0.1**, ESP32-S3, M5Stack AtomS3 Lite (8 MB flash), servo signal **G38/GPIO38**. Build defaults simulate automatic thermostat movement. No measurements or placeholder calibration map are installed.
+
+v0.3.0 adds a shared validated room HTTP/ESP-NOW endpoint and optional MQTT climate discovery. Bench output interlocks, simulation default and explicit arming/synchronization are retained. See [connectivity review/setup](../docs/CONNECTIVITY_REVIEW.md) for pairing, broker configuration and required physical checks. A blank broker URL and disabled ESP-NOW preserve the ordinary bench setup.
 
 ## Build on Windows
 

@@ -2,6 +2,7 @@
  * HTTP, DNS and reconnect work never runs on the LVGL task. */
 #include "wifi_setup.h"
 #include "wifi_portal_helpers.h"
+#include "thermo_radio.h"
 #include <stdio.h>
 #include <unistd.h>
 #include <stdlib.h>
@@ -50,6 +51,7 @@ static state_t get_state(void)
 {
     state_t result;xSemaphoreTake(state_mutex,portMAX_DELAY);result=state;xSemaphoreGive(state_mutex);return result;
 }
+bool room_wifi_connected(void){return state_mutex&&get_state().connected;}
 static void set_message(const char *message)
 {
     xSemaphoreTake(state_mutex,portMAX_DELAY);snprintf(state.message,sizeof(state.message),"%s",message);xSemaphoreGive(state_mutex);
@@ -75,7 +77,7 @@ static void wifi_event(void *arg,esp_event_base_t base,int32_t id,void *data)
         xSemaphoreTake(state_mutex,portMAX_DELAY);
         state.connected=false;state.connecting=false;state.reason=e->reason;state.ip[0]=0;
         if(!state.offline_at)state.offline_at=now;
-        state.next_try=now+2000000;
+        state.next_try=now+(tl_radio_configured()?20000000:2000000);
         xSemaphoreGive(state_mutex);xEventGroupSetBits(wifi_events,DISCONNECTED_BIT);
         ESP_LOGW(TAG,"Wi-Fi disconnected: reason=%u",(unsigned)e->reason);
     }
@@ -150,7 +152,7 @@ static void network_task(void *arg)
             if(!get_state().portal)set_portal(true);
             profile_applied=apply_station(&current_profile);
             if(!profile_applied){
-                xSemaphoreTake(state_mutex,portMAX_DELAY);state.connecting=false;state.next_try=now+2000000;xSemaphoreGive(state_mutex);
+                xSemaphoreTake(state_mutex,portMAX_DELAY);state.connecting=false;state.next_try=now+(tl_radio_configured()?20000000:2000000);xSemaphoreGive(state_mutex);
             }
             connect_started=now;
         }
@@ -177,6 +179,7 @@ static void network_task(void *arg)
             was_connected=true;
         }else{
             was_connected=false;close_at=0;
+            if(!s.connecting&&!testing)tl_radio_search_tick();
             if(!s.portal&&s.offline_at&&now-s.offline_at>=30000000){
                 set_message("Wi-Fi unavailable. Select a network or check its password.");set_portal(true);
             }
@@ -195,12 +198,12 @@ static void network_task(void *arg)
                     vTaskDelay(pdMS_TO_TICKS(250));continue;
                 }
                 /* A driver can remain in authentication without producing an IP. Bound the attempt. */
-                if(!s.connecting||(connect_started&&now-connect_started>=15000000)){
+                if(!s.connecting||(connect_started&&now-connect_started>=(tl_radio_configured()?5000000:15000000))){
                     if(xSemaphoreTake(action_mutex,0)==pdTRUE){
                         if(s.connecting){ESP_LOGW(TAG,"Wi-Fi attempt timed out without an IP address");esp_wifi_disconnect();}
                         else{
                             esp_err_t err=esp_wifi_connect();
-                            xSemaphoreTake(state_mutex,portMAX_DELAY);state.connecting=err==ESP_OK;state.next_try=now+2000000;xSemaphoreGive(state_mutex);
+                            xSemaphoreTake(state_mutex,portMAX_DELAY);state.connecting=err==ESP_OK;state.next_try=now+(tl_radio_configured()?20000000:2000000);xSemaphoreGive(state_mutex);
                             connect_started=now;
                         }
                         xSemaphoreGive(action_mutex);
