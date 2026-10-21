@@ -1,4 +1,4 @@
-param([switch]$Configure, [switch]$Flash, [switch]$Monitor, [string]$Port='')
+param([switch]$Configure, [switch]$Bmp280Test, [switch]$Flash, [switch]$Monitor, [string]$Port='')
 $ErrorActionPreference='Stop'
 if (-not (Get-Command idf.py -ErrorAction SilentlyContinue)) {
     throw 'Run from the VSCode ESP-IDF 6.0.1 PowerShell terminal.'
@@ -38,6 +38,14 @@ try {
         $configText += [Environment]::NewLine + "CONFIG_LV_USE_${widget}=y" + [Environment]::NewLine
     }
     [IO.File]::WriteAllText($configPath,$configText,[Text.UTF8Encoding]::new($false))
+    if ($Bmp280Test) {
+        # Explicit local test opt-in. Remains selected until changed in menuconfig.
+        $configText=Get-Content $configPath -Raw
+        $configText=[regex]::Replace($configText,'(?m)^CONFIG_ROOM_(?:SENSOR|SDA|SCL)=.*\r?\n?','')
+        $configText += [Environment]::NewLine + "CONFIG_ROOM_SENSOR=3`nCONFIG_ROOM_SDA=47`nCONFIG_ROOM_SCL=48`n"
+        [IO.File]::WriteAllText($configPath,$configText,[Text.UTF8Encoding]::new($false))
+        Write-Host 'BMP280 test enabled: SDA47/SCL48; local display/log only, no controller reports.'
+    }
     if ($Configure) {
         & idf.py @idfArgs menuconfig
         if ($LASTEXITCODE -ne 0) { throw '4B configuration failed' }
@@ -50,3 +58,4 @@ try {
     }
     if ($Monitor) { & idf.py @idfArgs -p $Port monitor }
 } finally { Pop-Location }
+

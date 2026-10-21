@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include <string.h>
 #include "host.h"
+#define CONFIG_ROOM_SENSOR 3
 static int64_t now=1000000;
 static int posts=0,queue_count=0;
 static char last_path[80],last_post[256];
@@ -82,7 +83,8 @@ int main(void)
  click(settings_camera_button);assert(model.camera_fill);
  click(settings_close_button);assert(!model.settings_open&&lv_obj_has_flag(settings_modal,LV_OBJ_FLAG_HIDDEN));
  populate();refresh(NULL);assert(!lv_obj_has_state(control[0][0],LV_STATE_DISABLED));
- assert(!strcmp(lv_label_get_text(temp_label),"65.2 F"));assert(!strcmp(lv_label_get_text(states[3]),"Running"));
+ room_display_probe_sample(65.2f);refresh(NULL);
+ assert(!strcmp(lv_label_get_text(temp_label),"65.2 F"));assert(!strcmp(model.items[3].state,"Running")); /* Hidden long-dot labels are laid out when shown. */
  click(notify_button[0]);assert(room_audio_notify_enabled(3));assert(!room_audio_notify_enabled(4));
  click(notify_button[0]);assert(!room_audio_notify_enabled(3));
  int no_commands=queue_count;
@@ -129,6 +131,14 @@ int main(void)
  populate();click(plus_button);click(apply_button);assert(queued.item==-1&&queued.target==67.5f);execute(queued);assert(!strcmp(last_path,"/api/config"));assert(strstr(last_post,"67.5"));
  assert(room_display_probe_bus(1,2)==NULL);assert(room_display_probe_bus(47,48)==(void*)47);
  select_page(2);now+=61000000;refresh(NULL);assert(visible_page==0);assert(!camera_current(model.generation));
+ /* Local readings remain visible without controller or HA, but stale readings clear. */
+ model.climate_ok=false;model.ha_ok=false;room_display_probe_sample(69.4f);refresh(NULL);
+ assert(!strcmp(lv_label_get_text(temp_label),"69.4 F"));
+ assert(lv_obj_has_state(apply_button,LV_STATE_DISABLED));
+ click(settings_button);refresh(NULL);assert(strstr(lv_label_get_text(probe_test_label),"69.4 F"));render("bmp280-settings.ppm");
+ now+=31000000;refresh(NULL);assert(!strcmp(lv_label_get_text(temp_label),"-- F"));
+ assert(strstr(lv_label_get_text(probe_test_label),"no fresh reading"));
  puts("PASS: native LVGL pages/swipes, HA commands, unknown outcomes, expired requests, stale controls, target-only climate, probe guard and idle return");
  return 0;
 }
+

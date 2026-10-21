@@ -1,6 +1,6 @@
 # Cottage room panel — Waveshare ESP32-S3-Touch-LCD-4B
 
-Version 0.9.2 provides the **native 480×480 LCD and capacitive touch interface**. This is for the **4B**, with 16 MB flash and 8 MB octal PSRAM. It uses Waveshare BSP 2.0.0, LVGL 9.2.0 and ESP LVGL port 2.6.2, compiled with ESP-IDF 6.0.1. The dependency lock pins the tested graph. **The ESP connects directly to Home Assistant using your long-lived token; no bridge process, bridge address or bridge token is required.** No device has been flashed or physically verified by the coding environment.
+Version 0.9.3 provides the **native 480×480 LCD and capacitive touch interface**. This is for the **4B**, with 16 MB flash and 8 MB octal PSRAM. It uses Waveshare BSP 2.0.0, LVGL 9.2.0 and ESP LVGL port 2.6.2, compiled with ESP-IDF 6.0.1. The dependency lock pins the tested graph. **The ESP connects directly to Home Assistant using your long-lived token; no bridge process, bridge address or bridge token is required.** No device has been flashed or physically verified by the coding environment.
 
 ## Device settings
 
@@ -66,7 +66,7 @@ Camera requests use `/api/camera_proxy/camera.cottagecamptz_fluent?width=480&hei
 
 ## Probe and controller separation
 
-The native 4B uses the board I2C bus on **SDA GPIO47 / SCL GPIO48** for touch and the IO expander. An optional SHT31/SHT4x probe must share that bus at address 0x44 using 3.3V-compatible wiring; select its type and these pins in menuconfig only after confirming wiring. Other GPIO selections are rejected for the probe in native mode, preventing accidental reuse of LCD pins. The BSP owns I2C initialization. No secondary bus is initialized over display pins.
+The native 4B uses the board I2C bus on **SDA GPIO47 / SCL GPIO48** for touch and the IO expander. An optional SHT31/SHT4x probe (0x44) or BMP280 test probe (0x76/0x77) must share that bus using 3.3V-compatible wiring; select its type and these pins in menuconfig only after confirming wiring. Other GPIO selections are rejected for the probe in native mode, preventing accidental reuse of LCD pins. The BSP owns I2C initialization. No secondary bus is initialized over display pins.
 
 Valid CRC-checked room samples go directly to the independent controller every 15 seconds and are never queued for later replay. Kids temperature remains display-only and is never reported as a furnace temperature. The controller retains its existing simulation/bench protections and settings. **Servo movement and mechanics remain unverified.**
 
@@ -133,3 +133,24 @@ The camera viewport now uses rectangular clipping. Rounded child clipping in LVG
 ## Automatic network setup (v0.9.2)
 
 Removed the manual Open network setup button and its touchscreen instructions. Settings now contains volume, Test sound and camera Fit/Fill. Captive portal recovery is unchanged: immediate without saved credentials, or after 30 seconds disconnected when credentials are configured. This is Wi-Fi recovery; a Home Assistant connection failure alone does not open the portal. Firmware compilation and the native UI checks remain pending local execution.
+
+
+## BMP280 local temperature test (v0.9.3)
+
+Connect a 3.3V BMP280 breakout to rear H3: VCC to pin 4 (3.3V), GND to pin 19/20, SDA/SDI to pin 1 (GPIO47), and SCL/SCK to pin 3 (GPIO48). For a six-pin module, CSB must be high (3.3V) for I2C; strap SDO low for 0x76 or high for 0x77 unless the breakout already provides those straps. The reader checks both addresses and accepts BMP280 chip ID 0x58. It does not treat BME280 ID 0x60 as a BMP280.
+
+From the ESP-IDF PowerShell terminal at repository root:
+
+```powershell
+.\tools\build-room-4b.ps1 -Bmp280Test -Flash -Monitor -Port COM14
+```
+
+The switch selects probe type 3 and SDA47/SCL48 in your ignored local sdkconfig. It does not change shared defaults. The selection persists for later builds; use `-Configure` and set Probe to 0 to disable it, or choose an SHT sensor type to switch back. Missing hardware is retried every 15 seconds without preventing the display, Wi-Fi or Home Assistant from starting.
+
+The BMP280's factory-calibrated temperature is read every 15 seconds in forced mode, with pressure measurements disabled. Look for `BMP280 TEST: ... F (... C)` in the monitor, the main Climate temperature dial, or Settings' BMP280 test line. Keep the sensor away from board/display heat. Pressure and humidity are not displayed.
+
+All configured local probes now read and update the dial independently of controller pairing, controller availability, Home Assistant and Wi-Fi. Readings older than 30 seconds clear to unavailable. Controller target controls still require fresh controller status. With no local probe configured, the existing controller temperature display remains in use.
+
+BMP280 test readings are never posted to the controller. SHT31/SHT4x reporting still requires the pairing token, but local measurements do not. No furnace arming or servo behavior changes.
+
+Validation: production BMP280 driver compiled with host GCC and passed register-fixture tests under AddressSanitizer/UndefinedBehaviorSanitizer (LeakSanitizer disabled because the container blocks process inspection). Tests cover both addresses, Bosch compensation, chip ID rejection, invalid calibration, forced conversions, bounded status polling, missing/read-failing devices, stale sentinel, range validation and recovery. The native LVGL 9.2 fixture also compiled and passed, covering offline local readings, stale sample clearing, target controls and the existing UI/command/camera checks. Host RGB888 tests use a 1 MiB LVGL pool; firmware memory settings are unchanged. Full ESP-IDF build and physical sensor validation remain local.

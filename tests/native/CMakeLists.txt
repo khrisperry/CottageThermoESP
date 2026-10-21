@@ -7,6 +7,8 @@ string(REPLACE "#if 0 /*Set it to \"1\" to enable content*/" "#if 1" CONF "${CON
 foreach(SIZE 14 16 20 24 28 48)
     string(REPLACE "#define LV_FONT_MONTSERRAT_${SIZE} 0" "#define LV_FONT_MONTSERRAT_${SIZE} 1" CONF "${CONF}")
 endforeach()
+# Host RGB888 rendering and camera frames need more than the 64 KiB template pool.
+string(REPLACE "#define LV_MEM_SIZE (64 * 1024U)" "#define LV_MEM_SIZE (1024 * 1024U)" CONF "${CONF}")
 file(WRITE "${LV_CONF_PATH}" "${CONF}")
 add_subdirectory("${LVGL_DIR}" lvgl EXCLUDE_FROM_ALL)
 add_executable(native_ui_test test_native.c ../../touchscreen/managed_components/espressif__cjson/cJSON/cJSON.c)
@@ -49,3 +51,9 @@ target_link_libraries(audio_test PRIVATE m)
 
 add_executable(camera_scale_test test_camera_scale.c)
 target_compile_options(camera_scale_test PRIVATE -Wall -Wextra -Werror)
+
+
+add_executable(bmp280_test test_bmp280.c)
+target_include_directories(bmp280_test PRIVATE probe_stubs ../../touchscreen/main)
+target_compile_options(bmp280_test PRIVATE -Wall -Wextra -Werror)
+target_link_libraries(bmp280_test PRIVATE m)

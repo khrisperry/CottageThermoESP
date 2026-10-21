@@ -42,6 +42,7 @@ typedef struct {
     unsigned pending;int64_t notice_until;
     float temp,target; char mode[32],reason[80],notice[128],ha_error[128];
     unsigned page,generation;
+    float probe_f;int64_t probe_at;
 } model_t;
 typedef struct { int item,action; float target; int64_t at; } command_t;
 static model_t model;
@@ -52,7 +53,7 @@ static lv_obj_t *states[COUNT],*control[COUNT][6],*minus_button,*plus_button,*ap
 static lv_obj_t *settings_modal,*settings_volume,*settings_volume_label,*settings_camera_button,*settings_close_button;
 static lv_obj_t *temperature_ring,*heat_badge,*camera_frame,*camera_status,*tile[COUNT],*icon_badge[COUNT];
 static lv_obj_t *bulb_head[COUNT],*bulb_stem[COUNT],*bulb_base[COUNT],*activity_ring[COUNT];
-static lv_obj_t *notify_button[4];
+static lv_obj_t *notify_button[4],*probe_test_label;
 static lv_image_dsc_t image_desc;
 static void *image_pixels;
 static float draft=65;
@@ -61,6 +62,11 @@ static int64_t last_touch;
 static unsigned visible_page;
 
 static model_t snapshot(void) { model_t m; xSemaphoreTake(mutex,portMAX_DELAY);m=model;xSemaphoreGive(mutex);return m; }
+void room_display_probe_sample(float f)
+{
+    if(!mutex||!isfinite(f))return;
+    xSemaphoreTake(mutex,portMAX_DELAY);model.probe_f=f;model.probe_at=esp_timer_get_time();xSemaphoreGive(mutex);
+}
 static void message(const char *text) { xSemaphoreTake(mutex,portMAX_DELAY);snprintf(model.notice,sizeof(model.notice),"%s",text);model.notice_until=esp_timer_get_time()+7000000;xSemaphoreGive(mutex); }
 static const char *str(cJSON *j,const char *key) { cJSON *v=cJSON_GetObjectItemCaseSensitive(j,key);return cJSON_IsString(v)?v->valuestring:""; }
 static bool number(cJSON *j,const char *key,float *out) { cJSON *v=cJSON_GetObjectItemCaseSensitive(j,key);if(!cJSON_IsNumber(v)||!isfinite(v->valuedouble))return false;*out=v->valuedouble;return true; }
@@ -334,7 +340,7 @@ static void open_settings(void)
 {
     last_touch=esp_timer_get_time();
     if(!settings_modal){
-        settings_modal=panel(lv_screen_active(),12,57,456,260,CARD,18);
+        settings_modal=panel(lv_screen_active(),12,57,456,CONFIG_ROOM_SENSOR==3?300:260,CARD,18);
         lv_obj_add_flag(settings_modal,LV_OBJ_FLAG_CLICKABLE);
         label(settings_modal,"Settings",20,16,240,&lv_font_montserrat_24);
         settings_close_button=button(settings_modal,"Close",342,12,94,34,settings_close_event,0);
@@ -346,6 +352,7 @@ static void open_settings(void)
         lv_obj_add_event_cb(settings_volume,settings_volume_event,LV_EVENT_RELEASED,NULL);
         button(settings_modal,LV_SYMBOL_PLAY "  Test sound",24,150,408,42,sound_test_event,0);
         settings_camera_button=button(settings_modal,"",24,202,408,40,settings_camera_event,0);
+        if(CONFIG_ROOM_SENSOR==3)probe_test_label=label(settings_modal,"BMP280 test: waiting for sensor",24,256,408,&lv_font_montserrat_16);
     }
     lv_slider_set_value(settings_volume,(int32_t)room_audio_get_volume(),LV_ANIM_OFF);
     lv_label_set_text_fmt(settings_volume_label,"Volume: %u%%%s",room_audio_get_volume(),room_audio_get_volume()?"":" (muted)");
@@ -358,6 +365,13 @@ static void refresh(lv_timer_t *timer)
 {
     model_t m=snapshot();int64_t now=esp_timer_get_time();
     if((visible_page||m.settings_open)&&now-last_touch>60000000){select_page(0);m=snapshot();}
+    if(probe_test_label){
+        if(m.probe_at&&now-m.probe_at<30000000){
+            char reading[64];snprintf(reading,sizeof(reading),"BMP280 test: %.1f F",m.probe_f);
+            lv_label_set_text(probe_test_label,reading);
+        }
+        else lv_label_set_text(probe_test_label,"BMP280 test: no fresh reading");
+    }
     bool ha=m.ha_ok&&current(m.ha_at),climate=m.climate_ok&&current(m.climate_at);
     lv_label_set_text_fmt(connection,LV_SYMBOL_WIFI "  HA %s",ha?"ONLINE":"OFFLINE");
     tint(connection,ha?MINT:MUTED);
@@ -365,13 +379,16 @@ static void refresh(lv_timer_t *timer)
     if(*m.notice&&now<m.notice_until){lv_label_set_text(notice,m.notice);lv_obj_remove_flag(notice,LV_OBJ_FLAG_HIDDEN);}
     else lv_obj_add_flag(notice,LV_OBJ_FLAG_HIDDEN);
     if(!editing&&climate&&m.has_target)draft=m.target;
+    bool local=CONFIG_ROOM_SENSOR!=0;
+    bool room_temp=local?(m.probe_at&&now-m.probe_at<30000000):(climate&&m.has_temp);
+    float room_f=local?m.probe_f:m.temp;
     char text[80];
-    if(climate&&m.has_temp){snprintf(text,sizeof(text),"%.1f F",m.temp);lv_label_set_text(temp_label,text);}
+    if(room_temp){snprintf(text,sizeof(text),"%.1f F",room_f);lv_label_set_text(temp_label,text);}
     else lv_label_set_text(temp_label,"-- F");
     if(climate&&m.has_target){snprintf(text,sizeof(text),"%s %.1f F",editing?"Set to":"Target",draft);lv_label_set_text(target_label,text);}
     else lv_label_set_text(target_label,"Target unavailable");
-    lv_arc_set_value(temperature_ring,climate&&m.has_temp?(int)fmaxf(45,fminf(80,m.temp)):45);
-    lv_obj_set_style_arc_color(temperature_ring,lv_color_hex(climate?AMBER:EDGE),LV_PART_INDICATOR);
+    lv_arc_set_value(temperature_ring,room_temp?(int)fmaxf(45,fminf(80,room_f)):45);
+    lv_obj_set_style_arc_color(temperature_ring,lv_color_hex(room_temp?AMBER:EDGE),LV_PART_INDICATOR);
     lv_label_set_text_fmt(mode_label,"%s%s",climate?m.mode:"Controller offline",climate?(m.simulation?" / simulation":" / bench"):"");
     lv_label_set_text(reason_label,climate?m.reason:"Home controls are available on the Home page");
     enabled(minus_button,climate&&m.has_target&&!(m.pending&CLIMATE_PENDING));enabled(plus_button,climate&&m.has_target&&!(m.pending&CLIMATE_PENDING));enabled(apply_button,climate&&m.has_target&&!(m.pending&CLIMATE_PENDING));
@@ -539,6 +556,8 @@ i2c_master_bus_handle_t room_display_probe_bus(int sda,int scl)
     return bsp_i2c_get_handle();
 }
 #else
+void room_display_probe_sample(float temperature_f) {(void)temperature_f;}
 void room_display_start(void) {}
 i2c_master_bus_handle_t room_display_probe_bus(int sda,int scl) {return NULL;}
 #endif
+
