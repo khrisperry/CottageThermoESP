@@ -59,7 +59,7 @@ static void sensor_task(void *arg)
         if(read_probe(&f)) {
             room_display_probe_sample(f);
             if(CONFIG_ROOM_SENSOR==3){
-                ESP_LOGI(TAG,"BMP280 TEST: %.2f F (%.2f C); not sent to controller",f,(f-32.0f)/1.8f);
+                ESP_LOGI(TAG,"BMP/BME280 TEST: %.2f F (%.2f C); not sent to controller",f,(f-32.0f)/1.8f);
             } else if(strlen(CONFIG_ROOM_API_TOKEN)==32) {
                 char payload[128],response[256];int status=0;
                 // Timestamp immediately after measurement; do not queue or replay failed samples.
@@ -114,6 +114,6 @@ void app_main(void)
     if((CONFIG_ROOM_SENSOR==3&&bmp280.bus)||probe)
         ESP_ERROR_CHECK(xTaskCreate(sensor_task,"room_probe",6144,NULL,3,NULL)==pdPASS?ESP_OK:ESP_ERR_NO_MEM);
     else ESP_LOGW(TAG,"Local probe disabled: configure probe type and pins");
-    ESP_LOGI(TAG,"Room client v0.9.3; native display and browser services ready");
+    ESP_LOGI(TAG,"Room client v0.9.4; native display and browser services ready");
 }
 

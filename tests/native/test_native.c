@@ -93,7 +93,15 @@ int main(void)
  /* Swiping from a control must navigate without submitting its click. */
  touch(310,70,true);touch(230,70,true);touch(150,70,true);touch(60,70,true);touch(60,70,false);
  assert(visible_page==2);assert(queue_count==no_commands);select_page(0);
- render("climate.ppm");select_page(1);render("home.ppm");select_page(2);render("laundry.ppm");select_page(3);render("camera.ppm");
+ render("climate.ppm");select_page(1);render("home.ppm");
+ assert(blind_slats[0]&&heater_fins[0]&&!icon_badge[2]&&!icon_badge[7]);
+ assert(lv_obj_get_style_text_font(states[8],LV_PART_MAIN)==&lv_font_montserrat_28);
+ assert(lv_obj_get_y(blind_slats[4])==16);assert(lv_obj_has_flag(heater_rays[0],LV_OBJ_FLAG_HIDDEN));
+ snprintf(model.items[2].state,sizeof(model.items[2].state),"closed");
+ snprintf(model.items[7].state,sizeof(model.items[7].state),"on");render("home-heating.ppm");
+ assert(lv_obj_get_y(blind_slats[4])==36);assert(!lv_obj_has_flag(heater_rays[0],LV_OBJ_FLAG_HIDDEN));
+ populate();refresh(NULL);
+select_page(2);render("laundry.ppm");select_page(3);render("camera.ppm");
  /* Render decoded frames through the production presenter, including upscaled
   * Fit/Fill and repeated cache replacement. Empty-camera renders missed the mask allocation. */
  assert(!lv_obj_get_style_clip_corner(camera_frame,LV_PART_MAIN));

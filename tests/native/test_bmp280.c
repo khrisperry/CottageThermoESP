@@ -4,11 +4,16 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdarg.h>
 #include <string.h>
 #include "../../touchscreen/main/room_bmp280.c"
 static unsigned address=0x76,id=0x58,adc=519888,adds,removes,resets,conversions,wait_ms;
 static bool stuck_reset,stuck_measurement,read_failure,add_failure,bad_cal;
-void probe_test_log(const char *tag,const char *format,...){(void)tag;(void)format;}
+static char diagnostic[4096];
+void probe_test_log(const char *tag,const char *format,...){
+ (void)tag;va_list args;va_start(args,format);size_t used=strlen(diagnostic);
+ vsnprintf(diagnostic+used,sizeof(diagnostic)-used,format,args);va_end(args);
+}
 void vTaskDelay(unsigned ticks){wait_ms+=ticks;}
 esp_err_t i2c_master_bus_add_device(i2c_master_bus_handle_t bus,const i2c_device_config_t *cfg,i2c_master_dev_handle_t *dev)
 {
@@ -34,7 +39,7 @@ esp_err_t i2c_master_transmit_receive(i2c_master_dev_handle_t dev,const void *co
 }
 esp_err_t i2c_master_transmit(i2c_master_dev_handle_t dev,const void *data,size_t n,int timeout)
 {
- assert((uintptr_t)dev==address&&id==0x58&&n==2&&timeout==200);
+ assert((uintptr_t)dev==address&&(id==0x58||id==0x60)&&n==2&&timeout==200);
  const uint8_t *p=data;
  if(p[0]==0xe0){assert(p[1]==0xb6);++resets;}
  else {assert(p[0]==0xf4&&p[1]==0x21);++conversions;}
@@ -48,16 +53,18 @@ int main(void)
  assert(room_bmp280_read(&s,&f));assert(fabsf(f-77.148f)<0.01f);assert(resets==1&&conversions==1);
  unsigned old_adds=adds;assert(room_bmp280_read(&s,&f));assert(adds==old_adds&&resets==1);drop(&s);
  address=0x77;assert(room_bmp280_read(&s,&f));assert((uintptr_t)s.device==0x77);drop(&s);
- unsigned old_resets=resets;id=0x60;assert(!room_bmp280_read(&s,&f));assert(!s.device&&resets==old_resets);id=0x58;
+ id=0x60;diagnostic[0]=0;assert(room_bmp280_read(&s,&f));assert(fabsf(f-77.148f)<0.01f);
+ assert(strstr(diagnostic,"BME280 temperature test sensor"));drop(&s);
+ unsigned old_resets=resets;s.discovery_attempts=0;diagnostic[0]=0;id=0x55;assert(!room_bmp280_read(&s,&f));assert(!s.device&&resets==old_resets);assert(strstr(diagnostic,"BMP180")&&strstr(diagnostic,"0x55"));id=0x58;
  bad_cal=true;assert(!room_bmp280_read(&s,&f));assert(!s.device);bad_cal=false;
  stuck_reset=true;unsigned before=wait_ms;assert(!room_bmp280_read(&s,&f));assert(wait_ms-before<=110&&!s.device);stuck_reset=false;
  stuck_measurement=true;assert(!room_bmp280_read(&s,&f));assert(!s.device);stuck_measurement=false;
  assert(room_bmp280_read(&s,&f));read_failure=true;assert(!room_bmp280_read(&s,&f));assert(!s.device);read_failure=false;
  assert(room_bmp280_read(&s,&f));adc=0x80000;assert(!room_bmp280_read(&s,&f));assert(!s.device);adc=519888;
  assert(room_bmp280_read(&s,&f));adc=0;assert(!room_bmp280_read(&s,&f));adc=519888;drop(&s);
- add_failure=true;assert(!room_bmp280_read(&s,&f));assert(!s.device);add_failure=false;
+ s.discovery_attempts=0;diagnostic[0]=0;add_failure=true;assert(!room_bmp280_read(&s,&f));assert(!s.device);assert(strstr(diagnostic,"cannot register"));add_failure=false;
  assert(room_bmp280_read(&s,&f));drop(&s);
  assert(removes>0);
- puts("PASS: BMP280 0x76/0x77 discovery, chip ID, factory compensation, forced conversion, bounded waits, failures and reconnect");
+ puts("PASS: BMP280/BME280 0x76/0x77 discovery, chip ID, factory compensation, forced conversion, bounded waits, failures and reconnect");
  return 0;
 }

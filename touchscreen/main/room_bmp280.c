@@ -26,28 +26,44 @@ static int16_t signed_le16(const uint8_t *p)
 static bool discover(room_bmp280_t *s)
 {
     if(!s->bus)return false;
+    bool verbose=(s->discovery_attempts++%4)==0; /* At most one detailed attempt per minute. */
     for(unsigned address=0x76;address<=0x77;++address){
         i2c_device_config_t cfg={.dev_addr_length=I2C_ADDR_BIT_LEN_7,.device_address=address,.scl_speed_hz=100000};
-        if(i2c_master_bus_add_device(s->bus,&cfg,&s->device)!=ESP_OK){s->device=NULL;continue;}
-        uint8_t id=0;
-        /* Do not reset unknown devices, including a BME280 (ID 0x60). */
-        if(!reg_read(s,0xd0,&id,1)||id!=0x58){release(s);continue;}
-        if(!reg_write(s,0xe0,0xb6)){release(s);continue;}
+        esp_err_t added=i2c_master_bus_add_device(s->bus,&cfg,&s->device);
+        if(added!=ESP_OK){
+            if(verbose)ESP_LOGW("room_bmp280","0x%02x: cannot register I2C device; err=0x%x",address,(unsigned)added);
+            s->device=NULL;continue;
+        }
+        uint8_t id=0,reg=0xd0;
+        /* BMP280 and BME280 share these temperature registers and calibration.
+         * Never reset a device with an unrecognized ID. */
+        esp_err_t read_id=i2c_master_transmit_receive(s->device,&reg,1,&id,1,200);
+        if(read_id!=ESP_OK){
+            if(verbose)ESP_LOGW("room_bmp280","0x%02x: chip-ID read failed; err=0x%x (check power, SDA/SCL, CSB and SDO)",address,(unsigned)read_id);
+            release(s);continue;
+        }
+        if(id!=0x58&&id!=0x60){
+            if(verbose)ESP_LOGW("room_bmp280","0x%02x: unexpected chip ID 0x%02x (%s); expected BMP280 0x58 or BME280 0x60",address,(unsigned)id,id==0x60?"BME280":id==0x55?"BMP180":"unknown device");
+            release(s);continue;
+        }
+        if(!reg_write(s,0xe0,0xb6)){if(verbose)ESP_LOGW("room_bmp280","0x%02x: BMP280 reset write failed",address);release(s);continue;}
         vTaskDelay(pdMS_TO_TICKS(5));
         uint8_t calibration[6];
-        if(!wait_ready(s,1)||!reg_read(s,0x88,calibration,sizeof(calibration))){release(s);continue;}
+        if(!wait_ready(s,1)){if(verbose)ESP_LOGW("room_bmp280","0x%02x: reset/status read failed or calibration copy timed out",address);release(s);continue;}
+        if(!reg_read(s,0x88,calibration,sizeof(calibration))){if(verbose)ESP_LOGW("room_bmp280","0x%02x: factory calibration read failed",address);release(s);continue;}
         s->t1=le16(calibration);s->t2=signed_le16(calibration+2);s->t3=signed_le16(calibration+4);
-        if(!s->t1||s->t1==UINT16_MAX||!s->t2){release(s);continue;}
-        ESP_LOGI("room_bmp280","BMP280 test sensor found at 0x%02x",address);
+        if(!s->t1||s->t1==UINT16_MAX||!s->t2){if(verbose)ESP_LOGW("room_bmp280","0x%02x: invalid factory calibration",address);release(s);continue;}
+        ESP_LOGI("room_bmp280","%s temperature test sensor found at 0x%02x",id==0x60?"BME280":"BMP280",address);
         return true;
     }
-    ESP_LOGW("room_bmp280","No valid BMP280 at 0x76/0x77; check 3.3V, SDA47/SCL48 and CS/SDO");
+    if(verbose)ESP_LOGW("room_bmp280","BMP/BME280 unavailable; retrying 0x76/0x77 every 15 seconds on SDA47/SCL48");
     return false;
 }
 bool room_bmp280_read(room_bmp280_t *s,float *fahrenheit)
 {
     if(!s||!fahrenheit||(!s->device&&!discover(s)))return false;
-    /* Forced conversion, temperature x1, pressure disabled. No continuous self-heating. */
+    /* Forced conversion, temperature x1, pressure disabled.
+     * BME280 humidity remains disabled by its reset default. */
     if(!reg_write(s,0xf4,0x21)){release(s);return false;}
     vTaskDelay(pdMS_TO_TICKS(5));
     uint8_t raw[3];

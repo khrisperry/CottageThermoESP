@@ -1,4 +1,4 @@
-param([switch]$Configure, [switch]$Bmp280Test, [switch]$Flash, [switch]$Monitor, [string]$Port='')
+param([switch]$Configure, [Alias('Bme280Test')][switch]$Bmp280Test, [switch]$Flash, [switch]$Monitor, [string]$Port='')
 $ErrorActionPreference='Stop'
 if (-not (Get-Command idf.py -ErrorAction SilentlyContinue)) {
     throw 'Run from the VSCode ESP-IDF 6.0.1 PowerShell terminal.'
@@ -44,7 +44,7 @@ try {
         $configText=[regex]::Replace($configText,'(?m)^CONFIG_ROOM_(?:SENSOR|SDA|SCL)=.*\r?\n?','')
         $configText += [Environment]::NewLine + "CONFIG_ROOM_SENSOR=3`nCONFIG_ROOM_SDA=47`nCONFIG_ROOM_SCL=48`n"
         [IO.File]::WriteAllText($configPath,$configText,[Text.UTF8Encoding]::new($false))
-        Write-Host 'BMP280 test enabled: SDA47/SCL48; local display/log only, no controller reports.'
+        Write-Host 'BMP280/BME280 temperature test enabled: SDA47/SCL48; local display/log only, no controller reports.'
     }
     if ($Configure) {
         & idf.py @idfArgs menuconfig

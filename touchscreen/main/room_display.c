@@ -54,6 +54,7 @@ static lv_obj_t *settings_modal,*settings_volume,*settings_volume_label,*setting
 static lv_obj_t *temperature_ring,*heat_badge,*camera_frame,*camera_status,*tile[COUNT],*icon_badge[COUNT];
 static lv_obj_t *bulb_head[COUNT],*bulb_stem[COUNT],*bulb_base[COUNT],*activity_ring[COUNT];
 static lv_obj_t *notify_button[4],*probe_test_label;
+static lv_obj_t *blind_slats[5],*blind_rail,*heater_fins[4],*heater_rays[3];
 static lv_image_dsc_t image_desc;
 static void *image_pixels;
 static float draft=65;
@@ -352,7 +353,7 @@ static void open_settings(void)
         lv_obj_add_event_cb(settings_volume,settings_volume_event,LV_EVENT_RELEASED,NULL);
         button(settings_modal,LV_SYMBOL_PLAY "  Test sound",24,150,408,42,sound_test_event,0);
         settings_camera_button=button(settings_modal,"",24,202,408,40,settings_camera_event,0);
-        if(CONFIG_ROOM_SENSOR==3)probe_test_label=label(settings_modal,"BMP280 test: waiting for sensor",24,256,408,&lv_font_montserrat_16);
+        if(CONFIG_ROOM_SENSOR==3)probe_test_label=label(settings_modal,"BMP/BME280 test: waiting for sensor",24,256,408,&lv_font_montserrat_16);
     }
     lv_slider_set_value(settings_volume,(int32_t)room_audio_get_volume(),LV_ANIM_OFF);
     lv_label_set_text_fmt(settings_volume_label,"Volume: %u%%%s",room_audio_get_volume(),room_audio_get_volume()?"":" (muted)");
@@ -361,16 +362,40 @@ static void open_settings(void)
     lv_obj_remove_flag(settings_modal,LV_OBJ_FLAG_HIDDEN);
     lv_obj_move_to_index(settings_modal,-1);
 }
+/* Small semantic icons drawn in LVGL, with no external fonts or image buffers. */
+static lv_obj_t *icon_bar(lv_obj_t *p,int x,int y,int w,int h,uint32_t color,int radius)
+{
+    lv_obj_t *o=panel(p,x,y,w,h,color,radius);lv_obj_set_style_border_width(o,0,0);return o;
+}
+static void blinds_icon(lv_obj_t *parent)
+{
+    lv_obj_t *p=panel(parent,9,9,34,49,CARD,0);
+    lv_obj_set_style_bg_opa(p,LV_OPA_TRANSP,0);lv_obj_set_style_border_width(p,0,0);
+    icon_bar(p,0,0,31,5,BLUE,2);
+    icon_bar(p,0,6,2,39,0x40556e,0);icon_bar(p,29,6,2,39,0x40556e,0);
+    for(unsigned n=0;n<5;++n)blind_slats[n]=icon_bar(p,3,8+n*7,25,3,BLUE,1);
+    blind_rail=icon_bar(p,2,39,27,4,BLUE,1);
+    icon_bar(p,33,5,1,26,MUTED,0);icon_bar(p,31,30,4,5,MUTED,2);
+}
+static void heater_icon(lv_obj_t *parent)
+{
+    lv_obj_t *p=panel(parent,8,8,36,50,CARD,0);
+    lv_obj_set_style_bg_opa(p,LV_OPA_TRANSP,0);lv_obj_set_style_border_width(p,0,0);
+    icon_bar(p,2,19,31,3,0x647386,1);icon_bar(p,2,35,31,3,0x647386,1);
+    for(unsigned n=0;n<4;++n)heater_fins[n]=icon_bar(p,2+n*8,14,6,28,0x647386,3);
+    icon_bar(p,4,40,4,6,0x647386,1);icon_bar(p,28,40,4,6,0x647386,1);
+    for(unsigned n=0;n<3;++n){heater_rays[n]=icon_bar(p,7+n*10,2+(n==1?0:3),2,7,AMBER,1);lv_obj_add_flag(heater_rays[n],LV_OBJ_FLAG_HIDDEN);}
+}
 static void refresh(lv_timer_t *timer)
 {
     model_t m=snapshot();int64_t now=esp_timer_get_time();
     if((visible_page||m.settings_open)&&now-last_touch>60000000){select_page(0);m=snapshot();}
     if(probe_test_label){
         if(m.probe_at&&now-m.probe_at<30000000){
-            char reading[64];snprintf(reading,sizeof(reading),"BMP280 test: %.1f F",m.probe_f);
+            char reading[64];snprintf(reading,sizeof(reading),"BMP/BME280 test: %.1f F",m.probe_f);
             lv_label_set_text(probe_test_label,reading);
         }
-        else lv_label_set_text(probe_test_label,"BMP280 test: no fresh reading");
+        else lv_label_set_text(probe_test_label,"BMP/BME280 test: no fresh reading");
     }
     bool ha=m.ha_ok&&current(m.ha_at),climate=m.climate_ok&&current(m.climate_at);
     lv_label_set_text_fmt(connection,LV_SYMBOL_WIFI "  HA %s",ha?"ONLINE":"OFFLINE");
@@ -401,8 +426,20 @@ static void refresh(lv_timer_t *timer)
         bool active=visual==ROOM_VIS_ACTIVE;
         uint32_t color=active?(laundry?(k<5?BLUE:AMBER):(k==0||k==1?0xffd54a:k==7?AMBER:MINT)):
             visual==ROOM_VIS_DONE?MINT:visual==ROOM_VIS_ERROR?0xff7979:visual==ROOM_VIS_PAUSED?AMBER:MUTED;
+        if(k==8&&available)color=TEXT;
         bool pending=(m.pending&(1U<<k))!=0;
-        if(states[k]){lv_label_set_text(states[k],(pending&&!predicted)?"Sending...":available?m.items[k].state:"Unavailable");tint(states[k],pending?AMBER:color);}
+        if(k==2&&blind_rail){
+            bool closed=!strcmp(m.items[k].state,"closed"),open=!strcmp(m.items[k].state,"open");
+            unsigned gap=available?(closed?7:open?2:4):7;
+            uint32_t shade=available?(active?MINT:BLUE):MUTED;
+            for(unsigned n=0;n<5;++n){lv_obj_set_y(blind_slats[n],8+n*gap);lv_obj_set_style_bg_color(blind_slats[n],lv_color_hex(shade),0);}
+            lv_obj_set_y(blind_rail,11+4*gap);lv_obj_set_style_bg_color(blind_rail,lv_color_hex(shade),0);
+        }
+        if(k==7&&heater_fins[0]){
+            for(unsigned n=0;n<4;++n)lv_obj_set_style_bg_color(heater_fins[n],lv_color_hex(available&&active?AMBER:0x647386),0);
+            for(unsigned n=0;n<3;++n){if(available&&active)lv_obj_remove_flag(heater_rays[n],LV_OBJ_FLAG_HIDDEN);else lv_obj_add_flag(heater_rays[n],LV_OBJ_FLAG_HIDDEN);}
+        }
+        if(states[k]){lv_label_set_text(states[k],(pending&&!predicted)?"Sending...":available?m.items[k].state:k==8?"--":"Unavailable");tint(states[k],pending?AMBER:color);}
         if(icon_badge[k]){
             const char *symbol=k==2?((!strcmp(m.items[k].state,"closed")||!strcmp(m.items[k].state,"closing"))?LV_SYMBOL_DOWN:LV_SYMBOL_UP):
                 k==9?(!strcmp(m.items[k].state,"docked")?LV_SYMBOL_HOME:LV_SYMBOL_REFRESH):LV_SYMBOL_CHARGE;
@@ -498,13 +535,17 @@ static void build_ui(void)
             bulb_head[key]=panel(bulb,5,0,26,29,0x303b49,13);
             bulb_stem[key]=panel(bulb,12,23,12,12,0x303b49,3);lv_obj_set_style_border_width(bulb_stem[key],0,0);
             bulb_base[key]=panel(bulb,11,37,14,4,0x647386,2);lv_obj_set_style_border_width(bulb_base[key],0,0);
-        } else {icon_badge[key]=label(p,symbols[row],13,21,28,&lv_font_montserrat_24);tint(icon_badge[key],BLUE);}
+        } else if(key==2)blinds_icon(p);
+        else if(key==7)heater_icon(p);
+        else {icon_badge[key]=label(p,symbols[row],13,21,28,&lv_font_montserrat_24);tint(icon_badge[key],BLUE);}
         label(p,names[row],52,8,186,&lv_font_montserrat_16);
-        states[key]=label(p,"Unavailable",52,33,key==7?80:184,&lv_font_montserrat_14);lv_label_set_long_mode(states[key],LV_LABEL_LONG_DOT);lv_obj_set_height(states[key],22);
+        states[key]=label(p,"Unavailable",52,33,key==7?66:184,&lv_font_montserrat_14);lv_label_set_long_mode(states[key],LV_LABEL_LONG_DOT);lv_obj_set_height(states[key],22);
         if(key==2){control_button(p,"Open",key,2,240,9,66);control_button(p,"Stop",key,3,312,9,66);control_button(p,"Close",key,4,384,9,66);}
         else if(key==9){control_button(p,LV_SYMBOL_PLAY " Start",key,5,246,9,96);control_button(p,LV_SYMBOL_STOP " Stop",key,3,350,9,96);}
         else {control_button(p,"On",key,0,266,9,86);control_button(p,"Off",key,1,360,9,86);}
-        if(key==7){states[8]=label(p,"Unavailable",136,33,112,&lv_font_montserrat_14);tint(states[8],MUTED);}
+        if(key==7){states[8]=label(p,"--",119,28,137,&lv_font_montserrat_28);tint(states[8],TEXT);
+            lv_label_set_long_mode(states[8],LV_LABEL_LONG_DOT);lv_obj_set_height(states[8],34);
+            lv_obj_set_style_text_align(states[8],LV_TEXT_ALIGN_RIGHT,0);}
     }
     const char *laundry[]={"Washer 1","Washer 2","Dryer 1","Dryer 2"};
     for(int n=0;n<4;++n){

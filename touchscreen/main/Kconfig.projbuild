@@ -22,11 +22,11 @@ menu "Cottage room thermostat"
         string "Controller pairing token from USB monitor"
         default ""
     config ROOM_SENSOR
-        int "Probe: 0=disabled, 1=SHT31 (0x44), 2=SHT4x (0x44), 3=BMP280 test"
+        int "Probe: 0=disabled, 1=SHT31 (0x44), 2=SHT4x (0x44), 3=BMP/BME280 test"
         range 0 3
         default 0
         help
-            BMP280 test auto-detects 0x76/0x77 and logs/displays temperature.
+            BMP280/BME280 temperature test auto-detects 0x76/0x77 and logs/displays temperature.
             Test readings are never reported to the thermostat controller.
     config ROOM_SDA
         int "External probe SDA (-1 until wiring is confirmed)"
