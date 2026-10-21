@@ -136,6 +136,12 @@ static bool ha_read(int key,char *buffer,size_t capacity)
 }
 static void ha_poll_once(void)
 {
+    if(!room_wifi_connected()||room_controller_fallback()){
+        ha_laundry_lost();
+        xSemaphoreTake(ha_mutex,portMAX_DELAY);
+        for(int k=0;k<HA_COUNT;++k)ha_states[k].available=false;
+        xSemaphoreGive(ha_mutex);return;
+    }
     if(!*room_settings_ha_token()||ha_auth_failed)return;
     char *buffer=heap_caps_malloc(32768,MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT);
     if(!buffer){ha_global_error(0);return;}

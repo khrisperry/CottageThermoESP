@@ -2,6 +2,7 @@
  * HTTP, DNS and reconnect work never runs on the LVGL task. */
 #include "wifi_setup.h"
 #include "wifi_portal_helpers.h"
+#include "room_wifi_retry.h"
 #include "thermo_radio.h"
 #include <stdio.h>
 #include <unistd.h>
@@ -192,16 +193,27 @@ static void network_task(void *arg)
                 profile_applied=configured&&apply_station(&current_profile);
                 if(!configured&&xSemaphoreTake(action_mutex,pdMS_TO_TICKS(1000))==pdTRUE){esp_wifi_disconnect();xSemaphoreGive(action_mutex);}
                 connect_started=now;
-            }else if(configured&&now>=s.next_try){
-                if(!profile_applied){
+            }else if(configured){
+                if(!profile_applied&&now>=s.next_try){
                     profile_applied=apply_station(&current_profile);connect_started=now;
                     vTaskDelay(pdMS_TO_TICKS(250));continue;
                 }
                 /* A driver can remain in authentication without producing an IP. Bound the attempt. */
-                if(!s.connecting||(connect_started&&now-connect_started>=(tl_radio_configured()?5000000:15000000))){
+                room_wifi_retry_t retry=profile_applied?room_wifi_retry_action(s.connecting,now,connect_started,s.next_try,tl_radio_configured()):ROOM_WIFI_WAIT;
+                if(retry!=ROOM_WIFI_WAIT){
                     if(xSemaphoreTake(action_mutex,0)==pdTRUE){
-                        if(s.connecting){ESP_LOGW(TAG,"Wi-Fi attempt timed out without an IP address");esp_wifi_disconnect();}
-                        else{
+                        if(retry==ROOM_WIFI_ABORT){
+                            xSemaphoreTake(state_mutex,portMAX_DELAY);
+                            bool cancel=!state.connected&&state.connecting;
+                            if(cancel)room_wifi_retry_abort(&state.connecting,&state.next_try,now,tl_radio_configured());
+                            xSemaphoreGive(state_mutex);
+                            if(cancel){
+                                esp_err_t err=esp_wifi_disconnect();
+                                ESP_LOGW(TAG,"Wi-Fi attempt timed out; fresh retry scheduled (disconnect=%d)",(int)err);
+                                connect_started=0;
+                            }
+                        }else{
+                            ESP_LOGI(TAG,"Wi-Fi reconnect attempt");
                             esp_err_t err=esp_wifi_connect();
                             xSemaphoreTake(state_mutex,portMAX_DELAY);state.connecting=err==ESP_OK;state.next_try=now+(tl_radio_configured()?20000000:2000000);xSemaphoreGive(state_mutex);
                             connect_started=now;

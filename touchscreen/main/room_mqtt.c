@@ -3,6 +3,7 @@
 #include "room_mqtt_discovery.h"
 #include "room_settings.h"
 #include "room_display.h"
+#include "room_controller.h"
 #include "wifi_setup.h"
 #include <stdatomic.h>
 #include <stdio.h>
@@ -18,20 +19,24 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 static const cottage_integration_t *profile;
+static bool client_running;
+static unsigned retry_wait;
+static atomic_bool suspended;
+static bool network_allowed(void){return room_wifi_connected()&&!room_controller_fallback();}
 static esp_mqtt_client_handle_t mqtt;
 static atomic_bool connected,announce,subscribe_pending;
-static atomic_int stage,broker_error,socket_error; /* 0 disabled,1 WiFi,2 clock,3 connecting,4 online,5 error */
+static atomic_int stage,broker_error,socket_error; /* 0 disabled,1 WiFi,2 clock,3 connecting,4 online,5 error,6 radio fallback */
 static char identity[64],base[96],availability[112],birth[96],target_topic[112];
 static const char *description(void)
 {
     if(!profile||!profile->mqtt_enabled)return "Not configured";
-    switch(stage){case 1:return "Waiting for Wi-Fi";case 2:return "Waiting for valid time";case 3:return "Connecting / reconnecting";case 4:return "Connected (thermostat climate)";case 5:return broker_error?"Broker rejected connection; check credentials":"Broker/TLS connection failed";default:return "Starting";}
+    switch(stage){case 6:return "Paused during ESP-NOW fallback";case 1:return "Waiting for Wi-Fi";case 2:return "Waiting for valid time";case 3:return "Connecting / reconnecting";case 4:return "Connected (thermostat climate)";case 5:return broker_error?"Broker rejected connection; check credentials":"Broker/TLS connection failed";default:return "Starting";}
 }
-int room_mqtt_state(void){return !profile||!profile->mqtt_enabled?0:connected?2:1;}
-bool room_mqtt_reannounce(void){if(!connected)return false;announce=true;return true;}
+int room_mqtt_state(void){return !profile||!profile->mqtt_enabled?0:connected&&!suspended&&network_allowed()?2:1;}
+bool room_mqtt_reannounce(void){if(!connected||suspended||!network_allowed())return false;announce=true;return true;}
 cJSON *room_mqtt_status(void)
 {
-    cJSON *j=cJSON_CreateObject();cJSON_AddBoolToObject(j,"connected",connected);cJSON_AddStringToObject(j,"status",description());
+    cJSON *j=cJSON_CreateObject();cJSON_AddBoolToObject(j,"connected",connected&&!suspended&&network_allowed());cJSON_AddStringToObject(j,"status",description());
     cJSON_AddStringToObject(j,"client_id",identity);cJSON_AddBoolToObject(j,"read_only",false);cJSON_AddBoolToObject(j,"target_control",true);
     cJSON_AddNumberToObject(j,"broker_return_code",broker_error);cJSON_AddNumberToObject(j,"socket_errno",socket_error);return j;
 }
@@ -49,7 +54,7 @@ static void mqtt_event(void *arg,esp_event_base_t event_base,int32_t id,void *da
         ESP_LOGW("room_mqtt","Connection failed: broker code=%d socket errno=%d",(int)broker_error,(int)socket_error);
     }else if(id==MQTT_EVENT_DATA&&e&&e->topic&&e->data&&e->topic_len==(int)strlen(birth)&&!memcmp(e->topic,birth,e->topic_len)&&
              !e->current_data_offset&&e->total_data_len==e->data_len&&e->data_len==6&&!memcmp(e->data,"online",6))announce=true;
-    else if(id==MQTT_EVENT_DATA&&connected&&e&&e->topic&&e->data&&
+    else if(id==MQTT_EVENT_DATA&&connected&&!suspended&&network_allowed()&&e&&e->topic&&e->data&&
             e->topic_len==(int)strlen(target_topic)&&!memcmp(e->topic,target_topic,e->topic_len)&&
             !e->retain&&!e->dup&&!e->current_data_offset&&e->total_data_len==e->data_len&&e->data_len>0&&e->data_len<24){
         char payload[24];memcpy(payload,e->data,e->data_len);payload[e->data_len]=0;
@@ -74,7 +79,7 @@ static bool discovery(void)
 }
 static void cycle(void)
 {
-    if(!connected)return;
+    if(!connected||suspended||!network_allowed())return;
     /* Subscribe before discovery; a synchronous retained birth cannot loop. */
     if(atomic_exchange(&subscribe_pending,false)){
         bool ok=esp_mqtt_client_subscribe(mqtt,birth,0)>=0;
@@ -98,13 +103,37 @@ static bool connect_client(void)
     if(esp_mqtt_client_register_event(mqtt,MQTT_EVENT_ANY,mqtt_event,NULL)==ESP_OK&&esp_mqtt_client_start(mqtt)==ESP_OK)return true;
     esp_mqtt_client_destroy(mqtt);mqtt=NULL;return false;
 }
+/* Client lifecycle belongs to this worker, never the MQTT event callback.
+ * Stopping the client also stops its internal reconnect timer/task. */
+static void service_once(void)
+{
+    bool allowed=network_allowed();
+    bool waiting_clock=!strncmp(profile->broker,"mqtts://",8)&&time(NULL)<1767225600;
+    if(!allowed||waiting_clock){
+        suspended=true;retry_wait=0;
+        if(client_running){
+            /* One final availability update when the LAN is still usable.
+             * Lost Wi-Fi uses the broker's Last Will instead. */
+            if(connected&&room_wifi_connected())esp_mqtt_client_publish(mqtt,availability,"offline",0,1,1);
+            esp_mqtt_client_stop(mqtt);client_running=false;connected=false;
+            announce=false;subscribe_pending=false;
+            ESP_LOGI("room_mqtt","MQTT paused; waiting for normal Wi-Fi operation");
+        }
+        stage=!allowed?(room_controller_fallback()?6:1):2;
+        return;
+    }
+    suspended=false;
+    if(!client_running){
+        if(retry_wait){--retry_wait;return;}
+        stage=3;
+        client_running=mqtt?esp_mqtt_client_start(mqtt)==ESP_OK:connect_client();
+        if(!client_running){stage=5;retry_wait=2;ESP_LOGE("room_mqtt","Could not start broker client; retrying when network is available");return;}
+    }
+    cycle();
+}
 static void worker(void *arg)
 {
-    bool tls=!strncmp(profile->broker,"mqtts://",8);
-    while(!room_wifi_connected()||(tls&&time(NULL)<1767225600)){stage=room_wifi_connected()?2:1;vTaskDelay(pdMS_TO_TICKS(1000));}
-    stage=3;
-    while(!connect_client()){stage=5;ESP_LOGE("room_mqtt","Could not start broker client; retrying");vTaskDelay(pdMS_TO_TICKS(5000));}
-    for(;;){cycle();vTaskDelay(pdMS_TO_TICKS(2000));}
+    for(;;){service_once();vTaskDelay(pdMS_TO_TICKS(2000));}
 }
 void room_mqtt_start(void)
 {

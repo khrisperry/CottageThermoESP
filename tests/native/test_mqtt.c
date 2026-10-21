@@ -8,7 +8,10 @@ static cottage_integration_t fixture={.mqtt_enabled=true,.prefix="homeassistant"
 static unsigned subscriptions,discoveries,states,requests;static float requested;static bool controller_up=false,sensor_up=true;static char last_state[512];
 bool room_display_request_target(float target){if(!controller_up)return false;++requests;requested=target;return true;}
 const cottage_integration_t *room_settings_integrations(void){return &fixture;}
-bool room_wifi_connected(void){return true;}
+static bool wifi_up=true,fallback_up=false;
+static unsigned starts,stops;
+bool room_wifi_connected(void){return wifi_up;}
+bool room_controller_fallback(void){return fallback_up;}
 int esp_read_mac(uint8_t *m,int type){memset(m,2,6);return ESP_OK;}
 void vTaskPrioritySet(void *task,unsigned priority){assert(priority==0);}
 int xTaskCreate(void(*fn)(void*),const char *name,int stack,void *a,int priority,void *out){assert(stack==8192);return pdPASS;}
@@ -23,7 +26,8 @@ void *esp_mqtt_client_init(const esp_mqtt_client_config_t *cfg){
  assert(cfg->session.last_will.retain&&!strcmp(cfg->session.last_will.msg,"offline"));return (void*)1;
 }
 int esp_mqtt_client_register_event(void *c,int id,void(*cb)(void*,esp_event_base_t,int32_t,void*),void *a){return ESP_OK;}
-int esp_mqtt_client_start(void *c){return ESP_OK;}
+int esp_mqtt_client_start(void *c){++starts;return ESP_OK;}
+int esp_mqtt_client_stop(void *c){++stops;mqtt_event(NULL,NULL,MQTT_EVENT_DISCONNECTED,NULL);return ESP_OK;}
 cJSON *room_display_mqtt_state(void){cJSON *j=cJSON_CreateObject();cJSON_AddBoolToObject(j,"controller_online",controller_up);cJSON_AddBoolToObject(j,"sensor_fresh",sensor_up);if(sensor_up)cJSON_AddNumberToObject(j,"temperature_f",67);else cJSON_AddNullToObject(j,"temperature_f");cJSON_AddNullToObject(j,"target_f");return j;}
 int esp_mqtt_client_publish(void *c,const char *topic,const char *data,int n,int qos,int retain){
  assert(!strstr(topic,"/set"));
@@ -37,7 +41,7 @@ int esp_mqtt_client_subscribe(void *c,const char *topic,int qos){
 }
 int main(void){
  controller_mqtt_start();assert(!controller_mqtt_configured()&&!controller_mqtt_online());
- room_mqtt_start();assert(room_mqtt_state()==1);assert(connect_client()); /* No controller check gates broker startup. */
+ room_mqtt_start();assert(room_mqtt_state()==1);wifi_up=false;service_once();assert(!mqtt&&!starts&&!client_running);wifi_up=true;service_once();assert(client_running&&starts==1); /* No controller availability check gates broker startup. */
  mqtt_event(NULL,NULL,MQTT_EVENT_BEFORE_CONNECT,NULL);mqtt_event(NULL,NULL,MQTT_EVENT_CONNECTED,NULL);cycle();assert(room_mqtt_state()==2&&subscriptions==2&&discoveries==4&&states==1);
  assert(strstr(last_state,"\"controller_online\":false")&&strstr(last_state,"67"));
  for(unsigned n=0;n<10;++n)cycle();
@@ -58,5 +62,16 @@ int main(void){
  esp_mqtt_error_codes_t error={.error_type=MQTT_ERROR_TYPE_CONNECTION_REFUSED,.connect_return_code=5};esp_mqtt_event_t e={.error_handle=&error};mqtt_event(NULL,NULL,MQTT_EVENT_ERROR,&e);assert(room_mqtt_state()==1&&strstr(description(),"credentials"));
  mqtt_event(NULL,NULL,MQTT_EVENT_DISCONNECTED,NULL);assert(!room_mqtt_reannounce());unsigned count=states;cycle();assert(states==count);
  mqtt_event(NULL,NULL,MQTT_EVENT_CONNECTED,NULL);cycle();assert(subscriptions==4&&discoveries==12);
+ wifi_up=false;service_once();assert(stops==1&&!client_running&&!connected&&stage==1);
+ unsigned paused_states=states,paused_discoveries=discoveries,paused_subs=subscriptions;
+ for(unsigned n=0;n<30;++n){service_once();cycle();mqtt_event(NULL,NULL,MQTT_EVENT_DATA,&command);}
+ assert(starts==1&&stops==1&&states==paused_states&&discoveries==paused_discoveries&&subscriptions==paused_subs&&requests==2);
+ wifi_up=true;fallback_up=true;service_once();assert(stage==6&&starts==1&&!room_mqtt_reannounce());
+ fallback_up=false;service_once();assert(starts==2&&client_running&&!connected);
+ mqtt_event(NULL,NULL,MQTT_EVENT_CONNECTED,NULL);service_once();assert(connected&&subscriptions==paused_subs+2&&discoveries==paused_discoveries+4);
+ fallback_up=true;service_once();assert(stops==2&&!client_running&&stage==6);
+ for(unsigned n=0;n<30;++n){service_once();}
+ assert(starts==2&&stops==2);
+ fallback_up=false;service_once();assert(starts==3&&client_running);
  puts("PASS: wall Climate discovery, thermostat target queue, range/payload/retained/duplicate/fragment guards, offline rejection, no servo control, freshness/auth/reconnect");
 }

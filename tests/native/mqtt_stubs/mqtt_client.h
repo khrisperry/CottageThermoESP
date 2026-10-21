@@ -23,3 +23,5 @@ int esp_mqtt_client_start(void *client);
 
 int esp_mqtt_client_destroy(void *client);
 void vTaskPrioritySet(void*,unsigned);
+
+int esp_mqtt_client_stop(void *client);
