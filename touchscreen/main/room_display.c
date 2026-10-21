@@ -148,7 +148,7 @@ static void execute(command_t c)
 {
     model_t m;copy_model(&m);bool allowed=esp_timer_get_time()-c.at<COMMAND_TTL_US;
     if(c.item<0)allowed=allowed&&m.climate_ok&&m.has_target&&current(m.climate_at)&&c.target>=45&&c.target<=80;
-    else allowed=allowed&&!room_controller_fallback()&&room_wifi_connected()&&current(m.ha_at)&&m.items[c.item].available&&(m.items[c.item].actions&(1U<<c.action));
+    else allowed=allowed&&room_wifi_connected()&&current(m.ha_at)&&m.items[c.item].available&&(m.items[c.item].actions&(1U<<c.action));
     if(!allowed)message("Request expired or device unavailable; nothing sent");
     else {
         char payload[200];int code;
@@ -184,7 +184,7 @@ static void network_task(void *arg)
 static bool camera_current(unsigned generation)
 {
     xSemaphoreTake(mutex,portMAX_DELAY);bool showing=!model.settings_open&&model.page==3&&model.generation==generation&&current(model.ha_at)&&model.items[10].available;xSemaphoreGive(mutex);
-    return showing&&!room_ota_busy()&&!room_controller_fallback()&&room_wifi_connected();
+    return showing&&!room_ota_busy()&&room_wifi_connected();
 }
 /* Caller holds the display lock; ownership of decoded PSRAM pixels transfers here. */
 static void camera_present(void *pixels,unsigned width,unsigned height,unsigned bytes,bool fill)
@@ -313,7 +313,7 @@ static void send_event(lv_event_t *e)
     unsigned pending_bit=c.item<0?CLIMATE_PENDING:1U<<c.item;
     if(m.pending&pending_bit)return;
     if(c.item<0){if(!m.climate_ok||!m.has_target||!current(m.climate_at))return;}
-    else if(room_controller_fallback()||!room_wifi_connected()||!current(m.ha_at)||!m.items[c.item].available||!(m.items[c.item].actions&(1U<<c.action)))return;
+    else if(!room_wifi_connected()||!current(m.ha_at)||!m.items[c.item].available||!(m.items[c.item].actions&(1U<<c.action)))return;
     xSemaphoreTake(mutex,portMAX_DELAY);model.pending|=pending_bit;
     if((c.item==0||c.item==1||c.item==7)&&(c.action==0||c.action==1))room_optimistic_begin(&model.optimistic[c.item],c.action==0,c.at);
     xSemaphoreGive(mutex);
@@ -533,7 +533,7 @@ cJSON *room_display_mqtt_state(void)
 cJSON *room_display_status(void)
 {
     model_t m;copy_model(&m);bool wifi=room_wifi_connected(),radio=room_controller_fallback();
-    bool ha=wifi&&!radio&&m.ha_ok&&current(m.ha_at),heat=m.climate_ok&&current(m.climate_at);
+    bool ha=wifi&&m.ha_ok&&current(m.ha_at),heat=m.climate_ok&&current(m.climate_at);
     room_health_t health={.wifi=wifi,.ha=ha,.controller=heat,.radio=radio,.ha_configured=*room_settings_ha_token()!=0,
         .ship_configured=room_settings_ships_enabled(),.ship_online=room_ships_online()};
     room_health_status_t h=room_health_status(health);cJSON *j=cJSON_CreateObject();
@@ -543,11 +543,11 @@ cJSON *room_display_status(void)
     bool probe=m.probe_at&&esp_timer_get_time()-m.probe_at<30000000;
     int mq=room_mqtt_state();
     bool heat_configured=room_controller_radio_ready()||(*room_settings_controller_url()!=0);
-    const char *words[]={wifi?"Connected":"Disconnected",!health.ha_configured?"Not configured":ha?"Online":radio?"Paused (ESP-NOW)":"Offline",
+    const char *words[]={wifi?"Connected":"Disconnected",!health.ha_configured?"Not configured":ha?"Online":"Offline",
         !heat_configured?"Not configured":heat?(radio?"ESP-NOW":"Online"):"Offline",!room_controller_radio_ready()?"Not configured":radio&&heat?"Active":"Standby",
         !CONFIG_ROOM_SENSOR?"Not configured":probe?"Fresh":"No fresh sample",!health.ship_configured?"Not configured":!ship_service?"Service offline":health.ship_online?"Online":"AIS feed offline",
         mq==2?"Connected":mq==0?"Not configured":"Offline"};
-    const char *colors[]={wifi?"ok":"offline",!health.ha_configured?"unconfigured":ha?"ok":radio?"fallback":"offline",
+    const char *colors[]={wifi?"ok":"offline",!health.ha_configured?"unconfigured":ha?"ok":"offline",
         !heat_configured?"unconfigured":heat?(radio?"fallback":"ok"):"offline",!room_controller_radio_ready()?"unconfigured":radio&&heat?"fallback":"standby",
         !CONFIG_ROOM_SENSOR?"unconfigured":probe?"ok":"offline",!health.ship_configured?"unconfigured":health.ship_online?"ok":"offline",
         mq==2?"ok":mq==0?"unconfigured":"offline"};
@@ -586,7 +586,7 @@ static void refresh(lv_timer_t *timer)
         else lv_label_set_text(probe_test_label,"BMP/BME280 test: no fresh reading");
     }
     bool radio=room_controller_fallback(),wifi=room_wifi_connected();
-    bool ha=!radio&&wifi&&m.ha_ok&&current(m.ha_at),climate=m.climate_ok&&current(m.climate_at);
+    bool ha=wifi&&m.ha_ok&&current(m.ha_at),climate=m.climate_ok&&current(m.climate_at);
     room_health_t health={.wifi=wifi,.ha=ha,.controller=climate,.radio=radio,
         .local_sensor=m.probe_at&&now-m.probe_at<30000000,
         .ha_configured=*room_settings_ha_token()!=0,.radio_configured=room_controller_radio_ready(),
@@ -599,13 +599,13 @@ static void refresh(lv_timer_t *timer)
     bool heat_configured=room_controller_radio_ready()||(*room_settings_controller_url()!=0);
     if(diagnostic_cells[0]&&!lv_obj_has_flag(diagnostic_modal,LV_OBJ_FLAG_HIDDEN)){
         const char *words[7]={wifi?"Connected":"Disconnected",
-            !health.ha_configured?"Not configured":radio?"Paused (ESP-NOW)":ha?"Online":"Offline",
+            !health.ha_configured?"Not configured":ha?"Online":"Offline",
             !heat_configured?"Not configured":climate?(radio?"ESP-NOW":"Online"):"Offline",
             !health.radio_configured?"Not configured":radio&&climate?"Active":room_controller_radio_online()?"Ready":"Standby",
             CONFIG_ROOM_SENSOR==0?"Not configured":health.local_sensor?"Fresh":"No fresh sample",
             !health.ship_configured?"Not configured":health.ship_online?"Online":ship_view.service?"AIS feed offline":"Service offline",
             room_mqtt_state()==2?"Connected":room_mqtt_state()==0?"Not configured":"Offline"};
-        unsigned kinds[7]={wifi?0:2,!health.ha_configured?1:ha?0:radio?3:2,!heat_configured?1:climate?(radio?3:0):2,
+        unsigned kinds[7]={wifi?0:2,!health.ha_configured?1:ha?0:2,!heat_configured?1:climate?(radio?3:0):2,
             !health.radio_configured?1:radio&&climate?3:room_controller_radio_online()?0:1,
             CONFIG_ROOM_SENSOR==0?1:health.local_sensor?0:2,!health.ship_configured?1:health.ship_online?0:2,
             room_mqtt_state()==2?0:room_mqtt_state()==0?1:2};

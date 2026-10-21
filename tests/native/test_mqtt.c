@@ -66,12 +66,11 @@ int main(void){
  unsigned paused_states=states,paused_discoveries=discoveries,paused_subs=subscriptions;
  for(unsigned n=0;n<30;++n){service_once();cycle();mqtt_event(NULL,NULL,MQTT_EVENT_DATA,&command);}
  assert(starts==1&&stops==1&&states==paused_states&&discoveries==paused_discoveries&&subscriptions==paused_subs&&requests==2);
- wifi_up=true;fallback_up=true;service_once();assert(stage==6&&starts==1&&!room_mqtt_reannounce());
- fallback_up=false;service_once();assert(starts==2&&client_running&&!connected);
+ wifi_up=true;fallback_up=true;service_once();assert(stage==3&&starts==2&&client_running&&!connected);
  mqtt_event(NULL,NULL,MQTT_EVENT_CONNECTED,NULL);service_once();assert(connected&&subscriptions==paused_subs+2&&discoveries==paused_discoveries+4);
- fallback_up=true;service_once();assert(stops==2&&!client_running&&stage==6);
+ fallback_up=true;service_once();assert(stops==1&&client_running&&connected);
  for(unsigned n=0;n<30;++n){service_once();}
- assert(starts==2&&stops==2);
- fallback_up=false;service_once();assert(starts==3&&client_running);
+ assert(starts==2&&stops==1);
+ fallback_up=false;service_once();assert(starts==2&&client_running);
  puts("PASS: wall Climate discovery, thermostat target queue, range/payload/retained/duplicate/fragment guards, offline rejection, no servo control, freshness/auth/reconnect");
 }

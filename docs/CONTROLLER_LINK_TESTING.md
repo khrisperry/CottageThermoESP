@@ -1,4 +1,6 @@
-# Controller links — controller 0.5.1 / room panel 0.13.1
+# Controller links — controller 0.5.2 / room panel 0.13.4
+
+Current recovery behavior: external services follow the panel Wi-Fi connection, independently of controller availability or ESP-NOW. This supersedes older notes below about keeping services paused during direct fallback.
 
 The AtomS3 Lite uses GPIO38 for the existing servo. Magnetic position feedback is not installed or required to test communications. Boot keeps PWM disabled and position unknown. The existing simulation/live-bench calibration, arming and synchronization gates remain in force. Communication recovery cannot arm the servo. HA requests a target through the wall thermostat; it has no direct servo access.
 
@@ -77,3 +79,13 @@ Wi-Fi recovery continues separately from those services. The timeout path previo
 Validation: host MQTT lifecycle tests cover offline and fallback stop/no-retry, publication/command rejection, resume and rediscovery. Direct HA regression tests pass. The Wi-Fi retry policy test covers timeout with no disconnect callback, repeated idle ticks, fresh retry and subsequent failure/retry. The three changed implementation files (Wi-Fi setup, MQTT, HA) also compile successfully with the ESP-IDF 6.0.1 ESP32-S3 compiler and existing Waveshare 4B build headers/configuration. This is compile-only validation of those objects, not a full firmware link or a physical block/unblock test.
 
 After updating the panel, block Wi-Fi again: confirm the ESP-NOW status and quiet external services. Unblock without restarting. Expected logs include `Wi-Fi reconnect attempt`, `Room UI: http://...`, `Wi-Fi controller link restored` and `Broker connected`. Then verify fresh HA/Ships status returns. ESP-NOW carrying status/target messages does not establish magnetic feedback or physical furnace readiness.
+
+## Panel 0.13.4 / controller 0.5.2 — independent recovery
+
+The controller now resets its own connecting state on an attempt timeout and schedules another attempt, even if `esp_wifi_disconnect()` emits no event. The retry policy handles 32-bit millisecond rollover. Controller serial logs identify reconnect attempts and timeout recovery. Both boards can now retry after an extended blocked-client test.
+
+HA, MQTT, Ships, camera and HA UI actions follow the wall panel Wi-Fi connection independently of the heat controller's link. If Wi-Fi returns while the heat controller stays blocked, those external services can recover and refresh their own state; the heat controller can remain Offline or use authenticated ESP-NOW. Wi-Fi loss still stops broker reconnect attempts and prevents new HA/Ships/camera requests. Actual ESP-NOW activity is reported only with recent radio peer contact, rather than retaining the last successful transport indefinitely. No command freshness or actuation interlocks were relaxed.
+
+Passed host checks: five engine/protocol/network/retry tests, MQTT lifecycle and HA/Ships transport regressions, and the actual LVGL fixture with Wi-Fi recovery while the heat controller remains unavailable. The six changed controller/panel implementation objects compile with ESP-IDF 6.0.1 / Xtensa GCC 15.2 using the existing 4B/AtomS3 build configurations. This is not a complete firmware link or physical recovery verification.
+
+Update both boards. Test the panel block/unblock without a reboot, verify HA/Ships/MQTT recover, then separately block/unblock the controller and verify controller status returns without restarting either board. Keep the shared key and other saved settings; no NVS erase is required.

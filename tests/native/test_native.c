@@ -133,7 +133,9 @@ int main(void)
  test_fallback=true;test_wifi=false;refresh(NULL);
  assert(strstr(lv_label_get_text(connection),"ESPNOW"));assert(lv_obj_has_state(control[0][0],LV_STATE_DISABLED));
  int before_fallback=queue_count;click(control[0][0]);assert(before_fallback==queue_count);assert(!camera_current(model.generation));
- render("fallback.ppm");test_fallback=false;test_wifi=true;populate();refresh(NULL);
+ render("fallback.ppm");test_wifi=true;controller_missing=true;model.climate_at=0;populate();refresh(NULL);
+ assert(!lv_obj_has_state(control[0][0],LV_STATE_DISABLED)); /* HA recovers independently of controller. */
+ test_fallback=false;controller_missing=false;populate();refresh(NULL);
  room_display_probe_sample(65.2f);refresh(NULL);
  assert(!strcmp(lv_label_get_text(temp_label),"65.2 F"));assert(!strcmp(model.items[3].state,"Running")); /* Hidden long-dot labels are laid out when shown. */
  click(notify_button[0]);assert(room_audio_notify_enabled(3));assert(!room_audio_notify_enabled(4));

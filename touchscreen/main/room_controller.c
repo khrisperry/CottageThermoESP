@@ -31,7 +31,7 @@ void room_controller_start(void)
     }else tl_radio_start(NULL);
     ESP_ERROR_CHECK(xTaskCreate(sync_task,"controller_setup",6144,NULL,2,NULL)==pdPASS?ESP_OK:ESP_ERR_NO_MEM);
 }
-bool room_controller_fallback(void){return fallback;}
+bool room_controller_fallback(void){return fallback&&tl_radio_online();}
 bool room_controller_radio_ready(void){return tl_radio_configured();}
 bool room_controller_radio_online(void){return tl_radio_online();}
 static bool http(const tl_packet_t *p,tl_packet_t *out)

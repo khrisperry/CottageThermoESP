@@ -3,7 +3,6 @@
 #include "room_mqtt_discovery.h"
 #include "room_settings.h"
 #include "room_display.h"
-#include "room_controller.h"
 #include "wifi_setup.h"
 #include <stdatomic.h>
 #include <stdio.h>
@@ -22,15 +21,15 @@ static const cottage_integration_t *profile;
 static bool client_running;
 static unsigned retry_wait;
 static atomic_bool suspended;
-static bool network_allowed(void){return room_wifi_connected()&&!room_controller_fallback();}
+static bool network_allowed(void){return room_wifi_connected();}
 static esp_mqtt_client_handle_t mqtt;
 static atomic_bool connected,announce,subscribe_pending;
-static atomic_int stage,broker_error,socket_error; /* 0 disabled,1 WiFi,2 clock,3 connecting,4 online,5 error,6 radio fallback */
+static atomic_int stage,broker_error,socket_error; /* 0 disabled,1 WiFi,2 clock,3 connecting,4 online,5 error */
 static char identity[64],base[96],availability[112],birth[96],target_topic[112];
 static const char *description(void)
 {
     if(!profile||!profile->mqtt_enabled)return "Not configured";
-    switch(stage){case 6:return "Paused during ESP-NOW fallback";case 1:return "Waiting for Wi-Fi";case 2:return "Waiting for valid time";case 3:return "Connecting / reconnecting";case 4:return "Connected (thermostat climate)";case 5:return broker_error?"Broker rejected connection; check credentials":"Broker/TLS connection failed";default:return "Starting";}
+    switch(stage){case 1:return "Waiting for Wi-Fi";case 2:return "Waiting for valid time";case 3:return "Connecting / reconnecting";case 4:return "Connected (thermostat climate)";case 5:return broker_error?"Broker rejected connection; check credentials":"Broker/TLS connection failed";default:return "Starting";}
 }
 int room_mqtt_state(void){return !profile||!profile->mqtt_enabled?0:connected&&!suspended&&network_allowed()?2:1;}
 bool room_mqtt_reannounce(void){if(!connected||suspended||!network_allowed())return false;announce=true;return true;}
@@ -119,7 +118,7 @@ static void service_once(void)
             announce=false;subscribe_pending=false;
             ESP_LOGI("room_mqtt","MQTT paused; waiting for normal Wi-Fi operation");
         }
-        stage=!allowed?(room_controller_fallback()?6:1):2;
+        stage=!allowed?1:2;
         return;
     }
     suspended=false;

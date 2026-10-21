@@ -70,14 +70,14 @@ int main(void)
  washer_state="Running";ha_poll_once();
  unsupported=true;bad_temp=true;ha_poll_once();root=room_ha_status();assert(cJSON_GetArraySize(cJSON_GetObjectItem(item(root,2),"actions"))==0);assert(cJSON_IsFalse(cJSON_GetObjectItem(item(root,8),"available")));cJSON_Delete(root);unsupported=false;bad_temp=false;
  ha_poll_once();char frame[10];int code,n;assert(room_ha_camera(frame,sizeof(frame),&code,&n)==0&&code==200&&n==4);assert(frames==1);
- /* Fallback disables services/camera and invalidates cached HA state. Fresh
+ /* Wi-Fi loss disables services/camera and invalidates cached HA state. Fresh
   * reads are required after Wi-Fi recovery before controls re-enable. */
  test_fallback=true;test_wifi=false;before=posts;int before_frames=frames,before_gets=gets;
  root=room_ha_status();assert(cJSON_IsFalse(cJSON_GetObjectItem(root,"connected")));cJSON_Delete(root);
  cJSON *blocked=cJSON_Parse("{\"key\":\"deck\",\"action\":\"on\",\"request_id\":\"blocked-01\"}");
  root=room_ha_command(blocked,&code);assert(code==503&&posts==before);cJSON_Delete(root);cJSON_Delete(blocked);
  assert(room_ha_camera(frame,sizeof(frame),&code,&n)!=ESP_OK&&frames==before_frames);
- ha_poll_once();assert(gets==before_gets);test_fallback=false;test_wifi=true;
+ ha_poll_once();assert(gets==before_gets);test_wifi=true; /* Services recover even while the controller remains on radio. */
  root=room_ha_status();assert(cJSON_IsFalse(cJSON_GetObjectItem(root,"connected")));cJSON_Delete(root);
  ha_poll_once();root=room_ha_status();assert(cJSON_IsTrue(cJSON_GetObjectItem(root,"connected")));cJSON_Delete(root);
  fake_time+=31000000;root=room_ha_status();assert(cJSON_IsFalse(cJSON_GetObjectItem(root,"connected")));cJSON_Delete(root);

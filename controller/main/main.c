@@ -29,6 +29,7 @@
 #include "controller_integrations.h"
 #include <stdatomic.h>
 #include "network_profile.h"
+#include "controller_wifi_retry.h"
 
 static const char *TAG="thermostat";
 #ifdef CONFIG_THERMO_LIVE_BENCH
@@ -200,7 +201,7 @@ static esp_err_t get_api(httpd_req_t *r)
         }
     } else {
         j=cJSON_CreateObject();
-        cJSON_AddStringToObject(j,"version","0.5.1");
+        cJSON_AddStringToObject(j,"version","0.5.2");
         cJSON_AddBoolToObject(j,"simulation",state.simulated);
         cJSON_AddBoolToObject(j,"bench_armed",armed);
         cJSON_AddNumberToObject(j,"arm_remaining_ms",armed && armed_until>now_ms()?armed_until-now_ms():0);
@@ -468,10 +469,17 @@ static void reconnect_task(void *arg)
         uint32_t now=(uint32_t)now_ms();
         if(!station_up){
             if(!station_connecting)tl_radio_search_tick();
-            if(station_connecting&&(uint32_t)(now-connect_at)>(tl_radio_configured()?5000U:15000U))esp_wifi_disconnect();
-            if(!station_connecting&&*network.ssid&&(int32_t)(now-reconnect_at)>=0){
-                station_connecting=true;connect_at=now;
-                if(esp_wifi_connect()!=ESP_OK){station_connecting=false;reconnect_at=now+2000;}
+            controller_wifi_retry_t retry={.connecting=station_connecting,.started=connect_at,.due=reconnect_at};
+            controller_wifi_action_t action=controller_wifi_retry_tick(&retry,now,tl_radio_configured());
+            if(action!=CONTROLLER_WIFI_WAIT&&!station_up){
+                station_connecting=retry.connecting;connect_at=retry.started;reconnect_at=retry.due;
+                if(action==CONTROLLER_WIFI_ABORT){
+                    esp_err_t err=esp_wifi_disconnect();
+                    ESP_LOGW(TAG,"Controller Wi-Fi attempt timed out; retry scheduled (disconnect=%d)",(int)err);
+                }else if(*network.ssid){
+                    ESP_LOGI(TAG,"Controller Wi-Fi reconnect attempt");
+                    if(esp_wifi_connect()!=ESP_OK){station_connecting=false;reconnect_at=now+(tl_radio_configured()?20000:2000);}
+                }else station_connecting=false;
             }
         }
         vTaskDelay(pdMS_TO_TICKS(250));

@@ -1,4 +1,4 @@
-# Controller v0.5.1 — thermostat development and servo bench
+# Controller v0.5.2 — thermostat development and servo bench
 
 ESP-IDF **6.0.1**, ESP32-S3, M5Stack AtomS3 Lite (8 MB flash), servo signal **G38/GPIO38**. Build defaults simulate automatic thermostat movement. No measurements or placeholder calibration map are installed.
 

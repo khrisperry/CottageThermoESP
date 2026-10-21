@@ -85,7 +85,7 @@ static bool healthy(bool feed)
 {
     if(!lock)return false;
     xSemaphoreTake(lock,portMAX_DELAY);bool ok=model.service&&(!feed||model.feed)&&model.received_at&&esp_timer_get_time()-model.received_at<SHIP_FRESH_US;xSemaphoreGive(lock);
-    return room_settings_ships_enabled()&&room_wifi_connected()&&!room_controller_fallback()&&ok;
+    return room_settings_ships_enabled()&&room_wifi_connected()&&ok;
 }
 bool room_ships_online(void){return healthy(true);}
 bool room_ships_service_online(void){return healthy(false);}
@@ -94,7 +94,7 @@ void room_ships_snapshot(room_ships_t *out)
 {
     if(!lock){memset(out,0,sizeof(*out));return;}
     xSemaphoreTake(lock,portMAX_DELAY);*out=model;xSemaphoreGive(lock);
-    if(!room_wifi_connected()||room_controller_fallback()||!out->received_at||esp_timer_get_time()-out->received_at>=SHIP_FRESH_US)out->service=false;
+    if(!room_wifi_connected()||!out->received_at||esp_timer_get_time()-out->received_at>=SHIP_FRESH_US)out->service=false;
 }
 void *room_ships_take_map(double bounds[4])
 {
@@ -113,7 +113,7 @@ static void task(void *arg)
         int64_t now=esp_timer_get_time();bool showing=active;
         if(showing&&!was_active)next_poll=0;
         was_active=showing;
-        bool allowed=room_settings_ships_enabled()&&room_wifi_connected()&&!room_controller_fallback()&&!room_ota_busy();
+        bool allowed=room_settings_ships_enabled()&&room_wifi_connected()&&!room_ota_busy();
         if(!strncmp(room_settings_ship_url(),"https://",8)&&time(NULL)<1767225600)allowed=false;
         if(allowed&&now>=next_poll){
             char path[96];snprintf(path,sizeof(path),"/api/v1/snapshot?range_miles=%u&limit=12",room_settings_ship_range());
@@ -139,7 +139,7 @@ static void map_task(void *arg)
     int64_t next_map=0;bool map_loaded=false;
     for(;;){
         int64_t now=esp_timer_get_time();bool showing=active;
-        bool allowed=room_settings_ships_enabled()&&room_wifi_connected()&&!room_controller_fallback()&&!room_ota_busy();
+        bool allowed=room_settings_ships_enabled()&&room_wifi_connected()&&!room_ota_busy();
         if(!strncmp(room_settings_ship_url(),"https://",8)&&time(NULL)<1767225600)allowed=false;
         if(allowed&&showing&&!map_loaded&&now>=next_map){
             const size_t cap=40+456*400*2;uint8_t *map=heap_caps_malloc(cap,MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT);

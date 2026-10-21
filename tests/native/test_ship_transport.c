@@ -67,7 +67,7 @@ int main(int argc,char **argv){
  assert(fetch("/api/v1/map.rgb565?range_miles=30&encoding=raw",body,sizeof(body),&n,&elapsed,&code,&error)&&inits==before);
  model.service=true;model.feed=true;model.received_at=clock_us;assert(room_ships_service_online()&&room_ships_online());
  model.feed=false;assert(room_ships_service_online()&&!room_ships_online()); /* Service reachable, feed down. */
- model.feed=true;radio=true;assert(!room_ships_online());radio=false;wifi=false;assert(!room_ships_service_online());wifi=true;
+ model.feed=true;radio=true;assert(room_ships_online());wifi=false;assert(!room_ships_service_online());wifi=true;
  clock_us+=SHIP_FRESH_US;assert(!room_ships_service_online());room_ships_t snapshot;room_ships_snapshot(&snapshot);assert(!snapshot.service);
  if(http_client)esp_http_client_cleanup(http_client);
  if(map_http_client)esp_http_client_cleanup(map_http_client);
