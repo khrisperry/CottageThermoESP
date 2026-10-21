@@ -59,3 +59,11 @@ Three engine/protocol/network-profile tests and seventeen native service tests p
 The native LVGL page-rendering fixture was not run in this checkout because the JPEG managed dependency was unavailable; the other seventeen native service tests passed. These are host checks, not an ESP-IDF firmware build or physical radio verification. Build/flash both projects locally with the commands above.
 
 Controller 0.5.1 / room panel 0.13.1 removes local access-token requirements and controller-token configuration. Focused transport, settings and keepalive tests pass without local credentials, and the embedded page scripts pass syntax checks. Existing NVS profiles retain their layout; no erase-flash is needed.
+
+## Panel 0.13.2 — intermittent controller status
+
+Controller HTTP polling now reuses a serialized persistent connection, with controller URL/error/HTTP status in failure logs. A failed HTTP connection is discarded for the next request; mutations are never automatically replayed. The panel retains only its last acknowledged climate snapshot until the existing ten-second display expiry. Missed polls do not update that timestamp or extend the separate controller command lease. ESP-NOW reply age is measured from the start of its own exchange, excluding time spent on a failed HTTP probe.
+
+Host checks pass against the actual LVGL display source, transport implementation and room controller code: a missed poll retains status briefly, continued failure expires it, recovery restores it, ten local POSTs reuse one connection, a failed POST is not replayed, a fresh radio reply after a slow HTTP failure is accepted, and an excessively delayed radio reply is rejected. This does not establish radio range or hardware handover timing. Update only the panel to 0.13.2 using the build/flash command above.
+
+If the boards connect to different AP channels, ESP-NOW cannot exchange while both remain associated on those channels. For the first bench test connect both through the same 2.4 GHz AP. `Encrypted paired ESP-NOW ready` confirms initialization, not a successful peer acknowledgement.

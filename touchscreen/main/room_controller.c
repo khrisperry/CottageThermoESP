@@ -14,6 +14,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 static SemaphoreHandle_t io;
+static room_http_session_t *http_session;
 static uint64_t client,sequence;
 static tl_packet_t latest;
 static int64_t received_at;
@@ -38,8 +39,12 @@ static bool http(const tl_packet_t *p,tl_packet_t *out)
     if(!room_wifi_connected())return false;
     char hex[sizeof(*p)*2+1],body[sizeof(*p)*2+20],response[512];int status=0,length=0;
     tl_hex(p,hex);snprintf(body,sizeof(body),"{\"packet\":\"%s\"}",hex);
-    if(room_http(room_settings_controller_url(),NULL,NULL,
-       "/api/link",body,response,sizeof(response),1800,&status,&length)!=ESP_OK||status!=200)return false;
+    esp_err_t err=room_http_keepalive(&http_session,room_settings_controller_url(),NULL,NULL,
+       "/api/link",body,response,sizeof(response),1800,&status,&length);
+    if(err!=ESP_OK||status!=200){
+        ESP_LOGW("controller_link","Controller %s/api/link: error=%d HTTP=%d",room_settings_controller_url(),(int)err,status);
+        return false;
+    }
     cJSON *j=cJSON_Parse(response),*v=cJSON_GetObjectItemCaseSensitive(j,"packet");
     bool ok=cJSON_IsString(v)&&tl_unhex(v->valuestring,out);cJSON_Delete(j);return ok;
 }
@@ -49,13 +54,22 @@ static bool matching(const tl_packet_t *p,const tl_packet_t *r)
  * never repeated. A later status read synchronizes authoritative state. */
 static bool exchange(tl_packet_t p,tl_packet_t *r,bool probe)
 {
-    int64_t start=esp_timer_get_time();bool ok=false;
+    int64_t start=esp_timer_get_time();bool ok=false,via_radio=fallback;
     if(probe){
-        if(http(&p,r)&&matching(&p,r)&&r->result==TL_OK){if(fallback)ESP_LOGI("controller_link","Wi-Fi controller link restored");fallback=false;ok=true;}
-        else if(tl_radio_exchange(&p,r)==ESP_OK&&matching(&p,r)&&r->result==TL_OK){if(!fallback)ESP_LOGW("controller_link","Controller link switched to ESP-NOW");fallback=true;ok=true;}
+        if(http(&p,r)&&matching(&p,r)&&r->result==TL_OK){via_radio=false;ok=true;}
+        else {
+            start=esp_timer_get_time();
+            if(tl_radio_exchange(&p,r)==ESP_OK&&matching(&p,r)&&r->result==TL_OK){via_radio=true;ok=true;}
+        }
     }else ok=fallback?(tl_radio_exchange(&p,r)==ESP_OK&&matching(&p,r)):(http(&p,r)&&matching(&p,r));
-    if(ok&&esp_timer_get_time()-start<3000000){latest=*r;received_at=esp_timer_get_time();}
-    else if(probe){received_at=0;/* Keep HA disabled until a Wi-Fi controller status succeeds. */}
+    if(ok&&esp_timer_get_time()-start<3000000){
+        if(probe&&via_radio!=fallback){
+            if(via_radio)ESP_LOGW("controller_link","Controller link switched to ESP-NOW");
+            else ESP_LOGI("controller_link","Wi-Fi controller link restored");
+        }
+        if(probe)fallback=via_radio;
+        latest=*r;received_at=esp_timer_get_time();
+    }else {ok=false;if(probe)received_at=0;/* UI history never extends a command lease. */}
     return ok;
 }
 static cJSON *status_json(const tl_packet_t *r)

@@ -130,6 +130,10 @@ static void poll_ha(void)
 static void poll_climate(void)
 {
     int code;cJSON *j=json_request(false,"/api/status",NULL,&code);float t=0,target=0;
+    /* Preserve the last acknowledged snapshot through a missed poll. Its
+     * original timestamp still expires at FRESH_US; never renew it on failure.
+     * room_controller independently requires a fresh lease before commands. */
+    if(!j)return;
     bool ht=number(j,"temperature_f",&t),hs=number(j,"target_f",&target)&&target>=45&&target<=80;
     xSemaphoreTake(mutex,portMAX_DELAY);
     model.climate_ok=j!=NULL;model.climate_at=j?esp_timer_get_time():0;

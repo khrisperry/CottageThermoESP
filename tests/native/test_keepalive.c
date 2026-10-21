@@ -113,6 +113,14 @@ int main(void)
     assert(room_http("http://controller.test",NULL,NULL,"/api/link",NULL,out,sizeof(out),1000,&code,&n)==ESP_FAIL);
     assert(inits==before+1&&streaming_calls==1&&auth_headers==prior_headers);
     assert(room_http("http://controller.test","Authorization",NULL,"/api/link",NULL,out,sizeof(out),1000,&code,&n)==ESP_ERR_INVALID_ARG);
+    room_http_session_t *local=NULL;clock_value=0;status_next=200;before=inits;
+    for(int k=0;k<10;++k)assert(room_http_keepalive(&local,"http://controller.test",NULL,NULL,"/api/link","{}",out,sizeof(out),1800,&code,&n)==ESP_OK);
+    assert(inits==before+1&&auth_headers==prior_headers&&code==200&&n==2);
+    fail_next=1;before=attempts;
+    assert(room_http_keepalive(&local,"http://controller.test",NULL,NULL,"/api/link","{}",out,sizeof(out),1800,&code,&n)==ESP_FAIL);
+    assert(attempts==before+1&&local->client==NULL); /* No mutation replay. */
+    assert(room_http_keepalive(&local,"http://controller.test",NULL,NULL,"/api/link","{}",out,sizeof(out),1800,&code,&n)==ESP_OK);
+    assert(auth_headers==prior_headers);esp_http_client_cleanup(local->client);free(local);
     puts("PASS: token-free local requests, persistent session reuse, POST/GET reset, bounded reads, failure cleanup, no POST replay, redirects/auth and origin/time guards");
     return 0;
 }

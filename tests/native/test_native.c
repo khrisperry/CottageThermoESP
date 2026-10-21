@@ -7,7 +7,7 @@
 static int64_t now=1000000;
 static int posts=0,queue_count=0;
 static char last_path[80],last_post[256];
-static bool unknown=false,test_wifi=true,test_fallback=false;
+static bool unknown=false,test_wifi=true,test_fallback=false,controller_missing=false;
 static bool ship_showing,test_ships_populated,test_ship_map_pending;
 static unsigned test_notify_mask,test_volume=100;
 #include "../../touchscreen/main/room_display.c"
@@ -76,7 +76,7 @@ esp_err_t room_http(const char *origin,const char *header,const char *token,cons
  else body="{\"temperature_f\":65.2,\"target_f\":67,\"simulation\":true,\"mode\":\"hold\",\"reason\":\"simulation\"}";
  *length=snprintf(out,cap,"%s",body);*status=200;return 0;
 }
-cJSON *room_controller_status(void){char buffer[1024];int code,n;room_http("http://controller.test","X-Thermo-Token","test","/api/status",NULL,buffer,sizeof(buffer),1000,&code,&n);return cJSON_Parse(buffer);}
+cJSON *room_controller_status(void){if(controller_missing)return NULL;char buffer[1024];int code,n;room_http("http://controller.test","X-Thermo-Token","test","/api/status",NULL,buffer,sizeof(buffer),1000,&code,&n);return cJSON_Parse(buffer);}
 cJSON *room_controller_target(float target,int *code){char buffer[1024],post[80];int n;snprintf(post,sizeof(post),"{\"target_f\":%.1f}",target);room_http("http://controller.test","X-Thermo-Token","test","/api/config",post,buffer,sizeof(buffer),1000,code,&n);return cJSON_Parse(buffer);}
 cJSON *room_ha_status(void){return cJSON_Parse(ha_json);}
 cJSON *room_ha_command(cJSON *p,int *code){char *post=cJSON_PrintUnformatted(p),buffer[256];int length;room_http("http://ha.test","Authorization","Bearer test","/api/ha/command",post,buffer,sizeof(buffer),1000,code,&length);free(post);return cJSON_Parse(buffer);}
@@ -107,6 +107,12 @@ static void populate(void)
 }
 int main(void)
 {
+ /* A missed poll preserves the real timestamp, expires after ten seconds,
+  * and cannot keep renewing an offline controller's availability. */
+ poll_climate();int64_t acknowledged=model.climate_at;float confirmed_target=model.target;
+ controller_missing=true;now+=2000000;poll_climate();assert(model.climate_at==acknowledged&&model.target==confirmed_target&&current(model.climate_at));
+ now+=9000000;poll_climate();assert(model.climate_at==acknowledged&&!current(model.climate_at));
+ controller_missing=false;poll_climate();assert(current(model.climate_at));now=1000000;
  lv_init();lv_display_t *d=lv_display_create(480,480);lv_display_set_color_format(d,LV_COLOR_FORMAT_RGB888);lv_display_set_buffers(d,draw_pixels,NULL,sizeof(draw_pixels),LV_DISPLAY_RENDER_MODE_PARTIAL);lv_display_set_flush_cb(d,flush);
  lv_indev_t *input=lv_indev_create();lv_indev_set_type(input,LV_INDEV_TYPE_POINTER);lv_indev_set_read_cb(input,pointer_read);lv_indev_set_display(input,d);
  room_display_start();

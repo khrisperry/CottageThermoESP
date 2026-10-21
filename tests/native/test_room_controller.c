@@ -5,6 +5,7 @@
 static int64_t clock_us=1000000;
 static bool wifi=true,http_up=true,radio_up=true,drop_reply=false,reject_status=false;
 static int http_calls,radio_calls,applications;
+static int64_t http_delay,radio_delay;
 static tl_guard_t guard;
 static uint64_t server_boot=123;
 static float server_target=65;
@@ -34,17 +35,19 @@ static void server(const tl_packet_t *p,tl_packet_t *r)
 }
 esp_err_t tl_radio_exchange(const tl_packet_t *p,tl_packet_t *r)
 {
-    ++radio_calls;if(!radio_up)return ESP_FAIL;server(p,r);return drop_reply&&p->operation!=TL_STATUS?ESP_FAIL:ESP_OK;
+    ++radio_calls;clock_us+=radio_delay;if(!radio_up)return ESP_FAIL;server(p,r);return drop_reply&&p->operation!=TL_STATUS?ESP_FAIL:ESP_OK;
 }
 esp_err_t room_http(const char *origin,const char *header,const char *token,const char *path,const char *post,void *out,size_t cap,int timeout,int *status,int *len)
 {
     assert(header==NULL&&token==NULL);
-    ++http_calls;if(!http_up)return ESP_FAIL;
+    ++http_calls;clock_us+=http_delay;if(!http_up)return ESP_FAIL;
     assert(!strcmp(path,"/api/link"));cJSON *j=cJSON_Parse(post),*v=cJSON_GetObjectItemCaseSensitive(j,"packet");tl_packet_t p,r;
     assert(tl_unhex(v->valuestring,&p));cJSON_Delete(j);server(&p,&r);
     if(drop_reply&&p.operation!=TL_STATUS)return ESP_FAIL;
     char hex[sizeof(r)*2+1];tl_hex(&r,hex);*len=snprintf(out,cap,"{\"packet\":\"%s\"}",hex);*status=200;return ESP_OK;
 }
+esp_err_t room_http_keepalive(room_http_session_t **session,const char *origin,const char *header,const char *token,const char *path,const char *post,void *out,size_t cap,int timeout,int *status,int *len)
+{return room_http(origin,header,token,path,post,out,cap,timeout,status,len);}
 int main(void)
 {
     room_controller_start();cJSON *j=room_controller_status();assert(j&&!room_controller_fallback());cJSON_Delete(j);
@@ -66,5 +69,9 @@ int main(void)
     j=room_controller_target(70,&status);assert(!j&&applications==3);
     http_up=true;wifi=true;j=room_controller_status();assert(j&&!room_controller_fallback());cJSON_Delete(j);
     assert(room_controller_sample(66));assert(applications==4);
+    http_up=false;radio_up=true;http_delay=2900000;radio_delay=300000;
+    j=room_controller_status();assert(j&&room_controller_fallback()&&fresh());cJSON_Delete(j);
+    radio_delay=3100000;j=room_controller_status();assert(!j&&!fresh());
+    http_up=true;http_delay=radio_delay=0;j=room_controller_status();assert(j&&!room_controller_fallback());cJSON_Delete(j);
     puts("PASS: Wi-Fi/ESP-NOW selection, ambiguous no-retry, restart, hour outage and Wi-Fi recovery");
 }
