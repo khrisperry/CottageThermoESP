@@ -1,10 +1,10 @@
-# Controller v0.4.0 — thermostat development and servo bench
+# Controller v0.4.1 — thermostat development and servo bench
 
 ESP-IDF **6.0.1**, ESP32-S3, M5Stack AtomS3 Lite (8 MB flash), servo signal **G38/GPIO38**. Build defaults simulate automatic thermostat movement. No measurements or placeholder calibration map are installed.
 
-v0.3.0 adds a shared validated room HTTP/ESP-NOW endpoint and optional MQTT climate discovery. Bench output interlocks, simulation default and explicit arming/synchronization are retained. See [connectivity review/setup](../docs/CONNECTIVITY_REVIEW.md) for pairing, broker configuration and required physical checks. A blank broker URL and disabled ESP-NOW preserve the ordinary bench setup.
+v0.4.1 keeps thermostat/servo decisions on this standalone controller and removes its MQTT client and command handlers. The room panel supplies local temperature reports and setpoint requests over the paired HTTP/ESP-NOW link. Home Assistant only monitors the display's read-only MQTT sensors; it cannot change controller setpoint, mode or servo output. Neither HA nor a broker is required for the thermostat engine. See [standalone MQTT monitoring](../docs/STANDALONE_MQTT_MONITORING.md).
 
-v0.4.0 adds persisted paired MQTT/radio configuration from the display webpage and a 2 MiB app partition. Use the root build helper once to migrate existing sdkconfig without erasing settings. See [dashboard and integration setup](../docs/DEVICE_DASHBOARD_SHIPS_OTA.md). Configuration changes restart in Hold with bench output released. Controller firmware updates still use USB.
+Paired radio configuration from the display webpage and the 2 MiB app partition remain. Configuration changes restart in Hold with bench output released. Controller firmware updates still use USB. Bench output interlocks, simulation default and explicit arming/synchronization are retained.
 
 ## Build on Windows
 
@@ -61,6 +61,6 @@ Do not supply motor current from a GPIO/3.3 V pin. Stop PWM is not a brake or gu
 
 `idf.py menuconfig` → Cottage thermostat → **Enable physical output from thermostat engine**. Default OFF. Rebuild/flash, enter the measured bench map, explicitly arm and synchronize the observed current position. This enables bounded **attended inert-fixture** movement; it still has no encoder, stall detection or verified appliance coupling. Arming expires after **15 minutes**, disables PWM and clears synchronization. Reboot starts PWM off regardless of saved mode/target.
 
-Hardware-dependent gates remain actual travel/endpoints/torque, coupling, independent angle feedback, board wiring and installation validation. MQTT Discovery, OTA/rollback, active learning, weather/occupancy context and ETA preheat are future modules; they are not hidden behind dummy responses.
+Hardware-dependent gates remain actual travel/endpoints/torque, coupling, independent angle feedback, board wiring and installation validation. Controller OTA/rollback, active learning and weather/occupancy context remain future work. MQTT monitoring belongs to the wall display.
 
 For the exact API see [../docs/API.md](../docs/API.md); for pre-visit steps see [../docs/LOCAL_VALIDATION.md](../docs/LOCAL_VALIDATION.md).

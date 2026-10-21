@@ -61,6 +61,5 @@ int main(void)
     j=room_controller_target(70,&status);assert(!j&&applications==3);
     http_up=true;wifi=true;j=room_controller_status();assert(j&&!room_controller_fallback());cJSON_Delete(j);
     assert(room_controller_sample(66));assert(applications==4);
-    mqtt_state=2;mqtt_at=clock_us/1000;assert(room_controller_mqtt_state()==2);clock_us+=11000000;assert(room_controller_mqtt_state()==1);
     puts("PASS: Wi-Fi/ESP-NOW selection, ambiguous no-retry, restart, hour outage and Wi-Fi recovery");
 }

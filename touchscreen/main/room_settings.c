@@ -7,6 +7,7 @@
 #include "room_display.h"
 #include "room_controller.h"
 #include "room_ota.h"
+#include "room_mqtt.h"
 #include "sdkconfig.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -176,7 +177,7 @@ static esp_err_t save(httpd_req_t *r)
         cJSON *ssid=cJSON_GetObjectItemCaseSensitive(j,"ssid"),*pw=cJSON_GetObjectItemCaseSensitive(j,"password"),*open=cJSON_GetObjectItemCaseSensitive(j,"open");
         valid=cJSON_IsString(ssid)&&cJSON_IsString(pw)&&cJSON_IsBool(open)&&room_wifi_submit(ssid->valuestring,pw->valuestring,cJSON_IsTrue(open));restart=false;
     }else if(!strcmp(section,"mqtt_test")){
-        cJSON *status=room_controller_status();valid=status!=NULL;cJSON_Delete(status);restart=false;
+        valid=room_mqtt_reannounce();restart=false;
     }
     cJSON_Delete(j);
     if(!valid){memset(next,0,sizeof(*next));free(next);return reply(r,400,"Settings invalid or device busy. Check the fields; no configuration was saved.");}
@@ -185,14 +186,13 @@ static esp_err_t save(httpd_req_t *r)
         if(err==ESP_OK){err=nvs_set_blob(nvs,"profile",next,sizeof(*next));if(err==ESP_OK)err=nvs_commit(nvs);nvs_close(nvs);}
         memset(next,0,sizeof(*next));free(next);
         if(err!=ESP_OK)return reply(r,500,"Could not save. Previous settings remain active.");
-        bool scheduled=room_settings_reboot_later();return reply(r,200,scheduled?"Saved. Display restarting. Integration settings will be applied when the controller is reachable; its restart clears bench arming.":"Saved. Restart the display manually to apply settings.");
+        bool scheduled=room_settings_reboot_later();return reply(r,200,scheduled?"Saved. Display restarting. MQTT monitoring connects directly from this display; radio pairing syncs separately.":"Saved. Restart the display manually to apply settings.");
     }
     memset(next,0,sizeof(*next));free(next);return reply(r,200,"Request accepted. Live status reflects the result.");
 }
 cJSON *room_settings_controller_integrations(void)
 {
     cJSON *j=cJSON_CreateObject();const cottage_integration_t *p=&current.integrations;
-    if(current.mqtt_managed){cJSON *m=cJSON_AddObjectToObject(j,"mqtt");cJSON_AddBoolToObject(m,"enabled",p->mqtt_enabled);cJSON_AddStringToObject(m,"broker",p->broker);cJSON_AddStringToObject(m,"username",p->username);if(current.mqtt_password_known){cJSON_AddStringToObject(m,"password",p->password);cJSON_AddBoolToObject(m,"clear_password",current.mqtt_clear_password);}cJSON_AddStringToObject(m,"prefix",p->prefix);cJSON_AddStringToObject(m,"name",p->name);}
     if(current.radio_managed){
         uint8_t mac[6];char peer[18];esp_wifi_get_mac(WIFI_IF_STA,mac);
         snprintf(peer,sizeof(peer),"%02X:%02X:%02X:%02X:%02X:%02X",mac[0],mac[1],mac[2],mac[3],mac[4],mac[5]);

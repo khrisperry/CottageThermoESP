@@ -17,9 +17,7 @@ static uint64_t client,sequence;
 static tl_packet_t latest;
 static int64_t received_at;
 static atomic_bool fallback;
-static atomic_int mqtt_state,sync_state;
-/* 32-bit milliseconds avoid non-lock-free 64-bit atomics on Xtensa. */
-static atomic_uint mqtt_at;
+static atomic_int sync_state;
 static void sync_task(void *arg);
 static bool fresh(void){return received_at&&esp_timer_get_time()-received_at<4000000;}
 void room_controller_start(void)
@@ -55,7 +53,7 @@ static bool exchange(tl_packet_t p,tl_packet_t *r,bool probe)
         if(http(&p,r)&&matching(&p,r)){fallback=false;ok=true;}
         else if(tl_radio_exchange(&p,r)==ESP_OK&&matching(&p,r)){fallback=true;ok=true;}
     }else ok=fallback?(tl_radio_exchange(&p,r)==ESP_OK&&matching(&p,r)):(http(&p,r)&&matching(&p,r));
-    if(ok&&esp_timer_get_time()-start<3000000){latest=*r;received_at=esp_timer_get_time();mqtt_state=(r->flags&TL_MQTT_ONLINE)?2:(r->flags&TL_MQTT_CONFIGURED)?1:0;mqtt_at=(uint32_t)(received_at/1000);}
+    if(ok&&esp_timer_get_time()-start<3000000){latest=*r;received_at=esp_timer_get_time();}
     else if(probe){received_at=0;/* Keep HA disabled until a Wi-Fi controller status succeeds. */}
     return ok;
 }
@@ -100,12 +98,6 @@ cJSON *room_controller_target(float target,int *code)
 bool room_controller_sample(float temperature)
 {int code;return mutation(TL_SAMPLE,temperature,&code);}
 
-int room_controller_mqtt_state(void){
-    int state=mqtt_state;uint32_t at=mqtt_at;
-    if(state==2&&(!at||(uint32_t)((uint32_t)(esp_timer_get_time()/1000)-at)>10000))state=1;
-    if(!state&&room_settings_integrations()->mqtt_enabled)state=1;
-    return state;
-}
 const char *room_controller_sync_state(void){return sync_state==2?"Applied":sync_state==1?"Pending controller":"Not managed";}
 static void sync_task(void *arg)
 {

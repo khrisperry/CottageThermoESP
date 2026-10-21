@@ -7,7 +7,7 @@
 - Williams direct-vent furnace model **1773512** with knob levels **0–6**; travel estimated ~120° pending calipers.
 - **TS90MD servo first**; MG995 exists but is bulkier. Direct 1:1 coaxial drive using correct shaft-matching spline horn; **no intermediate gears**. Friction-fit cap and detachable rigid servo bracket, mechanical manual override.
 - Do not implement backup battery now. After power loss, existing mechanical knob setting should be unchanged and controller must not drive toward OFF on boot. Hardware retention and servo twitch must be tested, not assumed.
-- Independent stand-alone firmware with optional Home Assistant climate/MQTT. Planned production display: Waveshare ESP32-S3-Touch-LCD-4B (480×480, 16 MB flash, 8 MB PSRAM), with a remotely mounted room temperature sensor; permanent sensor choice remains open.
+- Independent stand-alone firmware with optional read-only Home Assistant/MQTT monitoring. Planned production display: Waveshare ESP32-S3-Touch-LCD-4B (480×480, 16 MB flash, 8 MB PSRAM), with a remotely mounted room temperature sensor; permanent sensor choice remains open.
 - Normal control temps **only** from touchscreen thermostat probe (primary) and existing SwitchBot Hub 3 temperature via HA Matter (secondary, intermittently flaky). If neither valid, no adaptive movement; retain verified last setting and provide independent freeze alarm.
 - Cottage Kids sensor measures room with independently controlled radiator, **not** a normal Williams controller input. Can be learning-only context in confirmed unoccupied/door-open periods. Keg sensor is inside kegerator, **never use**.
 - HA existing furnace vibration sensor reports detected vibration, heater runtime/ratio and battery (25% in last screenshot); valuable imperfect heating signal. Met.no HA outdoor weather provides ambient temp/forecasts; future outdoor probe optional.
@@ -45,7 +45,7 @@
 - [ ] Obtain exact HA entity IDs and check sensor freshness/history.
 - [ ] Validate actual unoccupied/occupied HA status before enabling any learning/calibration actions.
 
-## Planned follow-ups — Wi-Fi fallback and HA climate discovery
+## Planned follow-ups — Wi-Fi fallback and HA monitoring
 
 These requirements were originally deferred after v0.9.4. The user authorized implementation for review on 2026-10-21. Software is now on `feature/connectivity-climate-review`; see CONNECTIVITY_REVIEW.md. Unchecked items below remain the end-to-end hardware acceptance checklist, rather than a claim that the software is absent.
 
@@ -55,8 +55,8 @@ These requirements were originally deferred after v0.9.4. The user authorized im
 - [ ] **Unified header status indicator and diagnostics.** Replace the separate HA Online/Heat Offline labels with a compact tappable status indicator. Required states: Online (green), HA Offline (yellow), Heat Offline (yellow), ESPNOW (orange), Offline/local-only (red), and Ship Tracking Offline (color to finalize; yellow suggested). Consider a dark red screen background for fully offline operation while preserving readable local temperature and controls. Tapping the indicator opens a settings/debug view with individual Wi-Fi, HA, controller, ESP-NOW, ship-tracking and local-sensor health, so multiple simultaneous failures remain visible. Finalize priority/aggregation of simultaneous faults when designing this feature; a highest-priority pill with an additional-fault count is a proposal. Unimplemented/unconfigured services must be identified truthfully rather than reported as connected or failed.
 - [ ] **Gear-only Settings button.** Keep the top-right settings action but remove the word Settings and use a gear icon. Implemented in the review branch; physical UI review remains pending.
 - [ ] **Automatic recovery.** Continue checking for Wi-Fi recovery, confirm the controller link is healthy, synchronize current state and return to Wi-Fi. Re-enable HA features only after their connection and data are fresh. Use shared command IDs, acknowledgements and expiration across transports so an old or duplicate command is not applied during handover.
-- [ ] **Discoverable Home Assistant climate entity.** Expose the complete thermostat as one HA climate device/entity so HA can show local room temperature/current target and change the target through the same controller validation as the touchscreen. Publish supported operating/action state and availability, use a stable identity and avoid duplicate entities after restarts or rediscovery. MQTT Discovery is the existing planned integration; confirm implementation details when this item starts. The controller remains authoritative for targets, actuation limits and supported modes; do not expose raw servo control through ordinary climate commands.
-- [ ] **Validation before enabling fallback.** Test an hour-long Wi-Fi outage and automatic recovery, one-sided connectivity loss, restart during fallback, duplicate/expired commands, stale local readings, HA UI disable/re-enable and HA climate discovery/control/availability.
+- [ ] **Read-only Home Assistant monitoring (current decision).** Display 0.12.0 owns MQTT and discovers room temperature, reported target and controller connectivity sensors. HA has no command topics or climate control. Controller 0.4.1 removes its MQTT client/commands. Thermostat operation stays independent of HA/broker. Software tests pass; verify discovery and connectivity on hardware. See [standalone MQTT monitoring](STANDALONE_MQTT_MONITORING.md).
+- [ ] **Validation before enabling fallback.** Test an hour-long Wi-Fi outage and automatic recovery, one-sided connectivity loss, restart during fallback, duplicate/expired commands, stale local readings, HA UI disable/re-enable and read-only HA discovery/availability and standalone operation without HA/MQTT.
 
 ## End-of-session handoff template
 
@@ -67,7 +67,7 @@ Update this file with: date, branch/commit SHA, hardware board and wiring, firmw
 - v0.2.0: shared thermostat engine, paired controller web/API, NVS settings/maps/schedules, simulation default, conservative bench output interlocks, separate simulation/live stores, source freshness, weekly Detroit schedule, events and six-hour RAM sample export.
 - Buildable ESP32-S3 room client with browser UI and SHT31/SHT4x driver. Physical LCD/touch adapter remains pending exact board and wiring.
 - Shaft coupon **102** confirmed perfect fit by user; available torque, real knob travel and coupling remain next-weekend tests.
-- No active exploration, encoder truth, MQTT Discovery, OTA rollback or predictive/preheat behavior is claimed. See LOCAL_VALIDATION.md for current implementation and remaining work.
+- No active exploration, encoder truth, OTA rollback or predictive/preheat behavior is claimed. MQTT monitoring is implemented for review; physical broker validation remains. See LOCAL_VALIDATION.md for current implementation and remaining work.
 
 ## 2026-10-20 Home Assistant milestone
 
@@ -120,3 +120,7 @@ Update this file with: date, branch/commit SHA, hardware board and wiring, firmw
 - Sixteen host tests pass, including real LVGL interaction, packet/expiry/replay, unknown outcome, simulated hour outage, HA cache recovery and discovery payload checks. This is separate from real radio/MQTT/appliance verification.
 - Ship tracking is not configured or implemented; diagnostics says so. The future configured-service failure state is represented in status aggregation without inventing a live connection.
 - Next: review CONNECTIVITY_REVIEW.md, flash the panel on COM14, then update/pair the controller before physical fallback tests. Keep permanent sensor and mechanical proof on the acceptance list. Firmware does not claim encoder position, burner telemetry or physical Off.
+
+## Current architecture revision — 2026-10-21
+
+The user confirmed standalone thermostat ownership: the wall panel and paired servo controller operate without HA. HA is monitoring only, with no direct setpoint/mode/servo control. Display 0.12.0 connects to MQTT itself; controller 0.4.1 removes MQTT entirely. This supersedes older climate-control requirements and review notes. See [standalone MQTT monitoring](STANDALONE_MQTT_MONITORING.md).

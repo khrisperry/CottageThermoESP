@@ -26,6 +26,7 @@
 #include "room_controller.h"
 #include "room_ships.h"
 #include "room_ota.h"
+#include "room_mqtt.h"
 #include "esp_heap_caps.h"
 
 static const char *TAG="room_thermostat";
@@ -89,6 +90,7 @@ void app_main(void)
     room_ships_start();
     room_display_start();
     room_audio_start();
+    room_mqtt_start();
     if(CONFIG_ROOM_SENSOR && CONFIG_ROOM_SDA>=0 && CONFIG_ROOM_SCL>=0 && CONFIG_ROOM_SDA!=CONFIG_ROOM_SCL) {
         i2c_master_bus_handle_t bus=NULL;
 #if CONFIG_ROOM_NATIVE_DISPLAY
@@ -114,6 +116,6 @@ void app_main(void)
         ESP_ERROR_CHECK(xTaskCreate(sensor_task,"room_probe",6144,NULL,3,NULL)==pdPASS?ESP_OK:ESP_ERR_NO_MEM);
     else ESP_LOGW(TAG,"Local probe disabled: configure probe type and pins");
     room_ota_confirm_boot();
-    ESP_LOGI(TAG,"Room client v0.11.2; native display and browser services ready");
+    ESP_LOGI(TAG,"Room client v0.12.0; native display and browser services ready");
 }
 

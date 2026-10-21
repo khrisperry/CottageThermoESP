@@ -1,5 +1,7 @@
 # Connectivity and climate review — 2026-10-21
 
+> **Current architecture (display 0.12.0 / controller 0.4.1):** [Standalone MQTT monitoring](STANDALONE_MQTT_MONITORING.md) supersedes the historical MQTT climate-control and controller-broker setup below. HA receives read-only sensors; only the thermostat controls the servo.
+
 > Latest update: [Panel v0.11.0 / controller v0.4.0 — dashboard, ships and OTA](DEVICE_DASHBOARD_SHIPS_OTA.md). That document supersedes the original versions, status colors, reserved ship service, compile-only integration setup and partition sizes below.
 
 Reviewed baseline: `main`, merge `8a60e47`, controller v0.2.0 / panel v0.9.4. This review branch adds **controller v0.3.0 / panel v0.10.0**. Waveshare ESP32-S3-Touch-LCD-4B remains the planned production display. No device was flashed by this work.

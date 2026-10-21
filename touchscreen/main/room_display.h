@@ -13,3 +13,6 @@ void room_display_probe_sample(float temperature_f);
 cJSON *room_display_status(void);
 bool room_display_camera_fill(void);
 void room_display_set_camera_fill(bool fill);
+
+/* Read-only local snapshot for MQTT; never polls or changes the controller. */
+cJSON *room_display_mqtt_state(void);

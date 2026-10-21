@@ -73,7 +73,7 @@ foreach(CHECK native_ui direct_ha empty_ha wifi_portal keepalive camera_size vis
 endforeach()
 
 add_executable(mqtt_test test_mqtt.c ../../touchscreen/managed_components/espressif__cjson/cJSON/cJSON.c)
-target_include_directories(mqtt_test PRIVATE mqtt_stubs stubs ../../touchscreen/managed_components/espressif__cjson/cJSON)
+target_include_directories(mqtt_test PRIVATE mqtt_stubs web_stubs stubs ../../touchscreen/managed_components/espressif__cjson/cJSON)
 target_compile_options(mqtt_test PRIVATE -ffunction-sections -fdata-sections -Wall -Wextra -Werror -Wno-unused-parameter -Wno-unused-function)
 target_link_options(mqtt_test PRIVATE -Wl,--gc-sections)
 target_link_libraries(mqtt_test PRIVATE lvgl m)

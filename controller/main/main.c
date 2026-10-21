@@ -204,7 +204,7 @@ static esp_err_t get_api(httpd_req_t *r)
         }
     } else {
         j=cJSON_CreateObject();
-        cJSON_AddStringToObject(j,"version","0.4.0");
+        cJSON_AddStringToObject(j,"version","0.4.1");
         cJSON_AddBoolToObject(j,"simulation",state.simulated);
         cJSON_AddBoolToObject(j,"bench_armed",armed);
         cJSON_AddNumberToObject(j,"arm_remaining_ms",armed && armed_until>now_ms()?armed_until-now_ms():0);
@@ -317,30 +317,6 @@ static esp_err_t link_post(httpd_req_t *r)
     if(!valid)return httpd_resp_send_err(r,HTTPD_400_BAD_REQUEST,"Invalid room link envelope");
     link_handle(&p,&reply);char hex[sizeof(reply)*2+1];tl_hex(&reply,hex);
     j=cJSON_CreateObject();cJSON_AddStringToObject(j,"packet",hex);return json_send(r,j);
-}
-/* MQTT commands use the same persistent config validator and existing output
- * interlocks. Heat never arms, synchronizes or sends raw PWM. Hold is NOT Off. */
-bool controller_climate_command(const char *key,float target,const char *value)
-{
-    cJSON *j=cJSON_CreateObject();bool valid=false;
-    if(!strcmp(key,"target")&&isfinite(target)&&target>=45&&target<=80){cJSON_AddNumberToObject(j,"target_f",target);valid=true;}
-    else if(!strcmp(key,"mode")&&!strcmp(value,"heat")){cJSON_AddStringToObject(j,"mode","thermostat");valid=true;}
-    else if(!strcmp(key,"preset")&&(!strcmp(value,"hold")||!strcmp(value,"thermostat"))){cJSON_AddStringToObject(j,"mode",value);valid=true;}
-    xSemaphoreTake(lock,portMAX_DELAY);bool ok=valid&&update_config(j);xSemaphoreGive(lock);cJSON_Delete(j);return ok;
-}
-cJSON *controller_climate_state(void)
-{
-    xSemaphoreTake(lock,portMAX_DELAY);uint64_t now=now_ms();
-    th_sample_t sample=state.source==TH_ROOM?state.room:state.secondary;
-    bool fresh=state.source!=TH_NONE&&sample.valid&&now>=sample.at_ms&&now-sample.at_ms<=THERMO_TTL_MS;
-    cJSON *j=cJSON_CreateObject();
-    if(fresh)cJSON_AddNumberToObject(j,"temperature",sample.f);else cJSON_AddNullToObject(j,"temperature");
-    cJSON_AddNumberToObject(j,"target",state.config.schedule_enabled?state.effective_target_f:state.config.target_f);
-    cJSON_AddStringToObject(j,"mode",state.config.mode==TH_AUTO?"heat":"None");
-    cJSON_AddStringToObject(j,"preset",state.config.mode==TH_AUTO?"thermostat":state.config.mode==TH_HOLD?"hold":"none");
-    cJSON_AddBoolToObject(j,"fresh",fresh);cJSON_AddBoolToObject(j,"simulation",state.simulated);
-    cJSON_AddBoolToObject(j,"position_measured",false);cJSON_AddStringToObject(j,"reason",state.reason);
-    xSemaphoreGive(lock);return j;
 }
 static void integration_restart(void *arg){vTaskDelay(pdMS_TO_TICKS(1500));esp_restart();}
 static esp_err_t integrations_post(httpd_req_t *r)

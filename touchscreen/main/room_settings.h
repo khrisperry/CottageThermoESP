@@ -14,7 +14,7 @@ bool room_settings_ships_enabled(void);
 unsigned room_settings_ship_range(void);
 bool room_web_authorized(httpd_req_t *request,bool mutation);
 bool room_settings_reboot_later(void);
-/* Controller-side integration settings are sent only after explicit web save. */
+/* Only radio pairing is forwarded to the controller. MQTT credentials stay here. */
 cJSON *room_settings_controller_integrations(void);
 const cottage_integration_t *room_settings_integrations(void);
 bool room_settings_radio_managed(void);

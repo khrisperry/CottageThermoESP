@@ -2,27 +2,11 @@
 #include "sdkconfig.h"
 #include "nvs.h"
 #include <stdlib.h>
-#if __has_include("../secrets.h")
-#include "../secrets.h"
-#endif
-#ifndef COTTAGE_MQTT_URL
-#define COTTAGE_MQTT_URL ""
-#endif
-#ifndef COTTAGE_MQTT_USERNAME
-#define COTTAGE_MQTT_USERNAME ""
-#endif
-#ifndef COTTAGE_MQTT_PASSWORD
-#define COTTAGE_MQTT_PASSWORD ""
-#endif
 static cottage_integration_t current;
 const cottage_integration_t *controller_integrations_get(void){return &current;}
 void controller_integrations_init(void)
 {
-    snprintf(current.broker,sizeof(current.broker),"%s",COTTAGE_MQTT_URL);
-    snprintf(current.username,sizeof(current.username),"%s",COTTAGE_MQTT_USERNAME);
-    snprintf(current.password,sizeof(current.password),"%s",COTTAGE_MQTT_PASSWORD);
     snprintf(current.prefix,sizeof(current.prefix),"homeassistant");snprintf(current.name,sizeof(current.name),"Cottage thermostat");
-    current.mqtt_enabled=*current.broker!=0;
 #if CONFIG_COTTAGE_ESPNOW
     current.radio_enabled=true;snprintf(current.peer,sizeof(current.peer),"%s",CONFIG_COTTAGE_ESPNOW_PEER);snprintf(current.key,sizeof(current.key),"%s",CONFIG_COTTAGE_ESPNOW_KEY);
 #endif
@@ -32,12 +16,17 @@ void controller_integrations_init(void)
         nvs_close(nvs);
     }
     if(saved){memset(saved,0,sizeof(*saved));free(saved);}
+    /* Legacy records remain readable, but this device never uses MQTT. */
+    current.mqtt_enabled=false;
+    memset(current.broker,0,sizeof(current.broker));
+    memset(current.username,0,sizeof(current.username));
+    memset(current.password,0,sizeof(current.password));
 }
 bool controller_integrations_save(cJSON *j,bool *changed)
 {
     *changed=false;cottage_integration_t *next=malloc(sizeof(*next));if(!next)return false;*next=current;
     cJSON *mqtt=cJSON_GetObjectItemCaseSensitive(j,"mqtt"),*radio=cJSON_GetObjectItemCaseSensitive(j,"radio");
-    bool ok=cJSON_IsObject(j)&&(mqtt||radio)&&(!mqtt||cottage_integration_patch(next,mqtt,false))&&(!radio||cottage_integration_patch(next,radio,true));
+    bool ok=cJSON_IsObject(j)&&(mqtt||radio)&&(!mqtt||cJSON_IsFalse(cJSON_GetObjectItemCaseSensitive(mqtt,"enabled")))&&(!mqtt||cottage_integration_patch(next,mqtt,false))&&(!radio||cottage_integration_patch(next,radio,true));
     /* Compare against persisted desired settings too: an ambiguous network
      * outcome must not schedule repeated restarts for an identical profile. */
     nvs_handle_t nvs;

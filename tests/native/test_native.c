@@ -51,7 +51,8 @@ bool room_ota_busy(void){return false;}
 void room_wifi_address(char *buffer,size_t size){snprintf(buffer,size,"%s","192.0.2.10");}
 bool room_settings_ships_enabled(void){return true;}
 unsigned room_settings_ship_range(void){return 30;}
-int room_controller_mqtt_state(void){return 0;}
+int room_mqtt_state(void){return 0;}
+cJSON *room_mqtt_status(void){return cJSON_CreateObject();}
 const char *room_controller_sync_state(void){return "Not managed";}
 void room_ships_active(bool active){ship_showing=active;}
 void room_ships_snapshot(room_ships_t *out){memset(out,0,sizeof(*out));out->service=true;out->feed=true;out->received_at=now;out->range=30;out->latitude=44.3f;out->longitude=-83.5f;
@@ -199,6 +200,11 @@ select_page(2);render("laundry.ppm");select_page(3);render("camera.ppm");
  click(settings_button);refresh(NULL);assert(strstr(lv_label_get_text(probe_test_label),"69.4 F"));render("bmp280-settings.ppm");
  now+=31000000;refresh(NULL);assert(!strcmp(lv_label_get_text(temp_label),"-- F"));
  assert(strstr(lv_label_get_text(probe_test_label),"no fresh reading"));
+ /* HA/MQTT availability cannot gate direct thermostat setpoint changes. */
+ model.ha_ok=false;model.climate_ok=true;model.climate_at=now;model.has_target=true;model.target=67;room_display_probe_sample(68);refresh(NULL);
+ assert(!lv_obj_has_state(apply_button,LV_STATE_DISABLED));click(plus_button);click(apply_button);before=posts;execute(queued);assert(posts==before+1&&!strcmp(last_path,"/api/config"));
+ cJSON *telemetry=room_display_mqtt_state();assert(cJSON_IsTrue(cJSON_GetObjectItem(telemetry,"controller_online")));assert(cJSON_GetObjectItem(telemetry,"temperature_f")->valuedouble==68);cJSON_Delete(telemetry);
+ now+=11000000;telemetry=room_display_mqtt_state();assert(cJSON_IsFalse(cJSON_GetObjectItem(telemetry,"controller_online"))&&cJSON_IsTrue(cJSON_GetObjectItem(telemetry,"sensor_fresh")));cJSON_Delete(telemetry);
  puts("PASS: native LVGL pages/swipes, HA commands, unknown outcomes, expired requests, stale controls, target-only climate, probe guard and idle return");
  return 0;
 }

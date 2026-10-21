@@ -5,7 +5,7 @@
 <section class="card" id="content"></section><section class="card"><p id="message" role="status" aria-live="polite"></p><small>Tokens, keys and passwords are never returned after saving.</small></section></main></div>
 <script>
 'use strict';const $=id=>document.getElementById(id);let config=null,lastStatus=null,page='Overview',timer=null,uploading=false,reconnecting=false,reconnectBoot=null;
-const pages=['Overview','Wi-Fi','Home Assistant','MQTT climate','Controller','ESP-NOW','Ship tracking','Sound & display','System'];
+const pages=['Overview','Wi-Fi','Home Assistant','MQTT monitoring','Controller','ESP-NOW','Ship tracking','Sound & display','System'];
 function el(tag,text,cls){const n=document.createElement(tag);if(text!==undefined)n.textContent=String(text);if(cls)n.className=cls;return n;}
 function badge(text,kind){return el('span',text,'badge '+(['ok','offline','unconfigured','standby','fallback'].includes(kind)?kind:'standby'));}
 function field(parent,label,id,value='',type='text',placeholder=''){const wrap=el('div');const l=el('label',label);l.htmlFor=id;const i=el('input');i.id=id;i.type=type;i.value=value||'';i.placeholder=placeholder;i.autocomplete=type==='password'?'new-password':'off';if(type==='password'){const secret=el('div',undefined,'secret');const show=el('button','Show');show.type='button';show.onclick=()=>{i.type=i.type==='password'?'text':'password';show.textContent=i.type==='password'?'Show':'Hide'};secret.append(i,show);wrap.append(l,secret);}else wrap.append(l,i);parent.append(wrap);return i;}
@@ -31,14 +31,14 @@ function render(){
   c.insertBefore(el('p','Direct connection for lights, blinds, laundry, kids heat, vacuum and camera. This token is separate from MQTT credentials.'),form);
   field(grid,'Home Assistant URL','ha',config.ha_url,'url');field(grid,'Long-lived token','token','','password',config.token_configured?keep:'No token saved').maxLength=2048;
   check(grid,'Clear the saved token','clear');actions(form,'ha',()=>({ha_url:$('ha').value.trim(),ha_token:$('token').value,clear_token:$('clear').checked}));
- }else if(page==='MQTT climate'){
-  c.insertBefore(el('p','Discover the thermostat in Home Assistant. These settings are sent to the paired controller when reachable. Applying changes restarts that controller and clears bench arming.'),form);
-  const m=config.mqtt;check(grid,'Enable MQTT discovery','enabled',m.enabled);field(grid,'Broker host / IP','brokerHost',m.broker.replace(/^mqtts?:\/\//,'').replace(/:\d+$/,''),'text','192.168.60.63');
+ }else if(page==='MQTT monitoring'){
+  c.insertBefore(el('p','The wall thermostat connects directly to your broker. Home Assistant receives read-only room temperature, target and controller connection sensors. There are no MQTT control commands; the thermostat operates without HA or the broker.'),form);
+  const m=config.mqtt;check(grid,'Enable MQTT monitoring','enabled',m.enabled);field(grid,'Broker host / IP','brokerHost',m.broker.replace(/^mqtts?:\/\//,'').replace(/:\d+$/,''),'text','192.168.60.63');
   field(grid,'Port','port',m.broker.match(/:(\d+)$/)?.[1]||(/mqtts:/.test(m.broker)?8883:1883),'number');
   field(grid,'Username','username',m.username);field(grid,'Password','password','','password',m.password_configured?keep:'MQTT password');check(grid,'Clear saved MQTT password','clearPassword');
   check(grid,'Use TLS (verified certificate)','tls',m.broker.startsWith('mqtts://'));field(grid,'Discovery prefix','prefix',m.prefix);field(grid,'Device name','name',m.name);
   const row=actions(form,'mqtt',()=>({enabled:$('enabled').checked,broker:($('tls').checked?'mqtts://':'mqtt://')+$('brokerHost').value.trim()+':'+$('port').value,username:$('username').value,password:$('password').value,clear_password:$('clearPassword').checked,prefix:$('prefix').value.trim(),name:$('name').value.trim()}));
-  const test=el('button','Test saved connection');test.type='button';test.disabled=!lastStatus?.services?.some(s=>s.name==='Heat controller'&&(s.kind==='ok'));test.onclick=async()=>{try{await request({section:'mqtt_test'});await poll();message('Saved MQTT connection: '+(lastStatus?.services?.find(s=>s.name==='MQTT climate')?.state||'Unknown'));}catch(e){message(e.message)}};row.append(test);
+  const state=el('p',lastStatus?.mqtt?.status||'Waiting for MQTT status');state.id='mqttDetail';state.className='full';grid.append(state);const test=el('button','Republish HA discovery');test.type='button';test.id='mqttReannounce';test.disabled=!lastStatus?.mqtt?.connected;test.onclick=async()=>{try{await request({section:'mqtt_test'});message('Read-only HA discovery queued.');}catch(e){message(e.message)}};row.append(test);
  }else if(page==='Controller'){
   field(grid,'Thermostat controller IP, name or URL','controller',config.controller);field(grid,'Controller pairing token','controllerToken','','password',config.controller_token_configured?keep:'32-character token from controller monitor').maxLength=32;
   actions(form,'controller',()=>({controller:$('controller').value.trim(),controller_token:$('controllerToken').value.trim()}));
@@ -74,14 +74,14 @@ function metric(parent,title,value){const m=el('div',undefined,'metric');m.appen
 function renderMetrics(){const m=$('metrics');if(!m||!lastStatus)return;m.replaceChildren();const p=lastStatus.performance||{};
  metric(m,'Local temperature',lastStatus.temperature_f===undefined?'No fresh sample':lastStatus.temperature_f.toFixed(1)+' °F');metric(m,'Target',lastStatus.target_f===undefined?'Unavailable':lastStatus.target_f.toFixed(1)+' °F');
  metric(m,'Frame last / peak',(p.frame_ms||0).toFixed(1)+' / '+(p.max_frame_ms||0).toFixed(1)+' ms');metric(m,'LVGL stack minimum free',Math.round((p.lvgl_stack_min_free||0)/1024)+' KiB');metric(m,'Free internal RAM',Math.round((p.free_internal||0)/1024)+' KiB');metric(m,'Largest internal block',Math.round((p.largest_internal||0)/1024)+' KiB');metric(m,'Free PSRAM',((p.free_psram||0)/1048576).toFixed(1)+' MiB');
- metric(m,'Ships shown / nearby',(lastStatus.ships?.count||0)+' / '+(lastStatus.ships?.nearby||0));metric(m,'Ship request',(lastStatus.ships?.request_ms||0)+' ms / '+(lastStatus.ships?.bytes||0)+' B');metric(m,'Ship service / AIS',!lastStatus.ships?.service_online?'Service offline':lastStatus.ships?.feed_online?'Online / online':'Online / AIS offline');metric(m,'Last ship refresh',lastStatus.ships?.last_error||'OK');metric(m,'Controller settings',lastStatus.integration_sync||'Not managed');
+ metric(m,'Ships shown / nearby',(lastStatus.ships?.count||0)+' / '+(lastStatus.ships?.nearby||0));metric(m,'Ship request',(lastStatus.ships?.request_ms||0)+' ms / '+(lastStatus.ships?.bytes||0)+' B');metric(m,'Ship service / AIS',!lastStatus.ships?.service_online?'Service offline':lastStatus.ships?.feed_online?'Online / online':'Online / AIS offline');metric(m,'Last ship refresh',lastStatus.ships?.last_error||'OK');metric(m,'MQTT',lastStatus.mqtt?.status||'Not configured');metric(m,'Radio pairing sync',lastStatus.integration_sync||'Not managed');
 }
 function renderFirmware(){const n=$('firmwareInfo');if(!n||!lastStatus)return;const f=lastStatus.firmware||{};n.textContent='Version '+(f.version||'?')+' • '+(f.board||'Waveshare 4B')+' • Slot '+(f.running_slot||'?')+' • OTA '+(f.slot_bytes?Math.round(f.slot_bytes/1048576)+' MiB':'not available');}
 async function loadConfig(){const r=await fetch('/api/settings',{cache:'no-store'});const j=await r.json();if(!r.ok)throw Error(j.message||'Settings unavailable');config=j;render();}
 async function poll(){if(uploading)return;try{const r=await fetch('/api/device/status',{cache:'no-store'});if(!r.ok)throw Error('Status unavailable');const j=await r.json();lastStatus=j;
  $('services').replaceChildren();(j.services||[]).forEach(s=>{const row=el('div',undefined,'status-row');row.append(el('span',s.name),badge(s.state,s.kind));$('services').append(row)});
  const summary=j.summary_kind||'standby';$('summary').replaceWith(Object.assign(badge(j.summary,summary),{id:'summary'}));
- $('statusAge').textContent='Live status • updated '+new Date().toLocaleTimeString();renderMetrics();renderFirmware();
+ $('statusAge').textContent='Live status • updated '+new Date().toLocaleTimeString();renderMetrics();renderFirmware();if($('mqttDetail'))$('mqttDetail').textContent=j.mqtt?.status||'Not configured';if($('mqttReannounce'))$('mqttReannounce').disabled=!j.mqtt?.connected;
  if(reconnecting&&j.firmware?.boot_id!==reconnectBoot){reconnecting=false;message('Device is back online. Running firmware '+(j.firmware?.version||'?')+'.');try{await loadConfig()}catch{config=null}}
  if(!config&&!reconnecting)await loadConfig();
  }catch(e){$('statusAge').textContent=reconnecting?'Device restarting; reconnecting...':'Device unreachable; retrying...';$('summary').replaceWith(Object.assign(badge('Offline','offline'),{id:'summary'}));}
