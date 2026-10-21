@@ -24,6 +24,9 @@
 #include "room_settings.h"
 #include "room_bmp280.h"
 #include "room_controller.h"
+#include "room_ships.h"
+#include "room_ota.h"
+#include "esp_heap_caps.h"
 
 static const char *TAG="room_thermostat";
 static i2c_master_dev_handle_t probe;
@@ -54,7 +57,7 @@ static void sensor_task(void *arg)
             room_display_probe_sample(f);
             if(CONFIG_ROOM_SENSOR==3){
                 ESP_LOGI(TAG,"BMP/BME280 TEST: %.2f F (%.2f C); not sent to controller",f,(f-32.0f)/1.8f);
-            } else if(strlen(CONFIG_ROOM_API_TOKEN)==32) {
+            } else if(strlen(room_settings_controller_token())==32) {
                 bool sent=room_controller_sample(f);
                 ESP_LOGI(TAG,"Room %.2f F; report %s",f,sent?"acknowledged":"not acknowledged");
             } else ESP_LOGI(TAG,"Local room %.2f F; controller reporting not paired",f);
@@ -72,13 +75,18 @@ static esp_err_t root(httpd_req_t *r)
     if(room_wifi_setup_request(r))return room_wifi_setup_get(r);
     return settings_redirect(r);
 }
+static void *json_allocate(size_t size){return heap_caps_malloc(size,MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT);}
 void app_main(void)
 {
     ESP_ERROR_CHECK(nvs_flash_init());ESP_ERROR_CHECK(esp_netif_init());ESP_ERROR_CHECK(esp_event_loop_create_default());
+#if CONFIG_ROOM_NATIVE_DISPLAY
+    cJSON_Hooks hooks={.malloc_fn=json_allocate,.free_fn=free};cJSON_InitHooks(&hooks);
+#endif
     room_settings_init();
     room_wifi_start();
     room_controller_start();
     room_ha_start();
+    room_ships_start();
     room_display_start();
     room_audio_start();
     if(CONFIG_ROOM_SENSOR && CONFIG_ROOM_SDA>=0 && CONFIG_ROOM_SCL>=0 && CONFIG_ROOM_SDA!=CONFIG_ROOM_SCL) {
@@ -94,16 +102,18 @@ void app_main(void)
         if(CONFIG_ROOM_SENSOR==3)bmp280.bus=bus;
         else if(bus)ESP_ERROR_CHECK(i2c_master_bus_add_device(bus,&dev,&probe));
     }
-    httpd_config_t cfg=HTTPD_DEFAULT_CONFIG();cfg.stack_size=8192;cfg.max_uri_handlers=20;httpd_handle_t h;ESP_ERROR_CHECK(httpd_start(&h,&cfg));
+    httpd_config_t cfg=HTTPD_DEFAULT_CONFIG();cfg.stack_size=12288;cfg.max_uri_handlers=24;httpd_handle_t h;ESP_ERROR_CHECK(httpd_start(&h,&cfg));
     httpd_uri_t routes[]={ {.uri="/",.method=HTTP_GET,.handler=root},
         {.uri="/home",.method=HTTP_GET,.handler=settings_redirect}};
     for(unsigned i=0;i<2;++i)ESP_ERROR_CHECK(httpd_register_uri_handler(h,&routes[i]));
     room_wifi_register(h);
     room_settings_register(h);
+    room_ota_register(h);
     esp_sntp_setoperatingmode(SNTP_OPMODE_POLL);esp_sntp_setservername(0,"pool.ntp.org");esp_sntp_init();
     if((CONFIG_ROOM_SENSOR==3&&bmp280.bus)||probe)
         ESP_ERROR_CHECK(xTaskCreate(sensor_task,"room_probe",6144,NULL,3,NULL)==pdPASS?ESP_OK:ESP_ERR_NO_MEM);
     else ESP_LOGW(TAG,"Local probe disabled: configure probe type and pins");
-    ESP_LOGI(TAG,"Room client v0.10.0; native display and browser services ready");
+    room_ota_confirm_boot();
+    ESP_LOGI(TAG,"Room client v0.11.0; native display and browser services ready");
 }
 

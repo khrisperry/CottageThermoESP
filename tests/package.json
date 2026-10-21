@@ -1,1 +1,1 @@
-{"private":true,"scripts":{"test":"node test-ui.cjs && node test-ha-ui.cjs","test:ha":"node test-ha-ui.cjs"},"devDependencies":{"playwright":"1.62.1"}}
+{"private":true,"scripts":{"test":"node test-ui.cjs && node test-ha-ui.cjs","test:device":"node test-device-web.cjs","test:ha":"node test-ha-ui.cjs"},"devDependencies":{"playwright":"1.62.1"}}

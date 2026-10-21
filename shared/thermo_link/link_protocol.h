@@ -12,7 +12,7 @@
 #define TL_LEASE_MS 5000U
 enum { TL_STATUS=1, TL_TARGET, TL_SAMPLE, TL_REPLY };
 enum { TL_OK=0, TL_INVALID, TL_EXPIRED, TL_REPLAY, TL_SAVE_FAILED };
-enum { TL_HAS_TEMP=1, TL_SIMULATION=2, TL_HAS_TARGET=4 };
+enum { TL_HAS_TEMP=1, TL_SIMULATION=2, TL_HAS_TARGET=4, TL_MQTT_CONFIGURED=8, TL_MQTT_ONLINE=16 };
 typedef struct {
     uint64_t client, sequence, controller_boot, deadline_ms;
     uint32_t magic, age_ms;

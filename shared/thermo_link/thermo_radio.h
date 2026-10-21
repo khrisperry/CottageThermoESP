@@ -10,3 +10,5 @@ esp_err_t tl_radio_exchange(const tl_packet_t *request,tl_packet_t *reply);
 /* Wi-Fi owner calls only while disconnected and NOT connecting/scanning.
  * Stops channel hopping while a recent authenticated exchange is healthy. */
 void tl_radio_search_tick(void);
+
+void tl_radio_start_config(tl_radio_handler_t handler,bool enabled,const char *peer,const char *key);

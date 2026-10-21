@@ -10,6 +10,7 @@
 #include "driver/gpio.h"
 #include "driver/ledc.h"
 #include "esp_event.h"
+#include "esp_system.h"
 #include "esp_http_server.h"
 #include "esp_log.h"
 #include "esp_netif.h"
@@ -25,6 +26,7 @@
 #include "thermo.h"
 #include "thermo_radio.h"
 #include "controller_mqtt.h"
+#include "controller_integrations.h"
 #include <stdatomic.h>
 
 static const char *TAG="thermostat";
@@ -202,7 +204,7 @@ static esp_err_t get_api(httpd_req_t *r)
         }
     } else {
         j=cJSON_CreateObject();
-        cJSON_AddStringToObject(j,"version","0.3.0");
+        cJSON_AddStringToObject(j,"version","0.4.0");
         cJSON_AddBoolToObject(j,"simulation",state.simulated);
         cJSON_AddBoolToObject(j,"bench_armed",armed);
         cJSON_AddNumberToObject(j,"arm_remaining_ms",armed && armed_until>now_ms()?armed_until-now_ms():0);
@@ -299,7 +301,7 @@ static void link_handle(const tl_packet_t *p,tl_packet_t *reply)
     *reply=tl_request(TL_REPLY,p->client,p->sequence);reply->result=result;
     reply->controller_boot=controller_boot;reply->deadline_ms=now;
     reply->target=state.config.schedule_enabled?state.effective_target_f:state.config.target_f;
-    reply->flags=TL_HAS_TARGET|(state.simulated?TL_SIMULATION:0);reply->mode=state.config.mode;
+    reply->flags=TL_HAS_TARGET|(state.simulated?TL_SIMULATION:0)|(controller_mqtt_configured()?TL_MQTT_CONFIGURED:0)|(controller_mqtt_online()?TL_MQTT_ONLINE:0);reply->mode=state.config.mode;
     th_sample_t sample=state.source==TH_ROOM?state.room:state.secondary;
     if(state.source!=TH_NONE&&sample.valid&&now>=sample.at_ms&&now-sample.at_ms<=THERMO_TTL_MS){
         reply->flags|=TL_HAS_TEMP;reply->temperature=sample.f;
@@ -339,6 +341,18 @@ cJSON *controller_climate_state(void)
     cJSON_AddBoolToObject(j,"fresh",fresh);cJSON_AddBoolToObject(j,"simulation",state.simulated);
     cJSON_AddBoolToObject(j,"position_measured",false);cJSON_AddStringToObject(j,"reason",state.reason);
     xSemaphoreGive(lock);return j;
+}
+static void integration_restart(void *arg){vTaskDelay(pdMS_TO_TICKS(1500));esp_restart();}
+static esp_err_t integrations_post(httpd_req_t *r)
+{
+    if(!authorized(r))return httpd_resp_send_err(r,HTTPD_401_UNAUTHORIZED,"API token required");
+    cJSON *j=body(r);bool changed=false;
+    xSemaphoreTake(lock,portMAX_DELAY);bool ok=controller_integrations_save(j,&changed);
+    if(changed){release();state.config.mode=TH_HOLD;event("Integration profile saved; restart clears bench arm/synchronization");}
+    xSemaphoreGive(lock);cJSON_Delete(j);
+    if(!ok)return httpd_resp_send_err(r,HTTPD_400_BAD_REQUEST,"Invalid integration settings or save failed");
+    if(changed&&xTaskCreate(integration_restart,"integration_restart",2048,NULL,3,NULL)!=pdPASS)return httpd_resp_send_err(r,HTTPD_500_INTERNAL_SERVER_ERROR,"Saved but restart could not be scheduled; retry");
+    return httpd_resp_sendstr(r,changed?"{\"ok\":true,\"restarting\":true}":"{\"ok\":true,\"restarting\":false}");
 }
 static esp_err_t post_api(httpd_req_t *r)
 {
@@ -469,7 +483,8 @@ static void network_start(void)
         ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA,&sta));
     }
     ESP_ERROR_CHECK(esp_wifi_start());ESP_ERROR_CHECK(esp_wifi_set_ps(WIFI_PS_NONE));
-    tl_radio_start(link_handle);
+    const cottage_integration_t *integration=controller_integrations_get();
+    tl_radio_start_config(link_handle,integration->radio_enabled,integration->peer,integration->key);
     if(station){station_connecting=true;connect_at=(uint32_t)now_ms();esp_wifi_connect();}
     ESP_ERROR_CHECK(xTaskCreate(reconnect_task,"wifi_retry",3072,NULL,3,NULL)==pdPASS?ESP_OK:ESP_ERR_NO_MEM);
     httpd_config_t c=HTTPD_DEFAULT_CONFIG();c.max_uri_handlers=16;c.stack_size=8192;
@@ -478,6 +493,7 @@ static void network_start(void)
     const char *gets[]={"/api/status","/api/config","/api/events","/api/history"};
     for(unsigned i=0;i<4;++i) {httpd_uri_t u={.uri=gets[i],.method=HTTP_GET,.handler=get_api};ESP_ERROR_CHECK(httpd_register_uri_handler(h,&u));}
     httpd_uri_t link={.uri="/api/link",.method=HTTP_POST,.handler=link_post};ESP_ERROR_CHECK(httpd_register_uri_handler(h,&link));
+    httpd_uri_t integrations={.uri="/api/integrations",.method=HTTP_POST,.handler=integrations_post};ESP_ERROR_CHECK(httpd_register_uri_handler(h,&integrations));
     const char *posts[]={"/api/config","/api/temperature","/api/stop","/api/arm","/api/sync","/api/pulse","/api/clock"};
     for(unsigned i=0;i<7;++i) {httpd_uri_t u={.uri=posts[i],.method=HTTP_POST,.handler=post_api};ESP_ERROR_CHECK(httpd_register_uri_handler(h,&u));}
     ESP_LOGI(TAG,"Open bench Wi-Fi %s; http://192.168.4.1",CONFIG_THERMO_AP_SSID);
@@ -508,6 +524,7 @@ void app_main(void)
     ESP_LOGI(TAG,"Pairing API token (local bench only): %s",token);
     setenv("TZ","EST5EDT,M3.2.0/2,M11.1.0/2",1);tzset();
     controller_boot=((uint64_t)esp_random()<<32)|esp_random();if(!controller_boot)controller_boot=1;
+    controller_integrations_init();
     network_start();
     controller_mqtt_start();
     if(strlen(CONFIG_THERMO_WIFI_SSID)) {

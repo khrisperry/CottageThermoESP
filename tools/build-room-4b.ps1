@@ -38,6 +38,15 @@ try {
         $configText += [Environment]::NewLine + "CONFIG_LV_USE_${widget}=y" + [Environment]::NewLine
     }
     [IO.File]::WriteAllText($configPath,$configText,[Text.UTF8Encoding]::new($false))
+    $configText=Get-Content $configPath -Raw
+    $configText=[regex]::Replace($configText,'(?m)^CONFIG_LV_MEM_SIZE_KILOBYTES=.*\r?\n?','')
+    $configText += [Environment]::NewLine + 'CONFIG_LV_MEM_SIZE_KILOBYTES=256' + [Environment]::NewLine
+    [IO.File]::WriteAllText($configPath,$configText,[Text.UTF8Encoding]::new($false))
+    # OTA requires the rollback-capable bootloader on the initial USB flash.
+    $configText=Get-Content $configPath -Raw
+    $configText=[regex]::Replace($configText,'(?m)^(?:CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=.*|# CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE is not set)\r?\n?','')
+    $configText += [Environment]::NewLine + 'CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y' + [Environment]::NewLine
+    [IO.File]::WriteAllText($configPath,$configText,[Text.UTF8Encoding]::new($false))
     if ($Bmp280Test) {
         # Explicit local test opt-in. Remains selected until changed in menuconfig.
         $configText=Get-Content $configPath -Raw

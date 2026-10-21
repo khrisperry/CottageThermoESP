@@ -63,7 +63,14 @@ static void server_task(void *arg)
 void tl_radio_start(tl_radio_handler_t handler)
 {
 #if CONFIG_COTTAGE_ESPNOW
-    const char *mac=CONFIG_COTTAGE_ESPNOW_PEER,*secret=CONFIG_COTTAGE_ESPNOW_KEY;
+    tl_radio_start_config(handler,true,CONFIG_COTTAGE_ESPNOW_PEER,CONFIG_COTTAGE_ESPNOW_KEY);
+#else
+    (void)handler;
+#endif
+}
+void tl_radio_start_config(tl_radio_handler_t handler,bool enabled,const char *mac,const char *secret)
+{
+    if(!enabled)return;
     uint8_t key[16];bool valid=strlen(mac)==17&&strlen(secret)==32;
     for(unsigned i=0;valid&&i<6;++i){int a=tl_digit(mac[i*3]),b=tl_digit(mac[i*3+1]);valid=a>=0&&b>=0&&(i==5||mac[i*3+2]==':');peer_mac[i]=(a>=0&&b>=0)?(a<<4)|b:0;}
     for(unsigned i=0;valid&&i<16;++i){int a=tl_digit(secret[i*2]),b=tl_digit(secret[i*2+1]);valid=a>=0&&b>=0;key[i]=(a>=0&&b>=0)?(a<<4)|b:0;}
@@ -84,9 +91,6 @@ void tl_radio_start(tl_radio_handler_t handler)
     ESP_ERROR_CHECK(esp_now_add_peer(&peer));ESP_ERROR_CHECK(esp_now_register_recv_cb(receive));ready=true;
     if(serve)ESP_ERROR_CHECK(xTaskCreate(server_task,"direct_link",4096,NULL,3,NULL)==pdPASS?ESP_OK:ESP_ERR_NO_MEM);
     ESP_LOGI("thermo_radio","Encrypted paired ESP-NOW ready");
-#else
-    (void)handler;
-#endif
 }
 esp_err_t tl_radio_exchange(const tl_packet_t *p,tl_packet_t *out)
 {

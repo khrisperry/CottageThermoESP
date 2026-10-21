@@ -8,6 +8,7 @@ static int64_t now=1000000;
 static int posts=0,queue_count=0;
 static char last_path[80],last_post[256];
 static bool unknown=false,test_wifi=true,test_fallback=false;
+static bool ship_showing,test_ships_populated,test_ship_map_pending;
 static unsigned test_notify_mask,test_volume=100;
 #include "../../touchscreen/main/room_display.c"
 static command_t queued;
@@ -35,12 +36,32 @@ const char *room_settings_ha_token(void){return "configured";}
 bool room_controller_fallback(void){return test_fallback;}
 bool room_controller_radio_ready(void){return true;}
 bool room_controller_radio_online(void){return test_fallback;}
+const char *room_settings_controller_token(void){return "0123456789abcdef0123456789abcdef";}
 const char *room_settings_controller_url(void){return CONFIG_ROOM_CONTROLLER_URL;}
 unsigned room_audio_get_volume(void){return test_volume;}
 bool room_audio_set_volume(unsigned value){if(value>100)return false;test_volume=value;return true;}
 bool room_audio_test(void){return true;}
 bool room_audio_notify_enabled(int key){return (test_notify_mask&(1U<<(key-3)))!=0;}
 bool room_audio_set_notify(int key,bool enabled){unsigned bit=1U<<(key-3);test_notify_mask=enabled?test_notify_mask|bit:test_notify_mask&~bit;return true;}
+bool room_ota_busy(void){return false;}
+const char *room_settings_admin_code(void){return "testadmin123";}
+void room_wifi_address(char *buffer,size_t size){snprintf(buffer,size,"%s","192.0.2.10");}
+bool room_settings_ships_enabled(void){return true;}
+unsigned room_settings_ship_range(void){return 30;}
+int room_controller_mqtt_state(void){return 0;}
+const char *room_controller_sync_state(void){return "Not managed";}
+void room_ships_active(bool active){ship_showing=active;}
+void room_ships_snapshot(room_ships_t *out){memset(out,0,sizeof(*out));out->service=true;out->feed=true;out->received_at=now;out->range=30;out->latitude=44.3f;out->longitude=-83.5f;
+ if(test_ships_populated){out->count=out->nearby=3;for(unsigned i=0;i<3;++i){room_ship_t *v=&out->ships[i];v->mmsi=316000001+i;snprintf(v->name,sizeof(v->name),"TEST VESSEL %u",i+1);snprintf(v->kind,sizeof(v->kind),"Cargo");snprintf(v->destination,sizeof(v->destination),"PORT HURON");v->lat=44.3f+i*.02f;v->lon=-83.4f+i*.02f;v->distance=3+i;v->speed_valid=true;v->speed=11.2f;v->age=30;}}
+}
+bool room_ships_online(void){return true;}
+void *room_ships_take_map(double bounds[4]){
+ if(!test_ship_map_pending)return NULL;test_ship_map_pending=false;
+ bounds[0]=-84;bounds[1]=44;bounds[2]=-83;bounds[3]=44.6;
+ uint16_t *p=malloc(456*400*2);assert(p);for(unsigned y=0;y<400;++y)for(unsigned x=0;x<456;++x)p[y*456+x]=(x%57==0||y%50==0)?0x22aa:0x1105;return p;
+}
+size_t heap_caps_get_free_size(int caps){return 1000000;}
+size_t heap_caps_get_largest_free_block(int caps){return 100000;}
 static char ha_json[4096];
 esp_err_t room_http(const char *origin,const char *header,const char *token,const char *path,const char *post,void *out,size_t cap,int timeout,int *status,int *length)
 {
@@ -92,7 +113,9 @@ int main(void)
  populate();refresh(NULL);assert(!lv_obj_has_state(control[0][0],LV_STATE_DISABLED));
  assert(!strcmp(lv_label_get_text(connection),"Online"));
  assert(!strcmp(lv_label_get_text(lv_obj_get_child(settings_button,0)),LV_SYMBOL_SETTINGS));
- click(health_button);refresh(NULL);assert(model.settings_open);assert(strstr(lv_label_get_text(diagnostic_text),"Not configured"));
+ click(health_button);refresh(NULL);assert(model.settings_open);assert(!strcmp(lv_label_get_text(diagnostic_cells[3]),"Standby"));
+ assert(lv_obj_get_x(diagnostic_badges[0])==lv_obj_get_x(diagnostic_badges[6]));
+ assert(lv_obj_get_x(diagnostic_cells[0])==lv_obj_get_x(diagnostic_cells[6]));
  render("connections.ppm");click(diagnostic_close_button);assert(!model.settings_open);
  test_fallback=true;test_wifi=false;refresh(NULL);
  assert(strstr(lv_label_get_text(connection),"ESPNOW"));assert(lv_obj_has_state(control[0][0],LV_STATE_DISABLED));
@@ -141,6 +164,15 @@ select_page(2);render("laundry.ppm");select_page(3);render("camera.ppm");
  refresh(NULL);assert(!strcmp(lv_label_get_text(states[0]),"on"));
  execute(second);assert(model.pending==0);posts=0;
  assert(lv_obj_get_height(body[1])==364);
+ select_page(4);assert(ship_showing);refresh(NULL);assert(strstr(lv_label_get_text(ship_detail),"No ships"));
+ render("ships-empty.ppm");test_ships_populated=true;test_ship_map_pending=true;refresh(NULL);lv_obj_update_layout(lv_screen_active());
+ assert(!lv_obj_has_flag(ship_map,LV_OBJ_FLAG_HIDDEN));assert(!lv_obj_has_flag(ship_markers[0],LV_OBJ_FLAG_HIDDEN));
+ assert(strstr(lv_label_get_text(ship_detail),"3.0 mi"));render("ships-map.ppm");lv_mem_monitor_t before_map,after_map;lv_mem_monitor(&before_map);
+ for(unsigned i=0;i<100;++i){test_ship_map_pending=true;refresh(NULL);lv_refr_now(NULL);}
+ lv_mem_monitor(&after_map);assert(after_map.free_size+1024>=before_map.free_size);
+ click(ship_markers[1]);assert(selected_ship==1);test_ships_populated=false;
+ select_page(0);assert(!ship_showing);
+ cJSON *device=room_display_status();assert(cJSON_GetArraySize(cJSON_GetObjectItem(device,"services"))==7);cJSON_Delete(device);
  assert(lv_obj_has_flag(notice,LV_OBJ_FLAG_HIDDEN));
  assert(bulb_head[0]&&bulb_head[1]&&activity_ring[3]&&activity_ring[6]);
  assert(room_visual_state("Washing",true)==ROOM_VIS_ACTIVE);

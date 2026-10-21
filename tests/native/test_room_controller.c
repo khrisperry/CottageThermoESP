@@ -18,6 +18,14 @@ const char *room_settings_controller_url(void){return "http://controller.test";}
 void tl_radio_start(tl_radio_handler_t handler){}
 bool tl_radio_configured(void){return true;}
 bool tl_radio_online(void){return radio_up;}
+const char *room_settings_controller_token(void){return CONFIG_ROOM_API_TOKEN;}
+bool room_settings_radio_managed(void){return false;}
+const cottage_integration_t *room_settings_integrations(void){static cottage_integration_t p;return &p;}
+cJSON *room_settings_controller_integrations(void){return cJSON_CreateObject();}
+void tl_radio_start_config(tl_radio_handler_t cb,bool enabled,const char *peer,const char *key){}
+int xTaskCreate(void(*f)(void*),const char*n,int a,void*b,int c,void*d){return 1;}
+void vTaskDelay(int n){}
+void vTaskDelete(void *p){}
 static void server(const tl_packet_t *p,tl_packet_t *r)
 {
     int result=tl_check(&guard,p,server_boot,clock_us/1000);
@@ -53,5 +61,6 @@ int main(void)
     j=room_controller_target(70,&status);assert(!j&&applications==3);
     http_up=true;wifi=true;j=room_controller_status();assert(j&&!room_controller_fallback());cJSON_Delete(j);
     assert(room_controller_sample(66));assert(applications==4);
+    mqtt_state=2;mqtt_at=clock_us/1000;assert(room_controller_mqtt_state()==2);clock_us+=11000000;assert(room_controller_mqtt_state()==1);
     puts("PASS: Wi-Fi/ESP-NOW selection, ambiguous no-retry, restart, hour outage and Wi-Fi recovery");
 }

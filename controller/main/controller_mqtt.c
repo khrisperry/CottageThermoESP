@@ -2,6 +2,7 @@
  * long-lived REST token; neither credential is published or logged here. */
 #include "controller_mqtt.h"
 #include "climate_discovery.h"
+#include "controller_integrations.h"
 #include "sdkconfig.h"
 #include <math.h>
 #include <stdio.h>
@@ -18,18 +19,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
 #include "freertos/task.h"
-#if __has_include("../secrets.h")
-#include "../secrets.h"
-#endif
-#ifndef COTTAGE_MQTT_URL
-#define COTTAGE_MQTT_URL ""
-#endif
-#ifndef COTTAGE_MQTT_USERNAME
-#define COTTAGE_MQTT_USERNAME ""
-#endif
-#ifndef COTTAGE_MQTT_PASSWORD
-#define COTTAGE_MQTT_PASSWORD ""
-#endif
+static const cottage_integration_t *profile;
 static esp_mqtt_client_handle_t mqtt;
 static QueueHandle_t commands;
 static atomic_bool connected,announce,subscribe_pending;
@@ -68,9 +58,9 @@ static bool publish(const char *suffix,const char *body,bool retain)
 }
 static bool discovery(void)
 {
-    cJSON *j=climate_discovery(identity,base);char *s=cJSON_PrintUnformatted(j);cJSON_Delete(j);
+    cJSON *j=climate_discovery_named(identity,base,profile->name);char *s=cJSON_PrintUnformatted(j);cJSON_Delete(j);
     if(!s)return false;
-    char topic[128];snprintf(topic,sizeof(topic),"homeassistant/climate/%s/config",identity);
+    char topic[192];snprintf(topic,sizeof(topic),"%s/climate/%s/config",profile->prefix,identity);
     bool ok=esp_mqtt_client_publish(mqtt,topic,s,0,1,1)>=0;free(s);
     return ok;
 }
@@ -106,15 +96,15 @@ static void start_task(void *arg)
 {
     /* TLS requires a trusted clock. Plain local mqtt:// is an explicit LAN
      * choice; mqtts:// always validates a certificate. */
-    bool tls=!strncmp(COTTAGE_MQTT_URL,"mqtts://",8);
+    bool tls=!strncmp(profile->broker,"mqtts://",8);
     while(!esp_netif_get_handle_from_ifkey("WIFI_STA_DEF")||
           !esp_netif_is_netif_up(esp_netif_get_handle_from_ifkey("WIFI_STA_DEF"))||
           (tls&&time(NULL)<1767225600))vTaskDelay(pdMS_TO_TICKS(1000));
     esp_mqtt_client_config_t cfg={
-        .broker.address.uri=COTTAGE_MQTT_URL,
+        .broker.address.uri=profile->broker,
         .broker.verification.crt_bundle_attach=tls?esp_crt_bundle_attach:NULL,
-        .credentials.client_id=identity,.credentials.username=COTTAGE_MQTT_USERNAME,
-        .credentials.authentication.password=COTTAGE_MQTT_PASSWORD,
+        .credentials.client_id=identity,.credentials.username=profile->username,
+        .credentials.authentication.password=profile->password,
         .session.keepalive=20,.session.last_will={.topic=availability,.msg="offline",.qos=1,.retain=1},
         .buffer.size=2048,.task.stack_size=6144,.network.reconnect_timeout_ms=5000};
     mqtt=esp_mqtt_client_init(&cfg);
@@ -124,8 +114,9 @@ static void start_task(void *arg)
 }
 void controller_mqtt_start(void)
 {
-    if(!*COTTAGE_MQTT_URL){ESP_LOGI("thermo_mqtt","Climate discovery not configured; set controller/secrets.h");return;}
-    if((strncmp(COTTAGE_MQTT_URL,"mqtt://",7)&&strncmp(COTTAGE_MQTT_URL,"mqtts://",8))||strchr(COTTAGE_MQTT_URL,'@')){
+    profile=controller_integrations_get();
+    if(!profile->mqtt_enabled||!*profile->broker){ESP_LOGI("thermo_mqtt","Climate discovery not configured; set controller/secrets.h");return;}
+    if((strncmp(profile->broker,"mqtt://",7)&&strncmp(profile->broker,"mqtts://",8))||strchr(profile->broker,'@')){
         ESP_LOGE("thermo_mqtt","Invalid broker origin; use separate credentials");return;
     }
     uint8_t mac[6];ESP_ERROR_CHECK(esp_read_mac(mac,ESP_MAC_WIFI_STA));
@@ -134,3 +125,6 @@ void controller_mqtt_start(void)
     commands=xQueueCreate(8,sizeof(mqtt_command_t));ESP_ERROR_CHECK(commands?ESP_OK:ESP_ERR_NO_MEM);
     ESP_ERROR_CHECK(xTaskCreate(start_task,"climate_mqtt",6144,NULL,2,NULL)==pdPASS?ESP_OK:ESP_ERR_NO_MEM);
 }
+
+bool controller_mqtt_configured(void){return profile&&profile->mqtt_enabled&&*profile->broker;}
+bool controller_mqtt_online(void){return connected;}

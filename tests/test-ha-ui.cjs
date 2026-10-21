@@ -22,7 +22,7 @@ const fs=require('node:fs');const path=require('node:path');const assert=require
  await page.getByRole('button',{name:'Heat on',exact:true}).click();await page.waitForTimeout(100);
  assert.equal(commands.at(-1).key,'kids_heat');assert.equal(commands.at(-1).action,'on');assert.ok(commands.at(-1).request_id);
  await page.locator('[data-key="blinds"][data-action="stop"]').click();await page.waitForTimeout(100);assert.equal(commands.at(-1).action,'stop');
- ambiguous=true;await page.getByRole('button',{name:'Heat off',exact:true}).click();await page.waitForTimeout(100);assert.match(await page.locator('#message').textContent(),/outcome unknown/);
+ ambiguous=true;await page.getByRole('button',{name:'Heat off',exact:true}).click();await page.waitForFunction(()=>document.querySelector('#message').textContent.includes('outcome unknown'));assert.match(await page.locator('#message').textContent(),/outcome unknown/);
  await page.locator('[data-page="laundry"]').click();assert.equal(await page.locator('#washer1-state').textContent(),'Running');assert.equal(await page.locator('#dryer1-state').textContent(),'Finished');
  assert.equal(frames,0,'camera must not load in Home/Laundry');
  await page.locator('[data-page="camera"]').click();await page.waitForTimeout(200);assert.ok(frames>0);

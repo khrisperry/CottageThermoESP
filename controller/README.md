@@ -1,8 +1,10 @@
-# Controller v0.3.0 — thermostat development and servo bench
+# Controller v0.4.0 — thermostat development and servo bench
 
 ESP-IDF **6.0.1**, ESP32-S3, M5Stack AtomS3 Lite (8 MB flash), servo signal **G38/GPIO38**. Build defaults simulate automatic thermostat movement. No measurements or placeholder calibration map are installed.
 
 v0.3.0 adds a shared validated room HTTP/ESP-NOW endpoint and optional MQTT climate discovery. Bench output interlocks, simulation default and explicit arming/synchronization are retained. See [connectivity review/setup](../docs/CONNECTIVITY_REVIEW.md) for pairing, broker configuration and required physical checks. A blank broker URL and disabled ESP-NOW preserve the ordinary bench setup.
+
+v0.4.0 adds persisted paired MQTT/radio configuration from the display webpage and a 2 MiB app partition. Use the root build helper once to migrate existing sdkconfig without erasing settings. See [dashboard and integration setup](../docs/DEVICE_DASHBOARD_SHIPS_OTA.md). Configuration changes restart in Hold with bench output released. Controller firmware updates still use USB.
 
 ## Build on Windows
 
@@ -16,8 +18,8 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tools\build-local.ps1
 This builds both projects without flashing. To build just the controller:
 
 ```powershell
+.\tools\build-local.ps1 -Project controller
 cd controller
-idf.py build
 idf.py -p COM13 flash monitor
 ```
 

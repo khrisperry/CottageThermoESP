@@ -9,3 +9,8 @@ void room_wifi_request_setup(void);
 bool room_wifi_setup_request(httpd_req_t *request);
 esp_err_t room_wifi_setup_get(httpd_req_t *request);
 bool room_wifi_setup_hint(char *buffer,size_t size);
+
+#include "cJSON.h"
+cJSON *room_wifi_status(void);
+bool room_wifi_submit(const char *ssid,const char *password,bool open);
+void room_wifi_address(char *buffer,size_t size);

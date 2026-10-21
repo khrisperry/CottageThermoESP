@@ -337,6 +337,22 @@ static esp_err_t scan_get(httpd_req_t *r)
     }
     free(records);return json_reply(r,200,j);
 }
+cJSON *room_wifi_status(void)
+{
+    state_t s=get_state();cJSON *j=cJSON_CreateObject();
+    cJSON_AddBoolToObject(j,"connected",s.connected);cJSON_AddBoolToObject(j,"portal",s.portal);
+    cJSON_AddBoolToObject(j,"pending",s.pending);cJSON_AddStringToObject(j,"ip",s.ip);cJSON_AddStringToObject(j,"message",s.message);
+    return j;
+}
+void room_wifi_address(char *buffer,size_t size){state_t s=get_state();snprintf(buffer,size,"%s",s.ip);}
+bool room_wifi_submit(const char *ssid,const char *password,bool open)
+{
+    if(!portal_profile_valid(ssid,password)||((*password==0)!=open))return false;
+    profile_t p={.magic=PROFILE_MAGIC};snprintf(p.ssid,sizeof(p.ssid),"%s",ssid);snprintf(p.password,sizeof(p.password),"%s",password);
+    xSemaphoreTake(state_mutex,portMAX_DELAY);bool ok=!state.pending&&xQueueSend(profile_queue,&p,0)==pdTRUE;
+    if(ok){state.pending=true;state.saved=false;snprintf(state.message,sizeof(state.message),"Testing Wi-Fi connection...");}
+    xSemaphoreGive(state_mutex);memset(&p,0,sizeof(p));return ok;
+}
 static esp_err_t connect_post(httpd_req_t *r)
 {
     if(!room_wifi_setup_request(r))return error_reply(r,403,"Join the setup Wi-Fi network first.");

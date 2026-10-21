@@ -30,6 +30,9 @@
 #include "room_controller.h"
 #include "room_health.h"
 #include "wifi_setup.h"
+#include "room_ships.h"
+#include "room_ota.h"
+#include <stdatomic.h>
 
 #define COUNT 11
 #define FRESH_US 10000000LL
@@ -51,13 +54,23 @@ typedef struct { int item,action; float target; int64_t at; } command_t;
 static model_t model;
 static SemaphoreHandle_t mutex;
 static QueueHandle_t commands;
-static lv_obj_t *body[4],*nav[4],*connection,*notice,*temp_label,*target_label,*mode_label,*reason_label;
+static lv_obj_t *body[5],*nav[5],*connection,*notice,*temp_label,*target_label,*mode_label,*reason_label;
 static lv_obj_t *states[COUNT],*control[COUNT][6],*minus_button,*plus_button,*apply_button,*camera_image,*camera_note,*settings_button;
 static lv_obj_t *settings_modal,*settings_volume,*settings_volume_label,*settings_camera_button,*settings_close_button;
 static lv_obj_t *temperature_ring,*camera_frame,*camera_status,*tile[COUNT],*icon_badge[COUNT];
 static lv_obj_t *bulb_head[COUNT],*bulb_stem[COUNT],*bulb_base[COUNT],*activity_ring[COUNT];
 static lv_obj_t *notify_button[4],*probe_test_label;
-static lv_obj_t *health_button,*health_dot,*diagnostic_modal,*diagnostic_text,*diagnostic_close_button;
+static lv_obj_t *health_button,*health_dot,*diagnostic_modal,*diagnostic_close_button;
+static lv_obj_t *diagnostic_cells[7],*diagnostic_badges[7],*diagnostic_dots[7];
+static lv_obj_t *web_access_label,*ship_title,*ship_detail,*ship_note,*ship_map,*ship_markers[ROOM_SHIP_LIMIT],*cottage_marker;
+static lv_obj_t *ship_map_note;
+static lv_image_dsc_t ship_map_desc;
+static void *ship_map_pixels;
+static double ship_bounds[4];
+static unsigned selected_ship;
+static room_ships_t ship_view;
+static atomic_uint frame_last_us,frame_max_us,frame_slow,lvgl_free,lvgl_largest;
+static int64_t frame_started;
 static lv_obj_t *blind_slats[5],*blind_rail,*heater_fins[4],*heater_rays[3];
 static lv_image_dsc_t image_desc;
 static void *image_pixels;
@@ -162,7 +175,7 @@ static void network_task(void *arg)
 }
 static bool camera_current(unsigned generation)
 {
-    model_t m=snapshot();return !room_controller_fallback() && room_wifi_connected() && !m.settings_open && m.page==3 && m.generation==generation && current(m.ha_at)&&m.items[10].available;
+    model_t m=snapshot();return !room_ota_busy() && !room_controller_fallback() && room_wifi_connected() && !m.settings_open && m.page==3 && m.generation==generation && current(m.ha_at)&&m.items[10].available;
 }
 /* Caller holds the display lock; ownership of decoded PSRAM pixels transfers here. */
 static void camera_present(void *pixels,unsigned width,unsigned height,unsigned bytes,bool fill)
@@ -242,10 +255,10 @@ static void camera_task(void *arg)
 static void enabled(lv_obj_t *b,bool value) { if(value)lv_obj_remove_state(b,LV_STATE_DISABLED);else lv_obj_add_state(b,LV_STATE_DISABLED); }
 static void select_page(unsigned p)
 {
-    visible_page=p;last_touch=esp_timer_get_time();
+    visible_page=p;last_touch=esp_timer_get_time();room_ships_active(p==4);
     if(settings_modal)lv_obj_add_flag(settings_modal,LV_OBJ_FLAG_HIDDEN);
     if(diagnostic_modal)lv_obj_add_flag(diagnostic_modal,LV_OBJ_FLAG_HIDDEN);
-    for(unsigned n=0;n<4;++n){if(n==p)lv_obj_remove_flag(body[n],LV_OBJ_FLAG_HIDDEN);else lv_obj_add_flag(body[n],LV_OBJ_FLAG_HIDDEN);
+    for(unsigned n=0;n<5;++n){if(n==p)lv_obj_remove_flag(body[n],LV_OBJ_FLAG_HIDDEN);else lv_obj_add_flag(body[n],LV_OBJ_FLAG_HIDDEN);
         lv_obj_set_style_bg_color(nav[n],lv_color_hex(n==p?0x64dfc4:0x151f2d),0);lv_obj_set_style_text_color(nav[n],lv_color_hex(n==p?0x0b111b:0x92a3b8),0);}
     xSemaphoreTake(mutex,portMAX_DELAY);model.page=p;model.settings_open=false;++model.generation;xSemaphoreGive(mutex);
     lv_obj_add_flag(camera_image,LV_OBJ_FLAG_HIDDEN);
@@ -270,7 +283,7 @@ static void gesture(lv_event_t *e)
     if(snapshot().settings_open)return;
     lv_indev_t *input=lv_indev_active();if(!input)return;
     lv_dir_t d=lv_indev_get_gesture_dir(input);
-    if(d==LV_DIR_LEFT||d==LV_DIR_RIGHT){select_page((visible_page+(d==LV_DIR_LEFT?1:3))%4);lv_indev_wait_release(input);}
+    if(d==LV_DIR_LEFT||d==LV_DIR_RIGHT){select_page((visible_page+(d==LV_DIR_LEFT?1:4))%5);lv_indev_wait_release(input);}
 }
 static void send_event(lv_event_t *e)
 {
@@ -345,7 +358,7 @@ static void open_settings(void)
     last_touch=esp_timer_get_time();
     if(diagnostic_modal)lv_obj_add_flag(diagnostic_modal,LV_OBJ_FLAG_HIDDEN);
     if(!settings_modal){
-        settings_modal=panel(lv_screen_active(),12,57,456,CONFIG_ROOM_SENSOR==3?300:260,CARD,18);
+        settings_modal=panel(lv_screen_active(),12,57,456,364,CARD,18);
         lv_obj_add_flag(settings_modal,LV_OBJ_FLAG_CLICKABLE);
         label(settings_modal,"Settings",20,16,240,&lv_font_montserrat_24);
         settings_close_button=button(settings_modal,"Close",342,12,94,34,settings_close_event,0);
@@ -357,8 +370,11 @@ static void open_settings(void)
         lv_obj_add_event_cb(settings_volume,settings_volume_event,LV_EVENT_RELEASED,NULL);
         button(settings_modal,LV_SYMBOL_PLAY "  Test sound",24,150,408,42,sound_test_event,0);
         settings_camera_button=button(settings_modal,"",24,202,408,40,settings_camera_event,0);
-        if(CONFIG_ROOM_SENSOR==3)probe_test_label=label(settings_modal,"BMP/BME280 test: waiting for sensor",24,256,408,&lv_font_montserrat_16);
+        web_access_label=label(settings_modal,"",24,254,408,&lv_font_montserrat_14);
+        if(CONFIG_ROOM_SENSOR==3)probe_test_label=label(settings_modal,"BMP/BME280 test: waiting for sensor",24,324,408,&lv_font_montserrat_14);
     }
+    char address[64];room_wifi_address(address,sizeof(address));
+    lv_label_set_text_fmt(web_access_label,"Web: %s\nAccess code: %s",address,room_settings_admin_code());
     lv_slider_set_value(settings_volume,(int32_t)room_audio_get_volume(),LV_ANIM_OFF);
     lv_label_set_text_fmt(settings_volume_label,"Volume: %u%%%s",room_audio_get_volume(),room_audio_get_volume()?"":" (muted)");
     xSemaphoreTake(mutex,portMAX_DELAY);model.settings_open=true;++model.generation;bool fill=model.camera_fill;xSemaphoreGive(mutex);
@@ -380,7 +396,17 @@ static void diagnostics_event(lv_event_t *e)
         lv_obj_add_flag(diagnostic_modal,LV_OBJ_FLAG_CLICKABLE);
         label(diagnostic_modal,"Connections",20,16,290,&lv_font_montserrat_24);
         diagnostic_close_button=button(diagnostic_modal,"Close",342,12,94,34,diagnostics_close,0);
-        diagnostic_text=label(diagnostic_modal,"",24,67,408,&lv_font_montserrat_16);
+        label(diagnostic_modal,"SERVICE",24,60,176,&lv_font_montserrat_14);
+        label(diagnostic_modal,"STATUS",224,60,208,&lv_font_montserrat_14);
+        const char *names[]={"Wi-Fi","Home Assistant","Heat controller","ESP-NOW","Local sensor","Ship tracking","MQTT climate"};
+        for(unsigned i=0;i<7;++i){
+            label(diagnostic_modal,names[i],24,91+i*31,190,&lv_font_montserrat_16);
+            diagnostic_badges[i]=panel(diagnostic_modal,220,86+i*31,212,28,CARD,8);
+            diagnostic_dots[i]=panel(diagnostic_badges[i],9,10,8,8,MUTED,4);lv_obj_set_style_border_width(diagnostic_dots[i],0,0);
+            diagnostic_cells[i]=label(diagnostic_badges[i],"",26,6,180,&lv_font_montserrat_14);
+        }
+        label(diagnostic_modal,"Green: connected   Yellow: not configured",24,316,408,&lv_font_montserrat_14);
+        label(diagnostic_modal,"Red: offline / stale   Orange: ESP-NOW",24,337,408,&lv_font_montserrat_14);
     }
     xSemaphoreTake(mutex,portMAX_DELAY);model.settings_open=true;++model.generation;xSemaphoreGive(mutex);
     lv_obj_remove_flag(diagnostic_modal,LV_OBJ_FLAG_HIDDEN);lv_obj_move_to_index(diagnostic_modal,-1);
@@ -409,9 +435,104 @@ static void heater_icon(lv_obj_t *parent)
     icon_bar(p,4,40,4,6,0x647386,1);icon_bar(p,28,40,4,6,0x647386,1);
     for(unsigned n=0;n<3;++n){heater_rays[n]=icon_bar(p,7+n*10,2+(n==1?0:3),2,7,AMBER,1);lv_obj_add_flag(heater_rays[n],LV_OBJ_FLAG_HIDDEN);}
 }
+static void ship_select(lv_event_t *e){selected_ship=(unsigned)(uintptr_t)lv_event_get_user_data(e);last_touch=esp_timer_get_time();}
+static void ship_change(lv_event_t *e){
+    int delta=(int)(intptr_t)lv_event_get_user_data(e);last_touch=esp_timer_get_time();
+    if(ship_view.count)selected_ship=(selected_ship+ship_view.count+delta)%ship_view.count;
+}
+static void refresh_ships(void)
+{
+    double bounds[4];void *pixels=room_ships_take_map(bounds);
+    if(pixels){
+        lv_obj_add_flag(ship_map,LV_OBJ_FLAG_HIDDEN);lv_image_cache_drop(&ship_map_desc);free(ship_map_pixels);ship_map_pixels=pixels;
+        memcpy(ship_bounds,bounds,sizeof(ship_bounds));
+        ship_map_desc=(lv_image_dsc_t){.header={.magic=LV_IMAGE_HEADER_MAGIC,.cf=LV_COLOR_FORMAT_RGB565,.w=456,.h=400,.stride=912},.data_size=456*400*2,.data=pixels};
+        lv_image_set_src(ship_map,&ship_map_desc);lv_image_set_scale(ship_map,154);lv_obj_align(ship_map,LV_ALIGN_CENTER,0,0);
+        lv_obj_remove_flag(ship_map,LV_OBJ_FLAG_HIDDEN);
+    }
+    bool fresh=ship_view.service;unsigned count=fresh?ship_view.count:0;
+    if(selected_ship>=count)selected_ship=0;
+    lv_label_set_text_fmt(ship_title,"Ships nearby  /  %u mi",room_settings_ship_range());
+    if(!room_settings_ships_enabled())lv_label_set_text(ship_detail,"Enable ship tracking in web settings");
+    else if(!fresh)lv_label_set_text(ship_detail,"Ship service offline\n\nRetrying automatically");
+    else if(!count)lv_label_set_text(ship_detail,"No ships within this range");
+    else{
+        room_ship_t *v=&ship_view.ships[selected_ship];char speed[32];
+        if(v->speed_valid)snprintf(speed,sizeof(speed),"%.1f kn",v->speed);else snprintf(speed,sizeof(speed),"Speed unavailable");
+        unsigned age=v->age+(esp_timer_get_time()-ship_view.received_at)/1000000;
+        char detail[384];snprintf(detail,sizeof(detail),"%s\n\n%.1f mi / %s\n\n%s\n\n%s\n\n%s / %u min old",v->name,v->distance,speed,v->kind,v->destination,age>600?"STALE":"AIS",age/60);
+        lv_label_set_text(ship_detail,detail);
+    }
+    lv_label_set_text_fmt(ship_note,!fresh?"Waiting for ship service":!ship_view.feed?"AIS feed offline; cached positions shown":"%u nearby / %u shown / refresh 10 s",ship_view.nearby,count);
+    bool map_ready=ship_map_pixels!=NULL;
+    if(map_ready)lv_obj_add_flag(ship_map_note,LV_OBJ_FLAG_HIDDEN);
+    else lv_label_set_text(ship_map_note,fresh?"Map loading...\nRetrying automatically":"Waiting for ship service");
+    if(map_ready){
+        float x=(ship_view.longitude-ship_bounds[0])/(ship_bounds[2]-ship_bounds[0])*274;
+        float y=(ship_bounds[3]-ship_view.latitude)/(ship_bounds[3]-ship_bounds[1])*240;
+        lv_obj_set_pos(cottage_marker,(int)x-8,(int)y-8);lv_obj_remove_flag(cottage_marker,LV_OBJ_FLAG_HIDDEN);
+    }
+    for(unsigned i=0;i<ROOM_SHIP_LIMIT;++i){
+        if(map_ready&&i<count){room_ship_t *v=&ship_view.ships[i];
+            float x=(v->lon-ship_bounds[0])/(ship_bounds[2]-ship_bounds[0])*274,y=(ship_bounds[3]-v->lat)/(ship_bounds[3]-ship_bounds[1])*240;
+            if(x<0||x>274||y<0||y>240){lv_obj_add_flag(ship_markers[i],LV_OBJ_FLAG_HIDDEN);continue;}
+            lv_obj_set_pos(ship_markers[i],(int)x-11,(int)y-11);
+            lv_obj_set_style_bg_color(ship_markers[i],lv_color_hex(i==selected_ship?MINT:AMBER),0);tint(ship_markers[i],INK);
+            lv_obj_remove_flag(ship_markers[i],LV_OBJ_FLAG_HIDDEN);
+        }else lv_obj_add_flag(ship_markers[i],LV_OBJ_FLAG_HIDDEN);
+    }
+}
+static void frame_event(lv_event_t *e)
+{
+    if(lv_event_get_code(e)==LV_EVENT_REFR_START)frame_started=esp_timer_get_time();
+    else if(frame_started){unsigned elapsed=(unsigned)(esp_timer_get_time()-frame_started);frame_last_us=elapsed;
+        if(elapsed>frame_max_us)frame_max_us=elapsed;
+        if(elapsed>50000)++frame_slow;
+        frame_started=0;}
+}
+bool room_display_camera_fill(void){return mutex&&snapshot().camera_fill;}
+void room_display_set_camera_fill(bool fill){if(mutex){xSemaphoreTake(mutex,portMAX_DELAY);model.camera_fill=fill;++model.generation;xSemaphoreGive(mutex);}}
+cJSON *room_display_status(void)
+{
+    model_t m=snapshot();bool wifi=room_wifi_connected(),radio=room_controller_fallback();
+    bool ha=wifi&&!radio&&m.ha_ok&&current(m.ha_at),heat=m.climate_ok&&current(m.climate_at);
+    room_health_t health={.wifi=wifi,.ha=ha,.controller=heat,.radio=radio,.ha_configured=*room_settings_ha_token()!=0,
+        .ship_configured=room_settings_ships_enabled(),.ship_online=room_ships_online()};
+    room_health_status_t h=room_health_status(health);cJSON *j=cJSON_CreateObject();
+    cJSON_AddStringToObject(j,"summary",h.text);cJSON_AddStringToObject(j,"summary_kind",h.color==0x64dfc4?"ok":h.color==0xffa24c?"fallback":h.color==0xf5cc65?"unconfigured":"offline");cJSON *a=cJSON_AddArrayToObject(j,"services");
+    const char *names[]={"Wi-Fi","Home Assistant","Heat controller","ESP-NOW","Local sensor","Ship tracking","MQTT climate"};
+    bool probe=m.probe_at&&esp_timer_get_time()-m.probe_at<30000000;
+    int mq=room_controller_mqtt_state();
+    bool heat_configured=room_controller_radio_ready()||(strlen(room_settings_controller_token())==32&&*room_settings_controller_url());
+    const char *words[]={wifi?"Connected":"Disconnected",!health.ha_configured?"Not configured":ha?"Online":radio?"Paused (ESP-NOW)":"Offline",
+        !heat_configured?"Not configured":heat?(radio?"ESP-NOW":"Online"):"Offline",!room_controller_radio_ready()?"Not configured":radio&&heat?"Active":"Standby",
+        !CONFIG_ROOM_SENSOR?"Not configured":probe?"Fresh":"No fresh sample",!health.ship_configured?"Not configured":health.ship_online?"Online":"Offline",
+        mq==2?"Connected":mq==0?"Not configured":"Offline"};
+    const char *colors[]={wifi?"ok":"offline",!health.ha_configured?"unconfigured":ha?"ok":radio?"fallback":"offline",
+        !heat_configured?"unconfigured":heat?(radio?"fallback":"ok"):"offline",!room_controller_radio_ready()?"unconfigured":radio&&heat?"fallback":"standby",
+        !CONFIG_ROOM_SENSOR?"unconfigured":probe?"ok":"offline",!health.ship_configured?"unconfigured":health.ship_online?"ok":"offline",
+        mq==2?"ok":mq==0?"unconfigured":"offline"};
+    for(unsigned i=0;i<7;++i){cJSON *v=cJSON_CreateObject();cJSON_AddStringToObject(v,"name",names[i]);cJSON_AddStringToObject(v,"state",words[i]);cJSON_AddStringToObject(v,"kind",colors[i]);cJSON_AddItemToArray(a,v);}
+    if(probe)cJSON_AddNumberToObject(j,"temperature_f",m.probe_f);
+    if(heat&&m.has_target)cJSON_AddNumberToObject(j,"target_f",m.target);
+    cJSON *perf=cJSON_AddObjectToObject(j,"performance");
+    cJSON_AddNumberToObject(perf,"frame_ms",frame_last_us/1000.0);cJSON_AddNumberToObject(perf,"max_frame_ms",frame_max_us/1000.0);
+    cJSON_AddNumberToObject(perf,"frames_over_50ms",frame_slow);
+    cJSON_AddNumberToObject(perf,"free_lvgl",lvgl_free);cJSON_AddNumberToObject(perf,"largest_lvgl",lvgl_largest);
+    cJSON_AddNumberToObject(perf,"free_internal",heap_caps_get_free_size(MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT));
+    cJSON_AddNumberToObject(perf,"largest_internal",heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT));
+    cJSON_AddNumberToObject(perf,"free_psram",heap_caps_get_free_size(MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT));
+    room_ships_t *ships=malloc(sizeof(*ships));if(ships){room_ships_snapshot(ships);cJSON *p=cJSON_AddObjectToObject(j,"ships");
+        cJSON_AddNumberToObject(p,"nearby",ships->nearby);cJSON_AddNumberToObject(p,"count",ships->count);cJSON_AddNumberToObject(p,"request_ms",ships->latency_ms);
+        cJSON_AddNumberToObject(p,"bytes",ships->bytes);cJSON_AddNumberToObject(p,"failures",ships->failures);free(ships);}
+    cJSON_AddStringToObject(j,"integration_sync",room_controller_sync_state());return j;
+}
 static void refresh(lv_timer_t *timer)
 {
+    static unsigned monitor_tick;
+    if((++monitor_tick%4)==0){lv_mem_monitor_t mem;lv_mem_monitor(&mem);lvgl_free=mem.free_size;lvgl_largest=mem.free_biggest_size;}
     model_t m=snapshot();int64_t now=esp_timer_get_time();
+    room_ships_snapshot(&ship_view);if(visible_page==4)refresh_ships();
     if((visible_page||m.settings_open)&&now-last_touch>60000000){select_page(0);m=snapshot();}
     if(probe_test_label){
         if(m.probe_at&&now-m.probe_at<30000000){
@@ -424,20 +545,30 @@ static void refresh(lv_timer_t *timer)
     bool ha=!radio&&wifi&&m.ha_ok&&current(m.ha_at),climate=m.climate_ok&&current(m.climate_at);
     room_health_t health={.wifi=wifi,.ha=ha,.controller=climate,.radio=radio,
         .local_sensor=m.probe_at&&now-m.probe_at<30000000,
-        .ha_configured=*room_settings_ha_token()!=0,.radio_configured=room_controller_radio_ready()};
+        .ha_configured=*room_settings_ha_token()!=0,.radio_configured=room_controller_radio_ready(),
+        .ship_configured=room_settings_ships_enabled(),.ship_online=room_ships_online()};
     room_health_status_t status=room_health_status(health);
     if(status.other_faults)lv_label_set_text_fmt(connection,"%s +%u",status.text,status.other_faults);
     else lv_label_set_text(connection,status.text);
     tint(connection,status.color);lv_obj_set_style_bg_color(health_dot,lv_color_hex(status.color),0);
     lv_obj_set_style_bg_color(lv_screen_active(),lv_color_hex(!ha&&!climate?0x281218:INK),0);
-    if(diagnostic_text&&!lv_obj_has_flag(diagnostic_modal,LV_OBJ_FLAG_HIDDEN)){
-        lv_label_set_text_fmt(diagnostic_text,
-            "Wi-Fi                 %s\n\nHome Assistant   %s\n\nHeat controller    %s\n\nESP-NOW            %s\n\nLocal sensor        %s\n\nShip tracking       Not configured",
-            wifi?"Connected":"Disconnected",
+    bool heat_configured=room_controller_radio_ready()||(strlen(room_settings_controller_token())==32&&*room_settings_controller_url());
+    if(diagnostic_cells[0]&&!lv_obj_has_flag(diagnostic_modal,LV_OBJ_FLAG_HIDDEN)){
+        const char *words[7]={wifi?"Connected":"Disconnected",
             !health.ha_configured?"Not configured":radio?"Paused (ESP-NOW)":ha?"Online":"Offline",
-            climate?(radio?"Online / ESP-NOW":"Online / Wi-Fi"):"Offline",
-            !health.radio_configured?"Not configured":room_controller_radio_online()?(radio?"Active":"Ready"):"No recent reply",
-            CONFIG_ROOM_SENSOR==0?"Not configured":health.local_sensor?"Fresh":"No fresh sample");
+            !heat_configured?"Not configured":climate?(radio?"ESP-NOW":"Online"):"Offline",
+            !health.radio_configured?"Not configured":radio&&climate?"Active":room_controller_radio_online()?"Ready":"Standby",
+            CONFIG_ROOM_SENSOR==0?"Not configured":health.local_sensor?"Fresh":"No fresh sample",
+            !health.ship_configured?"Not configured":health.ship_online?"Online":ship_view.service?"AIS feed offline":"Offline",
+            room_controller_mqtt_state()==2?"Connected":room_controller_mqtt_state()==0?"Not configured":"Offline"};
+        unsigned kinds[7]={wifi?0:2,!health.ha_configured?1:ha?0:radio?3:2,!heat_configured?1:climate?(radio?3:0):2,
+            !health.radio_configured?1:radio&&climate?3:room_controller_radio_online()?0:1,
+            CONFIG_ROOM_SENSOR==0?1:health.local_sensor?0:2,!health.ship_configured?1:health.ship_online?0:2,
+            room_controller_mqtt_state()==2?0:room_controller_mqtt_state()==0?1:2};
+        const uint32_t colors[]={0x64dfc4,0xf5cc65,0xff6464,0xffa24c},fills[]={0x153a30,0x3b341c,0x3c202a,0x3c2c1d};
+        for(unsigned i=0;i<7;++i){lv_label_set_text(diagnostic_cells[i],words[i]);tint(diagnostic_cells[i],colors[kinds[i]]);
+            lv_obj_set_style_bg_color(diagnostic_dots[i],lv_color_hex(colors[kinds[i]]),0);
+            lv_obj_set_style_bg_color(diagnostic_badges[i],lv_color_hex(fills[kinds[i]]),0);}
     }
     if(*m.notice&&now<m.notice_until){lv_label_set_text(notice,m.notice);lv_obj_remove_flag(notice,LV_OBJ_FLAG_HIDDEN);}
     else lv_obj_add_flag(notice,LV_OBJ_FLAG_HIDDEN);
@@ -527,6 +658,8 @@ static void control_button(lv_obj_t *p,const char *text,int key,int action,int x
 {control[key][action]=button(p,text,x,y,w,42,send_event,key*6+action);enabled(control[key][action],false);}
 static void build_ui(void)
 {
+    lv_display_add_event_cb(lv_display_get_default(),frame_event,LV_EVENT_REFR_START,NULL);
+    lv_display_add_event_cb(lv_display_get_default(),frame_event,LV_EVENT_REFR_READY,NULL);
     lv_obj_t *screen=lv_screen_active();lv_obj_set_style_bg_color(screen,lv_color_hex(INK),0);
     tint(screen,TEXT);lv_obj_set_style_text_font(screen,&lv_font_montserrat_16,0);
     lv_obj_remove_flag(screen,LV_OBJ_FLAG_SCROLLABLE);lv_obj_add_event_cb(screen,gesture,LV_EVENT_GESTURE,NULL);
@@ -536,11 +669,11 @@ static void build_ui(void)
     connection=label(health_button,"Offline",34,11,204,&lv_font_montserrat_16);
     lv_obj_set_height(connection,24);lv_obj_remove_flag(connection,LV_OBJ_FLAG_CLICKABLE);
     settings_button=button(screen,LV_SYMBOL_SETTINGS,416,8,48,40,settings_event,0);
-    const char *nav_text[]={LV_SYMBOL_HOME "  Climate",LV_SYMBOL_POWER "  Home",LV_SYMBOL_LOOP "  Laundry",LV_SYMBOL_VIDEO "  Camera"};
-    for(int n=0;n<4;++n){
+    const char *nav_text[]={"Climate","Home","Laundry","Camera","Ships"};
+    for(int n=0;n<5;++n){
         body[n]=lv_obj_create(screen);lv_obj_remove_style_all(body[n]);lv_obj_set_pos(body[n],12,57);lv_obj_set_size(body[n],456,364);
         lv_obj_remove_flag(body[n],LV_OBJ_FLAG_SCROLLABLE|LV_OBJ_FLAG_CLICKABLE);lv_obj_add_flag(body[n],LV_OBJ_FLAG_GESTURE_BUBBLE);
-        nav[n]=button(screen,nav_text[n],12+n*116,429,108,44,nav_event,n);
+        nav[n]=button(screen,nav_text[n],12+n*93,429,84,44,nav_event,n);
         lv_obj_set_style_text_font(nav[n],&lv_font_montserrat_14,0);
     }
     /* Transient error toast overlays content; no persistent footer takes space. */
@@ -612,6 +745,23 @@ static void build_ui(void)
     lv_obj_set_style_clip_corner(camera_frame,false,0);
     camera_image=lv_image_create(camera_frame);lv_obj_add_flag(camera_image,LV_OBJ_FLAG_HIDDEN);lv_obj_add_flag(camera_image,LV_OBJ_FLAG_GESTURE_BUBBLE);
     camera_note=label(body[3],"Loading camera...",0,346,456,&lv_font_montserrat_14);centered(camera_note);tint(camera_note,MUTED);
+    ship_title=label(body[4],"Ships nearby",0,0,456,&lv_font_montserrat_24);
+    lv_obj_t *map_frame=panel(body[4],0,35,278,246,0x102837,0);
+    lv_obj_set_style_clip_corner(map_frame,false,0);lv_obj_remove_flag(map_frame,LV_OBJ_FLAG_OVERFLOW_VISIBLE);
+    ship_map_note=label(map_frame,"Map loading...",16,96,246,&lv_font_montserrat_16);centered(ship_map_note);tint(ship_map_note,MUTED);
+    ship_map=lv_image_create(map_frame);lv_obj_add_flag(ship_map,LV_OBJ_FLAG_HIDDEN);
+    cottage_marker=label(map_frame,LV_SYMBOL_HOME,128,108,24,&lv_font_montserrat_16);tint(cottage_marker,MINT);lv_obj_add_flag(cottage_marker,LV_OBJ_FLAG_HIDDEN);
+    for(unsigned i=0;i<ROOM_SHIP_LIMIT;++i){
+        ship_markers[i]=button(map_frame,"",0,0,26,26,ship_select,i);lv_obj_set_style_radius(ship_markers[i],13,0);
+        lv_obj_set_style_text_font(ship_markers[i],&lv_font_montserrat_14,0);lv_label_set_text_fmt(lv_obj_get_child(ship_markers[i],0),"%u",i+1);
+        lv_obj_add_flag(ship_markers[i],LV_OBJ_FLAG_HIDDEN);
+    }
+    ship_detail=label(body[4],"Waiting for ship service",290,38,166,&lv_font_montserrat_16);
+    lv_obj_set_height(ship_detail,240);lv_label_set_long_mode(ship_detail,LV_LABEL_LONG_DOT);
+    ship_note=label(body[4],"",0,289,456,&lv_font_montserrat_14);
+    button(body[4],"Previous",0,318,132,42,ship_change,-1);
+    button(body[4],"Next ship",144,318,132,42,ship_change,1);
+    label(body[4],"Map: OpenStreetMap",290,324,166,&lv_font_montserrat_14);
     lv_timer_create(refresh,250,NULL);select_page(0);refresh(NULL);
 }
 void room_display_start(void)
@@ -629,7 +779,7 @@ void room_display_start(void)
     ESP_ERROR_CHECK(xTaskCreate(command_task,"room_commands",10240,NULL,3,NULL)==pdPASS?ESP_OK:ESP_ERR_NO_MEM);
     ESP_ERROR_CHECK(xTaskCreate(network_task,"room_network",10240,NULL,3,NULL)==pdPASS?ESP_OK:ESP_ERR_NO_MEM);
     ESP_ERROR_CHECK(xTaskCreate(camera_task,"room_camera",8192,NULL,2,NULL)==pdPASS?ESP_OK:ESP_ERR_NO_MEM);
-    ESP_LOGI(TAG,"Native 4B ready: Climate / Home / Laundry / Camera");
+    ESP_LOGI(TAG,"Native 4B ready: Climate / Home / Laundry / Camera / Ships");
 }
 i2c_master_bus_handle_t room_display_probe_bus(int sda,int scl)
 {
@@ -639,6 +789,9 @@ i2c_master_bus_handle_t room_display_probe_bus(int sda,int scl)
 #else
 void room_display_probe_sample(float temperature_f) {(void)temperature_f;}
 void room_display_start(void) {}
+cJSON *room_display_status(void){return cJSON_CreateObject();}
+bool room_display_camera_fill(void){return false;}
+void room_display_set_camera_fill(bool fill){(void)fill;}
 i2c_master_bus_handle_t room_display_probe_bus(int sda,int scl) {return NULL;}
 #endif
 

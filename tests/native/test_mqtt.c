@@ -3,6 +3,8 @@
 #include <stdio.h>
 #include <string.h>
 #include "../../controller/main/controller_mqtt.c"
+static cottage_integration_t test_profile={.mqtt_enabled=true,.prefix="homeassistant",.name="Test thermostat",.broker="mqtt://test"};
+const cottage_integration_t *controller_integrations_get(void){return &test_profile;}
 static int64_t clock_us=1000000;
 static int subscriptions,discoveries,applied;
 static mqtt_command_t queued[8];static unsigned head,tail;
@@ -19,7 +21,7 @@ bool controller_climate_command(const char *key,float target,const char *value){
 cJSON *controller_climate_state(void){cJSON *j=cJSON_CreateObject();cJSON_AddBoolToObject(j,"fresh",true);return j;}
 static esp_mqtt_event_t command(const char *payload){static char topic[120];snprintf(topic,sizeof(topic),"%s/target/set",base);return (esp_mqtt_event_t){.topic=topic,.topic_len=(int)strlen(topic),.data=(char*)payload,.data_len=(int)strlen(payload),.total_data_len=(int)strlen(payload)};}
 int main(void){
- mqtt=(void*)1;commands=(void*)1;snprintf(identity,sizeof(identity),"test");snprintf(base,sizeof(base),"cottage/thermostat/test");
+ profile=&test_profile;mqtt=(void*)1;commands=(void*)1;snprintf(identity,sizeof(identity),"test");snprintf(base,sizeof(base),"cottage/thermostat/test");
  mqtt_event(NULL,NULL,MQTT_EVENT_CONNECTED,NULL);cycle();assert(discoveries==1&&subscriptions==4);
  for(int n=0;n<8;++n){cycle();}assert(discoveries==1&&subscriptions==4); /* retained birth cannot loop */
  esp_mqtt_event_t e=command("67");e.retain=true;mqtt_event(NULL,NULL,MQTT_EVENT_DATA,&e);cycle();assert(!applied);

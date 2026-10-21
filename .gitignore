@@ -45,3 +45,5 @@ __pycache__/
 
 /controller/*secrets.h*
 !/controller/secrets.h.example
+
+**/build-verify*/
