@@ -10,3 +10,5 @@ bool room_controller_radio_ready(void);
 bool room_controller_radio_online(void);
 
 const char *room_controller_sync_state(void);
+
+cJSON *room_controller_test(void);

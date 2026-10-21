@@ -15,6 +15,7 @@ function message(s){$('message').textContent=s;}
 function headers(){return {'Content-Type':'application/json'};}
 async function request(payload){const r=await fetch('/api/settings',{method:'POST',headers:headers(),body:JSON.stringify(payload)});const j=await r.json();if(!r.ok)throw Error(j.message||'Request failed');message(j.message);return j;}
 function actions(form,section,getPayload,caption='Save and restart display'){const row=el('div',undefined,'actions');const save=el('button',caption,'primary');save.type='submit';row.append(save);form.append(row);form.onsubmit=async e=>{e.preventDefault();save.disabled=true;try{await request({section,...getPayload()});if(caption.includes('restart')){reconnecting=true;reconnectBoot=lastStatus?.firmware?.boot_id;message('Saved. Display restarting; reconnecting to live status...');config=null;}}catch(err){message(err.message)}finally{save.disabled=false;}};return row;}
+function linkTest(parent){const b=el('button','Test Wi-Fi and ESP-NOW');b.type='button';b.onclick=async()=>{b.disabled=true;message('Testing both controller links...');try{await request({section:'controller_test'});}catch(e){message(e.message)}finally{b.disabled=false;}};parent.append(b);}
 function needConfig(){if(config)return false;$('content').append(el('p','Loading device settings...'));return true;}
 function render(){
  $('nav').replaceChildren();pages.forEach(name=>{const b=el('button',name,name===page?'selected':'');b.onclick=()=>{if(uploading)return;page=name;render();};$('nav').append(b)});
@@ -42,10 +43,12 @@ function render(){
  }else if(page==='Controller'){
   field(grid,'Thermostat controller IP, name or URL','controller',config.controller);field(grid,'Controller pairing token','controllerToken','','password',config.controller_token_configured?keep:'32-character token from controller monitor').maxLength=32;
   actions(form,'controller',()=>({controller:$('controller').value.trim(),controller_token:$('controllerToken').value.trim()}));
+  linkTest(c);
  }else if(page==='ESP-NOW'){
   c.insertBefore(el('p','Wi-Fi stays preferred. Pair both devices with the same private key. The peer below is the controller station MAC. The display station MAC is sent to the controller automatically. Applying changes restarts the controller when reachable.'),form);
   check(grid,'Enable paired fallback','enabled',config.radio.enabled);field(grid,'Controller station MAC','peer',config.radio.peer,'text','AA:BB:CC:DD:EE:FF').maxLength=17;field(grid,'Shared key (32 hex digits)','key','','password',config.radio.key_configured?keep:'Private shared key').maxLength=32;
   actions(form,'radio',()=>({enabled:$('enabled').checked,peer:$('peer').value.trim(),key:$('key').value.trim()}));
+  linkTest(c);
  }else if(page==='Ship tracking'){
   c.insertBefore(el('p','Uses the existing Tawas ship service. AIS processing and map rendering stay on CottageServices. The display caches one map, polls every 10 seconds to keep the service dashboard heartbeat online.'),form);
   check(grid,'Enable ship tracking','enabled',config.ships_enabled);field(grid,'Ship service URL','shipUrl',config.ship_url,'url');select(grid,'Range (miles)','range',String(config.ship_range),['10','30','50','75','100']);

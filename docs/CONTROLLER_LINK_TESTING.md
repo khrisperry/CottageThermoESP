@@ -1,0 +1,59 @@
+# Controller links — controller 0.5.0 / room panel 0.13.0
+
+The AtomS3 Lite uses GPIO38 for the existing servo. Magnetic position feedback is not installed or required to test communications. Boot keeps PWM disabled and position unknown. The existing simulation/live-bench calibration, arming and synchronization gates remain in force. Communication recovery cannot arm the servo. HA requests a target through the wall thermostat; it has no direct servo access.
+
+## Build and flash
+
+Use the existing ESP-IDF 6.0.1 PowerShell terminal, at the repository root:
+
+```powershell
+git switch feature/connectivity-climate-review
+git pull --ff-only
+.\tools\build-local.ps1 -Project controller
+cd controller
+idf.py -p COM13 flash monitor
+```
+
+COM13 is the previously used controller port. Use the AtomS3 Lite's current port if Windows changed it. No erase-flash is needed. After leaving the controller monitor, return to the repository root and update the panel:
+
+```powershell
+cd ..
+.\tools\build-room-4b.ps1 -Bme280Test -Flash -Monitor -Port COM14
+```
+
+Retain `-Bme280Test` only for the existing test sensor configuration. It still supplies local display readings only, not furnace control samples. Existing SHT31/SHT4x control sensing is unchanged.
+
+## Join the LAN and pair
+
+1. On the controller USB monitor, copy its pairing API token. Join `CottageThermoBench` and open `http://192.168.4.1`. Enter the token and Connect.
+2. In **Wi-Fi & thermostat connection**, enter your LAN SSID/password and save. The controller restarts. Its DHCP hostname is `CottageThermoController`. The bench AP remains available if LAN connection fails. A blank password retains the existing password only for the same secured SSID; check Open network for an open LAN. Blank SSID explicitly selects AP-only operation.
+3. Reconnect to the controller page. Record its LAN IP and **station MAC**. The page shows the channel, radio readiness, recent paired contact and HTTP link request count. Position feedback explicitly says Not installed.
+4. Open the thermostat webpage `/settings` → **Controller**. Save the controller LAN IP/URL and pairing token. After the display restarts, verify the controller is reachable over Wi-Fi.
+5. On the thermostat webpage → **ESP-NOW**, enable paired fallback, enter the controller **station MAC**, and enter a private 32-hex-digit key. Generate one locally with `python -c "import secrets; print(secrets.token_hex(16))"`. Save. The display sends its station MAC and the shared key to the controller over the paired HTTP link; the controller restarts to apply them. Wait for **Radio pairing sync: Applied** on Overview.
+6. Click **Test Wi-Fi and ESP-NOW**, available under Controller and ESP-NOW. Expect an independent controller acknowledgement for each. This only sends status requests; it neither moves the servo nor changes the selected transport or its cached lease. Settings must already be saved; the button tests the active configuration.
+
+Encrypted ESP-NOW requires both radios on the same channel. With both connected, their APs must use the same 2.4 GHz channel to pass the radio test. Disconnected devices search channels and pause search when a bench/setup AP client is attached. Disconnect phones/laptops from the devices' setup APs before outage tests. A one-time radio probe proves the exchange at that moment; radio status can return to standby while normal control traffic uses Wi-Fi.
+
+## Omada outage test
+
+Leave USB monitors attached so the test does not depend on access to the blocked device's webpage. Record times; physical handover timing has not been established by host tests.
+
+| Test | Action in Omada | Expected result to verify on hardware |
+| --- | --- | --- |
+| Baseline | Both allowed | Wi-Fi controller status succeeds; independent radio test acknowledges |
+| Controller loss | Block controller client | Thermostat changes to ESPNOW after a valid paired reply; controller remains responsive through radio |
+| Recovery | Unblock controller | Automatic Wi-Fi reconnection; thermostat returns to Wi-Fi and refreshes HA state |
+| Thermostat loss | Block thermostat client only | Local thermostat UI uses ESPNOW; HA features become unavailable during fallback |
+| Both lose LAN | Block both clients | Direct channel rendezvous and paired replies continue without router/broker/HA |
+| Sustained outage | Keep both blocked for one hour | Watch for restart loops, stale status and loss of paired replies |
+| Final recovery | Unblock both | Automatic return to Wi-Fi, no re-pairing, no servo arming or homing |
+
+Observe actual association/IP state in the USB logs: a block that only prevents Internet access while local device-to-device HTTP remains available will not exercise fallback. Keep the devices powered. The panel logs `Controller link switched to ESP-NOW` and `Wi-Fi controller link restored`; controller logs include disconnect reasons and LAN IP acquisition. First verify communication/status and target round trips without arming output. A target accepted with missing calibration/position can be stored while physical motion correctly remains blocked.
+
+Software validation evidence is recorded in the change description. Mock transport tests do not establish actual radio range, AP behavior, channel rendezvous time or servo position.
+
+## Host validation for this change
+
+Three engine/protocol/network-profile tests and seventeen native service tests pass. The focused tests execute the real room transport and settings handlers with mocked HTTP/radio/NVS, including independent path acknowledgements, rejected status replies, no control mutations from diagnostics, no transport/lease changes, ambiguous mutation no-retry, controller reboot, an hour outage and Wi-Fi recovery. Network tests cover field bounds, retained passwords, new-network password requirements, open networks and AP-only configuration. Both embedded webpage scripts pass JavaScript syntax checks.
+
+The native LVGL page-rendering fixture was not run in this checkout because the JPEG managed dependency was unavailable; the other seventeen native service tests passed. These are host checks, not an ESP-IDF firmware build or physical radio verification. Build/flash both projects locally with the commands above.

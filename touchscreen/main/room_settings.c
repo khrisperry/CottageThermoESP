@@ -179,6 +179,12 @@ static esp_err_t save(httpd_req_t *r)
     }else if(!strcmp(section,"mqtt_test")){
         valid=room_mqtt_reannounce();restart=false;
     }
+    if(!strcmp(section,"controller_test")){
+        cJSON_Delete(j);memset(next,0,sizeof(*next));free(next);
+        cJSON *result=room_controller_test();
+        if(!result)return reply(r,409,"Controller link is busy. Retry the test.");
+        return json_reply(r,200,result);
+    }
     cJSON_Delete(j);
     if(!valid){memset(next,0,sizeof(*next));free(next);return reply(r,400,"Settings invalid or device busy. Check the fields; no configuration was saved.");}
     if(restart){

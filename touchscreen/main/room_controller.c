@@ -9,6 +9,7 @@
 #include <stdio.h>
 #include <string.h>
 #include "esp_random.h"
+#include "esp_log.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
@@ -50,8 +51,8 @@ static bool exchange(tl_packet_t p,tl_packet_t *r,bool probe)
 {
     int64_t start=esp_timer_get_time();bool ok=false;
     if(probe){
-        if(http(&p,r)&&matching(&p,r)){fallback=false;ok=true;}
-        else if(tl_radio_exchange(&p,r)==ESP_OK&&matching(&p,r)){fallback=true;ok=true;}
+        if(http(&p,r)&&matching(&p,r)&&r->result==TL_OK){if(fallback)ESP_LOGI("controller_link","Wi-Fi controller link restored");fallback=false;ok=true;}
+        else if(tl_radio_exchange(&p,r)==ESP_OK&&matching(&p,r)&&r->result==TL_OK){if(!fallback)ESP_LOGW("controller_link","Controller link switched to ESP-NOW");fallback=true;ok=true;}
     }else ok=fallback?(tl_radio_exchange(&p,r)==ESP_OK&&matching(&p,r)):(http(&p,r)&&matching(&p,r));
     if(ok&&esp_timer_get_time()-start<3000000){latest=*r;received_at=esp_timer_get_time();}
     else if(probe){received_at=0;/* Keep HA disabled until a Wi-Fi controller status succeeds. */}
@@ -72,6 +73,25 @@ cJSON *room_controller_status(void)
     if(xSemaphoreTake(io,pdMS_TO_TICKS(100))!=pdTRUE)return NULL;
     tl_packet_t p=tl_request(TL_STATUS,client,++sequence),r;
     bool ok=exchange(p,&r,true);cJSON *j=ok&&r.result==TL_OK?status_json(&r):NULL;
+    xSemaphoreGive(io);return j;
+}
+/* Read-only probes prove each transport independently, even with healthy Wi-Fi.
+ * Do not change the selected transport, cached lease or authoritative state. */
+cJSON *room_controller_test(void)
+{
+    if(xSemaphoreTake(io,pdMS_TO_TICKS(100))!=pdTRUE)return NULL;
+    tl_packet_t p=tl_request(TL_STATUS,client,++sequence),r;
+    bool wifi_ok=http(&p,&r)&&matching(&p,&r)&&r.result==TL_OK;
+    p=tl_request(TL_STATUS,client,++sequence);
+    bool radio_ok=tl_radio_exchange(&p,&r)==ESP_OK&&matching(&p,&r)&&r.result==TL_OK;
+    cJSON *j=cJSON_CreateObject();
+    cJSON_AddBoolToObject(j,"wifi_ok",wifi_ok);
+    cJSON_AddBoolToObject(j,"radio_ready",tl_radio_configured());
+    cJSON_AddBoolToObject(j,"radio_ok",radio_ok);
+    char message[180];snprintf(message,sizeof(message),"Wi-Fi: %s. ESP-NOW: %s. Read-only test; no servo movement.",
+        wifi_ok?"controller acknowledged":"no valid reply",
+        radio_ok?"controller acknowledged":tl_radio_configured()?"no valid reply (check peer/key/channel)":"not configured");
+    cJSON_AddStringToObject(j,"message",message);
     xSemaphoreGive(io);return j;
 }
 static bool mutation(uint8_t operation,float value,int *code)

@@ -27,6 +27,7 @@ void room_display_set_camera_fill(bool fill){}
 cJSON *room_display_status(void){return cJSON_CreateObject();}
 cJSON *room_wifi_status(void){return cJSON_CreateObject();}
 bool room_wifi_submit(const char *ssid,const char *pw,bool open){return true;}
+cJSON *room_controller_test(void){cJSON *j=cJSON_CreateObject();cJSON_AddStringToObject(j,"message","Wi-Fi: controller acknowledged. ESP-NOW: controller acknowledged.");return j;}
 cJSON *room_controller_status(void){return cJSON_CreateObject();}
 int nvs_open(const char *name,int mode,unsigned *h){*h=1;return 0;}
 void nvs_close(unsigned h){}
@@ -62,6 +63,8 @@ int main(int argc,char **argv){
  r=req(NULL,0,"application/json");get(&r);assert(r.code==200&&!strstr(r.response,"keep-ha-token")); /* Local configuration has no PIN gate. */
  const char *mqtt="{\"section\":\"mqtt\",\"enabled\":true,\"broker\":\"mqtt://192.0.2.30:1883\",\"username\":\"ha\",\"password\":\"\",\"prefix\":\"homeassistant\",\"name\":\"Cottage\"}";
  r=req(mqtt,strlen(mqtt),"application/json");save(&r);assert(r.code==200);reboot_pending=false;memset(&current,0,sizeof(current));room_settings_init();cJSON *sync=room_settings_controller_integrations();cJSON *m=cJSON_GetObjectItem(sync,"mqtt");assert(!m);cJSON_Delete(sync); /* MQTT credentials are never forwarded to the controller. */
+ const char *probe="{\"section\":\"controller_test\"}";size_t previous_size=stored_size;
+ r=req(probe,strlen(probe),"application/json");save(&r);assert(r.code==200&&strstr(r.response,"acknowledged")&&!reboot_pending&&stored_size==previous_size);
  uint8_t image[4096]={0};esp_image_header_t header={.magic=ESP_IMAGE_HEADER_MAGIC,.chip_id=ESP_CHIP_ID_ESP32S3};esp_app_desc_t desc={.magic_word=ESP_APP_DESC_MAGIC_WORD,.project_name="cottage_thermo_room_4b"};
  memcpy(image,&header,sizeof(header));memcpy(image+sizeof(header)+sizeof(esp_image_segment_header_t),&desc,sizeof(desc));assert(valid_header(image,sizeof(image)));
  if(argc>1){FILE *file=fopen(argv[1],"rb");assert(file);uint8_t actual[1024];assert(fread(actual,1,sizeof(actual),file)==sizeof(actual));fclose(file);assert(valid_header(actual,sizeof(actual)));}

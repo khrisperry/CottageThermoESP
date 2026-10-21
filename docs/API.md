@@ -33,3 +33,11 @@ Room client serves its own paired GET `/api/status` proxy and POST `/api/target`
 ## Room transport endpoint (controller v0.3.0)
 
 `POST /api/link` requires the existing `X-Thermo-Token` and a JSON `packet` field containing the exact hex-encoded versioned `tl_packet_t` envelope from `shared/thermo_link/link_protocol.h`. Replies use the same field/envelope. This endpoint serves status, bounded target writes and fresh primary-probe readings only. HTTP 200 carries the application result in the reply packet; transport success is not command acceptance. HTTP and paired ESP-NOW use the same handler, boot nonce, short monotonic lease and sequence guard. Existing browser/bench endpoints are retained. See CONNECTIVITY_REVIEW.md for transport handover and setup; this endpoint adds no raw actuation or arming operations.
+
+## Controller network setup (v0.5.0)
+
+`GET /api/status` now includes `position_feedback: "Not installed"` and a `network` object with `hostname`, `station_mac`, `ssid`, `connected`, `ip`, `channel`, `password_configured`, `radio_ready`, `radio_online`, `radio_peer`, `http_link_requests` and optional `last_http_link_age_ms`. Radio online means recent authenticated peer contact, not a permanently selected transport. Passwords and radio keys are omitted.
+
+`POST /api/network`, with the controller's `X-Thermo-Token`, accepts `{"ssid":"LAN name","password":"passphrase","open":false}`. An empty password retains the prior secret only for the same secured SSID. Open networks require `open:true`; blank SSID selects AP-only mode. Valid profiles persist independently of calibration. Changed settings release output, clear session synchronization, enter Hold and restart. The setup AP remains available. The response includes `ok` and `restarting`.
+
+On the room panel, same-origin `POST /api/settings` with `{"section":"controller_test"}` performs separate read-only status exchanges over HTTP and ESP-NOW. It returns `wifi_ok`, `radio_ready`, `radio_ok` and a human-readable `message`. It does not save settings, restart, set targets, arm output or change the currently selected transport/lease. A busy link returns 409. Tests use saved configuration.

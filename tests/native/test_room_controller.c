@@ -3,7 +3,7 @@
 #include <stdio.h>
 #include "../../touchscreen/main/room_controller.c"
 static int64_t clock_us=1000000;
-static bool wifi=true,http_up=true,radio_up=true,drop_reply=false;
+static bool wifi=true,http_up=true,radio_up=true,drop_reply=false,reject_status=false;
 static int http_calls,radio_calls,applications;
 static tl_guard_t guard;
 static uint64_t server_boot=123;
@@ -28,7 +28,7 @@ void vTaskDelay(int n){}
 void vTaskDelete(void *p){}
 static void server(const tl_packet_t *p,tl_packet_t *r)
 {
-    int result=tl_check(&guard,p,server_boot,clock_us/1000);
+    int result=reject_status&&p->operation==TL_STATUS?TL_REPLAY:tl_check(&guard,p,server_boot,clock_us/1000);
     if(result==TL_OK&&p->operation!=TL_STATUS){guard.sequence=p->sequence;++applications;if(p->operation==TL_TARGET)server_target=p->value;}
     *r=tl_request(TL_REPLY,p->client,p->sequence);r->result=result;r->controller_boot=server_boot;
     r->deadline_ms=clock_us/1000;r->flags=TL_HAS_TARGET|TL_SIMULATION;r->target=server_target;
@@ -48,11 +48,16 @@ esp_err_t room_http(const char *origin,const char *header,const char *token,cons
 int main(void)
 {
     room_controller_start();cJSON *j=room_controller_status();assert(j&&!room_controller_fallback());cJSON_Delete(j);
+    int probes_before=applications;uint64_t lease_before=latest.deadline_ms;
+    j=room_controller_test();assert(cJSON_IsTrue(cJSON_GetObjectItem(j,"wifi_ok"))&&cJSON_IsTrue(cJSON_GetObjectItem(j,"radio_ok")));cJSON_Delete(j);
+    assert(applications==probes_before&&latest.deadline_ms==lease_before&&!room_controller_fallback());
+    radio_up=false;j=room_controller_test();assert(cJSON_IsTrue(cJSON_GetObjectItem(j,"wifi_ok"))&&cJSON_IsFalse(cJSON_GetObjectItem(j,"radio_ok")));cJSON_Delete(j);radio_up=true;
     int status;drop_reply=true;int before_radio=radio_calls;
     j=room_controller_target(67,&status);assert(!j&&status==503&&applications==1&&radio_calls==before_radio);
     /* Unknown HTTP outcome is reconciled by status, never retried over radio. */
     drop_reply=false;j=room_controller_status();assert(cJSON_GetObjectItem(j,"target_f")->valuedouble==67);cJSON_Delete(j);
-    http_up=false;wifi=false;j=room_controller_status();assert(j&&room_controller_fallback());cJSON_Delete(j);
+    http_up=false;wifi=false;reject_status=true;j=room_controller_status();assert(!j&&!room_controller_fallback());reject_status=false;j=room_controller_status();assert(j&&room_controller_fallback());cJSON_Delete(j);
+    j=room_controller_test();assert(cJSON_IsFalse(cJSON_GetObjectItem(j,"wifi_ok"))&&cJSON_IsTrue(cJSON_GetObjectItem(j,"radio_ok")));cJSON_Delete(j);assert(room_controller_fallback());
     j=room_controller_target(68,&status);assert(j&&applications==2);cJSON_Delete(j);
     /* Restart invalidates outstanding controller leases until next status. */
     ++server_boot;j=room_controller_target(69,&status);assert(!j&&applications==2);
