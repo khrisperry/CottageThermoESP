@@ -1,6 +1,6 @@
 # Device dashboard, ships and OTA — 2026-10-21
 
-Review branch: `feature/connectivity-climate-review`. Panel **v0.11.0**, controller **v0.4.0**. This extends the earlier connectivity review; Waveshare ESP32-S3-Touch-LCD-4B is the production display plan. No board was flashed by the coding environment.
+Review branch: `feature/connectivity-climate-review`. Panel **v0.11.1**, controller **v0.4.0**. This extends the earlier connectivity review; Waveshare ESP32-S3-Touch-LCD-4B is the production display plan. No board was flashed by the coding environment.
 
 ## Install this update once with USB
 
@@ -88,3 +88,13 @@ Backend tests exercise old profile migration, secret redaction/retention, local 
 The webpage Overview reports actual on-device last/peak LVGL frame duration, free/largest internal memory, free PSRAM, ship payload/latency and controller sync status. These enable the physical performance review; host tests cannot establish ESP frame rate, radio behavior or power-loss recovery.
 
 Next hardware review: navigate between Ships/Camera/Home, operate consecutive HA controls, inspect frame/memory metrics during repeated visits, and test a second application upload through each OTA slot. Then test interrupted upload, restart/rollback behavior and live controller MQTT/radio pairing. Preserve the earlier mechanical and permanent sensor checks in `CONNECTIVITY_REVIEW.md`.
+
+## v0.11.1 — LVGL stack overflow fix
+
+The physical v0.11.0 log reported a `taskLVGL` stack overflow. Its BSP default task stack was 7,168 bytes, and GCC's Xtensa stack report measured the refresh callback alone at 4,944 bytes. Large model copies also consumed 2,320–2,368 bytes in gesture, command and camera-state helpers, on top of the caller and LVGL drawing/event stack.
+
+The panel now explicitly starts the BSP/LVGL task with a 16,384-byte internal stack, copies models into caller storage and uses separate static storage for the serialized LVGL refresh/command callbacks. Shared-model access remains mutex-protected. Single-field readers no longer copy the whole model. Xtensa reports refresh at **368 bytes**, command callback at **80**, and gesture/camera-state getters at **32**. A per-function 3,072-byte compiler stack budget guards this source against large-frame regressions. The webpage Overview includes the LVGL task's minimum remaining stack in KiB, sampled from FreeRTOS in the display task, for physical verification.
+
+Pull/build v0.11.1 and flash through COM14, or upload its application binary through System if v0.11.0 remains stable long enough. The existing OTA partition layout and all saved profiles remain unchanged. Native regression tests assert the explicit BSP task stack and exercise the actual navigation/camera/ship/settings paths. Physical confirmation is still required.
+
+The same supplied log separately shows BMP/BME280 chip-ID reads failing at both 0x76 and 0x77 (`ESP_ERR_INVALID_RESPONSE`, 0x108). That does not establish the cause of the LVGL overflow. Check sensor power, common ground, connector contact and SDA47/SCL48 wiring; firmware continues retrying independently. No temperature is invented or sent to the controller.

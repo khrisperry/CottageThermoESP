@@ -11,6 +11,9 @@ static bool unknown=false,test_wifi=true,test_fallback=false;
 static bool ship_showing,test_ships_populated,test_ship_map_pending;
 static unsigned test_notify_mask,test_volume=100;
 #include "../../touchscreen/main/room_display.c"
+/* Worker tasks are registered but not run in this deterministic UI fixture. */
+esp_err_t room_ha_camera(void *buffer,size_t capacity,int *code,int *length){assert(!"Camera worker must not run in UI fixture");return ESP_FAIL;}
+esp_err_t esp_jpeg_decode(esp_jpeg_image_cfg_t *cfg,esp_jpeg_image_output_t *out){assert(!"JPEG worker must not run in UI fixture");return ESP_FAIL;}
 static command_t queued;
 int64_t esp_timer_get_time(void){return now;}
 uint32_t esp_random(void){return 123;}
@@ -27,7 +30,8 @@ void vTaskDelete(void*p){}
 void *heap_caps_malloc(size_t n,int cap){return malloc(n);}
 bool bsp_display_lock(uint32_t n){return true;}
 void bsp_display_unlock(void){}
-lv_display_t *bsp_display_start(void){return lv_display_get_default();}
+lv_display_t *bsp_display_start_with_config(const bsp_display_cfg_t *cfg){assert(cfg->lvgl_port_cfg.task_stack==16384);return lv_display_get_default();}
+unsigned uxTaskGetStackHighWaterMark(void *task){return 12000;}
 void bsp_display_rotate(lv_display_t *d,lv_display_rotation_t r){lv_display_set_rotation(d,r);}
 int bsp_display_brightness_set(int n){return 0;}
 void *bsp_i2c_get_handle(void){return (void*)47;}
@@ -104,7 +108,8 @@ int main(void)
 {
  lv_init();lv_display_t *d=lv_display_create(480,480);lv_display_set_color_format(d,LV_COLOR_FORMAT_RGB888);lv_display_set_buffers(d,draw_pixels,NULL,sizeof(draw_pixels),LV_DISPLAY_RENDER_MODE_PARTIAL);lv_display_set_flush_cb(d,flush);
  lv_indev_t *input=lv_indev_create();lv_indev_set_type(input,LV_INDEV_TYPE_POINTER);lv_indev_set_read_cb(input,pointer_read);lv_indev_set_display(input,d);
- mutex=(void*)1;commands=(void*)1;build_ui();
+ room_display_start();
+ for(unsigned i=0;i<4;++i)refresh(NULL);assert(lvgl_stack_free==12000);
  assert(lv_obj_has_state(control[0][0],LV_STATE_DISABLED));
  click(settings_button);assert(model.settings_open&&!lv_obj_has_flag(settings_modal,LV_OBJ_FLAG_HIDDEN));
  lv_slider_set_value(settings_volume,42,LV_ANIM_OFF);lv_obj_send_event(settings_volume,LV_EVENT_RELEASED,NULL);assert(test_volume==42);

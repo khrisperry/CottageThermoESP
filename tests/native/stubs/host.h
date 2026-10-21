@@ -47,7 +47,11 @@ void vTaskDelay(int);
 void *heap_caps_malloc(size_t,int);
 bool bsp_display_lock(uint32_t);
 void bsp_display_unlock(void);
-lv_display_t *bsp_display_start(void);
+typedef struct {int task_stack;} lvgl_port_cfg_t;
+typedef struct {lvgl_port_cfg_t lvgl_port_cfg;} bsp_display_cfg_t;
+#define ESP_LVGL_PORT_INIT_CONFIG() {.task_stack=7168}
+lv_display_t *bsp_display_start_with_config(const bsp_display_cfg_t*);
+unsigned uxTaskGetStackHighWaterMark(void*);
 void bsp_display_rotate(lv_display_t*,lv_display_rotation_t);
 int bsp_display_brightness_set(int);
 void *bsp_i2c_get_handle(void);

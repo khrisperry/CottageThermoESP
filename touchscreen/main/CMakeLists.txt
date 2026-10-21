@@ -7,3 +7,6 @@ idf_component_register(SRCS "main.c" "room_transport.c" "room_display.c" "room_h
     espressif__esp_codec_dev esp_system esp_driver_i2c esp_timer nvs_flash lwip mbedtls espressif__cjson waveshare__esp32_s3_touch_lcd_4b lvgl__lvgl espressif__esp_jpeg
     EMBED_TXTFILES "wifi_setup.html" "settings.html")
 
+
+# Keep display callbacks below the old overflow-sized frames; emit audit data.
+set_source_files_properties(room_display.c PROPERTIES COMPILE_OPTIONS "-fstack-usage;-Wstack-usage=3072")

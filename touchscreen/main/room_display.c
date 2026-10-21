@@ -69,7 +69,7 @@ static void *ship_map_pixels;
 static double ship_bounds[4];
 static unsigned selected_ship;
 static room_ships_t ship_view;
-static atomic_uint frame_last_us,frame_max_us,frame_slow,lvgl_free,lvgl_largest;
+static atomic_uint frame_last_us,frame_max_us,frame_slow,lvgl_free,lvgl_largest,lvgl_stack_free;
 static int64_t frame_started;
 static lv_obj_t *blind_slats[5],*blind_rail,*heater_fins[4],*heater_rays[3];
 static lv_image_dsc_t image_desc;
@@ -79,7 +79,9 @@ static bool editing;
 static int64_t last_touch;
 static unsigned visible_page;
 
-static model_t snapshot(void) { model_t m; xSemaphoreTake(mutex,portMAX_DELAY);m=model;xSemaphoreGive(mutex);return m; }
+/* Copy directly into caller storage: returning this large model by value
+ * created nested stack temporaries inside LVGL callbacks. */
+static void copy_model(model_t *out) {xSemaphoreTake(mutex,portMAX_DELAY);*out=model;xSemaphoreGive(mutex);}
 void room_display_probe_sample(float f)
 {
     if(!mutex||!isfinite(f))return;
@@ -138,7 +140,7 @@ static void poll_climate(void)
 static bool current(int64_t at) { return at>0 && esp_timer_get_time()-at<FRESH_US; }
 static void execute(command_t c)
 {
-    model_t m=snapshot();bool allowed=esp_timer_get_time()-c.at<COMMAND_TTL_US;
+    model_t m;copy_model(&m);bool allowed=esp_timer_get_time()-c.at<COMMAND_TTL_US;
     if(c.item<0)allowed=allowed&&m.climate_ok&&m.has_target&&current(m.climate_at)&&c.target>=45&&c.target<=80;
     else allowed=allowed&&!room_controller_fallback()&&room_wifi_connected()&&current(m.ha_at)&&m.items[c.item].available&&(m.items[c.item].actions&(1U<<c.action));
     if(!allowed)message("Request expired or device unavailable; nothing sent");
@@ -175,7 +177,8 @@ static void network_task(void *arg)
 }
 static bool camera_current(unsigned generation)
 {
-    model_t m=snapshot();return !room_ota_busy() && !room_controller_fallback() && room_wifi_connected() && !m.settings_open && m.page==3 && m.generation==generation && current(m.ha_at)&&m.items[10].available;
+    xSemaphoreTake(mutex,portMAX_DELAY);bool showing=!model.settings_open&&model.page==3&&model.generation==generation&&current(model.ha_at)&&model.items[10].available;xSemaphoreGive(mutex);
+    return showing&&!room_ota_busy()&&!room_controller_fallback()&&room_wifi_connected();
 }
 /* Caller holds the display lock; ownership of decoded PSRAM pixels transfers here. */
 static void camera_present(void *pixels,unsigned width,unsigned height,unsigned bytes,bool fill)
@@ -196,7 +199,7 @@ static void camera_task(void *arg)
     if(!jpeg){message("Camera memory unavailable");vTaskDelete(NULL);return;}
     bool reported=false;int64_t last_log=0;
     for(;;) {
-        model_t m=snapshot();
+        model_t m;copy_model(&m);
         if(camera_current(m.generation)) {
             int code=0,n=0;char detail[112]="";
             esp_err_t err=room_ha_camera(jpeg,ROOM_HA_CAMERA_CAPACITY,&code,&n);
@@ -280,14 +283,15 @@ static void notify_event(lv_event_t *e)
 static void nav_event(lv_event_t *e) {select_page((unsigned)(uintptr_t)lv_event_get_user_data(e));}
 static void gesture(lv_event_t *e)
 {
-    if(snapshot().settings_open)return;
+    xSemaphoreTake(mutex,portMAX_DELAY);bool settings_open=model.settings_open;xSemaphoreGive(mutex);
+    if(settings_open)return;
     lv_indev_t *input=lv_indev_active();if(!input)return;
     lv_dir_t d=lv_indev_get_gesture_dir(input);
     if(d==LV_DIR_LEFT||d==LV_DIR_RIGHT){select_page((visible_page+(d==LV_DIR_LEFT?1:4))%5);lv_indev_wait_release(input);}
 }
 static void send_event(lv_event_t *e)
 {
-    intptr_t id=(intptr_t)lv_event_get_user_data(e);model_t m=snapshot();last_touch=esp_timer_get_time();
+    intptr_t id=(intptr_t)lv_event_get_user_data(e);static model_t m;copy_model(&m);last_touch=esp_timer_get_time();
     if(id==-2||id==-3){if(!(m.pending&CLIMATE_PENDING)&&m.climate_ok&&m.has_target&&current(m.climate_at)){draft=fmaxf(45,fminf(80,draft+(id==-2?-.5f:.5f)));editing=true;}return;}
     command_t c={.item=id<0?-1:id/6,.action=id<0?0:id%6,.target=draft,.at=esp_timer_get_time()};
     unsigned pending_bit=c.item<0?CLIMATE_PENDING:1U<<c.item;
@@ -490,11 +494,11 @@ static void frame_event(lv_event_t *e)
         if(elapsed>50000)++frame_slow;
         frame_started=0;}
 }
-bool room_display_camera_fill(void){return mutex&&snapshot().camera_fill;}
+bool room_display_camera_fill(void){if(!mutex)return false;xSemaphoreTake(mutex,portMAX_DELAY);bool fill=model.camera_fill;xSemaphoreGive(mutex);return fill;}
 void room_display_set_camera_fill(bool fill){if(mutex){xSemaphoreTake(mutex,portMAX_DELAY);model.camera_fill=fill;++model.generation;xSemaphoreGive(mutex);}}
 cJSON *room_display_status(void)
 {
-    model_t m=snapshot();bool wifi=room_wifi_connected(),radio=room_controller_fallback();
+    model_t m;copy_model(&m);bool wifi=room_wifi_connected(),radio=room_controller_fallback();
     bool ha=wifi&&!radio&&m.ha_ok&&current(m.ha_at),heat=m.climate_ok&&current(m.climate_at);
     room_health_t health={.wifi=wifi,.ha=ha,.controller=heat,.radio=radio,.ha_configured=*room_settings_ha_token()!=0,
         .ship_configured=room_settings_ships_enabled(),.ship_online=room_ships_online()};
@@ -518,6 +522,7 @@ cJSON *room_display_status(void)
     cJSON *perf=cJSON_AddObjectToObject(j,"performance");
     cJSON_AddNumberToObject(perf,"frame_ms",frame_last_us/1000.0);cJSON_AddNumberToObject(perf,"max_frame_ms",frame_max_us/1000.0);
     cJSON_AddNumberToObject(perf,"frames_over_50ms",frame_slow);
+    cJSON_AddNumberToObject(perf,"lvgl_stack_min_free",lvgl_stack_free);
     cJSON_AddNumberToObject(perf,"free_lvgl",lvgl_free);cJSON_AddNumberToObject(perf,"largest_lvgl",lvgl_largest);
     cJSON_AddNumberToObject(perf,"free_internal",heap_caps_get_free_size(MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT));
     cJSON_AddNumberToObject(perf,"largest_internal",heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT));
@@ -530,10 +535,11 @@ cJSON *room_display_status(void)
 static void refresh(lv_timer_t *timer)
 {
     static unsigned monitor_tick;
-    if((++monitor_tick%4)==0){lv_mem_monitor_t mem;lv_mem_monitor(&mem);lvgl_free=mem.free_size;lvgl_largest=mem.free_biggest_size;}
-    model_t m=snapshot();int64_t now=esp_timer_get_time();
+    if((++monitor_tick%4)==0){lv_mem_monitor_t mem;lv_mem_monitor(&mem);lvgl_free=mem.free_size;lvgl_largest=mem.free_biggest_size;lvgl_stack_free=uxTaskGetStackHighWaterMark(NULL);}
+    /* Only LVGL (or locked startup) calls refresh; avoid a multi-KiB task-stack local. */
+    static model_t m;copy_model(&m);int64_t now=esp_timer_get_time();
     room_ships_snapshot(&ship_view);if(visible_page==4)refresh_ships();
-    if((visible_page||m.settings_open)&&now-last_touch>60000000){select_page(0);m=snapshot();}
+    if((visible_page||m.settings_open)&&now-last_touch>60000000){select_page(0);copy_model(&m);}
     if(probe_test_label){
         if(m.probe_at&&now-m.probe_at<30000000){
             char reading[64];snprintf(reading,sizeof(reading),"BMP/BME280 test: %.1f F",m.probe_f);
@@ -768,7 +774,9 @@ void room_display_start(void)
 {
     mutex=xSemaphoreCreateMutex();commands=xQueueCreate(8,sizeof(command_t));
     ESP_ERROR_CHECK(mutex&&commands?ESP_OK:ESP_ERR_NO_MEM);
-    ESP_ERROR_CHECK(bsp_display_start()?ESP_OK:ESP_FAIL);
+    bsp_display_cfg_t display_cfg={.lvgl_port_cfg=ESP_LVGL_PORT_INIT_CONFIG()};
+    display_cfg.lvgl_port_cfg.task_stack=16384;
+    ESP_ERROR_CHECK(bsp_display_start_with_config(&display_cfg)?ESP_OK:ESP_FAIL);
     if(bsp_display_lock(0)){
         #if CONFIG_ROOM_DISPLAY_ROTATE_180
         bsp_display_rotate(lv_display_get_default(),LV_DISPLAY_ROTATION_180);
