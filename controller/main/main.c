@@ -202,7 +202,13 @@ static esp_err_t get_api(httpd_req_t *r)
         }
     } else {
         j=cJSON_CreateObject();
-        cJSON_AddStringToObject(j,"version","0.5.4");
+        cJSON_AddStringToObject(j,"version","0.5.5");
+#ifdef CONFIG_THERMO_SUPERMINI
+        cJSON_AddStringToObject(j,"board","HW-747 Super Mini 4 MB");
+#else
+        cJSON_AddStringToObject(j,"board","ESP32-S3 controller");
+#endif
+        cJSON_AddNumberToObject(j,"servo_gpio",CONFIG_THERMO_SERVO_GPIO);
         cJSON_AddBoolToObject(j,"simulation",state.simulated);
         cJSON_AddBoolToObject(j,"bench_armed",armed);
         cJSON_AddNumberToObject(j,"arm_remaining_ms",armed && armed_until>now_ms()?armed_until-now_ms():0);
@@ -574,6 +580,10 @@ void app_main(void)
     network_start();
     controller_mqtt_start();
     controller_encoder_start();
+#ifdef CONFIG_THERMO_SUPERMINI
+    ESP_LOGI(TAG,"HW-747 Super Mini bench: 4 MB flash; PSRAM disabled; servo GPIO%d; encoder SDA%d/SCL%d",
+        CONFIG_THERMO_SERVO_GPIO,CONFIG_THERMO_ENCODER_SDA,CONFIG_THERMO_ENCODER_SCL);
+#endif
     if(strlen(network.ssid)) {
         esp_sntp_setoperatingmode(SNTP_OPMODE_POLL);esp_sntp_setservername(0,"pool.ntp.org");esp_sntp_init();
     }

@@ -1,6 +1,9 @@
 menu "Cottage thermostat"
+    config THERMO_SUPERMINI
+        bool "HW-747 Super Mini 4 MB controller profile"
+        default n
     config THERMO_SERVO_GPIO
-        int "Servo signal GPIO (AtomS3 Lite rear G38)"
+        int "Servo signal GPIO (default GPIO38)"
         range 0 48
         default 38
     config THERMO_ENCODER_SDA

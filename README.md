@@ -2,7 +2,7 @@
 
 ESP-IDF smart thermostat / mechanical knob actuator project for a **Williams model 1773512 direct-vent cottage furnace**.
 
-> **Review: controller v0.5.3; native 4B room panel v0.13.6.** Controller and room client are separate ESP-IDF 6.0.1 projects. Automatic output defaults to simulation; physical servo commands are explicitly armed bench operations. Mechanical travel/torque, encoder feedback and appliance integration remain unverified.
+> **Review: controller v0.5.5; native 4B room panel v0.13.6.** Controller and room client are separate ESP-IDF 6.0.1 projects. Automatic output defaults to simulation; physical servo commands are explicitly armed bench operations. Mechanical travel/torque, encoder feedback and appliance integration remain unverified.
 
 The consolidated v0.9.4 baseline is on `main`; this follow-up is on `feature/connectivity-climate-review`. See [connectivity review and setup](docs/CONNECTIVITY_REVIEW.md) for the new status/diagnostics UI, paired ESP-NOW fallback, initial MQTT discovery, exact build evidence and pending physical checks. See the latest [dashboard, ship tracker and OTA setup](docs/DEVICE_DASHBOARD_SHIPS_OTA.md) for the aligned status screens, full LAN settings, live ship service integration and first USB migration to webpage updates. The latest [standalone thermostat and MQTT Climate guide](docs/STANDALONE_MQTT_MONITORING.md) describes HA target-temperature requests through the wall thermostat. HA never controls the servo directly; standalone thermostat operation remains independent of HA/MQTT.
 

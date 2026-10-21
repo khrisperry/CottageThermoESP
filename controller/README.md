@@ -82,3 +82,51 @@ No arming is required, and this feature never moves the servo, writes encoder
 configuration, or verifies the calibrated furnace dial position.
 
 Register reference: https://look.ams-osram.com/m/7059eac7531a86fd/original/AS5600-DS000365.pdf
+
+## HW-747 Super Mini 4 MB bench firmware (v0.5.5)
+
+For the photographed ESP32-S3FH4R2 board (4 MB flash, 2 MB QSPI PSRAM),
+use the dedicated profile. PSRAM is not needed and stays disabled. The factory
+application partition remains 2 MB; the partition table ends at 0x210000, within
+4 MB. This build supports USB flashing; it does not add OTA partitions.
+
+From the repository root in an ESP-IDF 6.0.1 PowerShell terminal:
+
+```powershell
+.\tools\build-controller-supermini.ps1
+# After confirming the new board's port in Device Manager:
+.\tools\build-controller-supermini.ps1 -Flash -Monitor -Port COM13
+```
+
+Replace COM13 with the new board's actual port. The script uses
+`controller/sdkconfig.supermini` and `controller/build-supermini`, leaving the
+existing controller configuration alone. Future rebuilds must use this script
+(or the same SDKCONFIG and build directory). Do not flash the ordinary
+`controller/build` artifacts to this 4 MB board.
+
+| Connection | Super Mini pad |
+|---|---|
+| AS5600 VCC | 3V3 |
+| AS5600 GND | GND |
+| AS5600 SDA | GPIO6 |
+| AS5600 SCL | GPIO7 |
+| Servo signal | Inner GPIO38 pad |
+| Servo ground | GND (shared with its power supply) |
+| Board power | USB-C, 5 V |
+
+Use a suitable regulated 5 V supply for the servo. The board's 5V pad can only
+be used for servo power if its USB power path and supply support the combined
+load. B+/B- remain unused for these USB bench tests. The servo's supply is never
+3V3. Solder all connections and inspect for bridges, especially at GPIO38.
+
+Automatic thermostat output remains simulated. Raw 500-2500 us PWM commands
+still require Hold and explicit bench arming. Boot leaves PWM off. Encoder
+telemetry remains read-only and does not establish furnace dial position.
+Startup prints the board profile and GPIOs; `/api/status` includes the board
+name and servo GPIO. Open the encoder section to test by hand before arming.
+
+The replacement board has fresh NVS and a different MAC. Configure its Wi-Fi
+through the CottageThermoBench access point (192.168.4.1), then set its LAN URL
+on the wall thermostat. Update the ESP-NOW controller peer MAC and synchronize
+pairing through the thermostat. Settings stored on the original board do not
+transfer automatically. The wall thermostat does not need reflashing.
