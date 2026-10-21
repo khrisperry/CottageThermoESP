@@ -3,8 +3,9 @@ menu "Cottage thermostat"
         bool "HW-747 Super Mini 4 MB controller profile"
         default n
     config THERMO_SERVO_GPIO
-        int "Servo signal GPIO (default GPIO38)"
+        int "Servo signal GPIO"
         range 0 48
+        default 5 if THERMO_SUPERMINI
         default 38
     config THERMO_ENCODER_SDA
         int "AS5600 bench SDA GPIO"

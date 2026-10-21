@@ -202,7 +202,7 @@ static esp_err_t get_api(httpd_req_t *r)
         }
     } else {
         j=cJSON_CreateObject();
-        cJSON_AddStringToObject(j,"version","0.5.5");
+        cJSON_AddStringToObject(j,"version","0.5.6");
 #ifdef CONFIG_THERMO_SUPERMINI
         cJSON_AddStringToObject(j,"board","HW-747 Super Mini 4 MB");
 #else

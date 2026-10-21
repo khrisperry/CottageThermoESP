@@ -83,7 +83,7 @@ configuration, or verifies the calibrated furnace dial position.
 
 Register reference: https://look.ams-osram.com/m/7059eac7531a86fd/original/AS5600-DS000365.pdf
 
-## HW-747 Super Mini 4 MB bench firmware (v0.5.5)
+## HW-747 Super Mini 4 MB bench firmware (v0.5.6)
 
 For the photographed ESP32-S3FH4R2 board (4 MB flash, 2 MB QSPI PSRAM),
 use the dedicated profile. PSRAM is not needed and stays disabled. The factory
@@ -100,7 +100,8 @@ From the repository root in an ESP-IDF 6.0.1 PowerShell terminal:
 
 Replace COM13 with the new board's actual port. The script uses
 `controller/sdkconfig.supermini` and `controller/build-supermini`, leaving the
-existing controller configuration alone. Future rebuilds must use this script
+existing controller configuration alone. It updates a previously saved Super Mini
+servo pin from GPIO38 to GPIO5 while keeping other local settings. Future rebuilds must use this script
 (or the same SDKCONFIG and build directory). Do not flash the ordinary
 `controller/build` artifacts to this 4 MB board.
 
@@ -110,14 +111,14 @@ existing controller configuration alone. Future rebuilds must use this script
 | AS5600 GND | GND |
 | AS5600 SDA | GPIO6 |
 | AS5600 SCL | GPIO7 |
-| Servo signal | Inner GPIO38 pad |
+| Servo signal | Outside GPIO5 hole |
 | Servo ground | GND (shared with its power supply) |
 | Board power | USB-C, 5 V |
 
 Use a suitable regulated 5 V supply for the servo. The board's 5V pad can only
 be used for servo power if its USB power path and supply support the combined
 load. B+/B- remain unused for these USB bench tests. The servo's supply is never
-3V3. Solder all connections and inspect for bridges, especially at GPIO38.
+3V3. Solder all connections and inspect for bridges, around adjacent pads.
 
 Automatic thermostat output remains simulated. Raw 500-2500 us PWM commands
 still require Hold and explicit bench arming. Boot leaves PWM off. Encoder
