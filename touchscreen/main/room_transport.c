@@ -12,7 +12,7 @@ esp_err_t room_http(const char *origin, const char *header, const char *token,
                     int timeout_ms, int *status, int *length)
 {
     *status=0; *length=0;
-    if (!origin || !token || !*token || capacity<2) return ESP_ERR_INVALID_ARG;
+    if (!origin || (header&&(!token||!*token)) || (!header&&token) || capacity<2) return ESP_ERR_INVALID_ARG;
     bool tls=!strncmp(origin,"https://",8);
     if (!tls && strncmp(origin,"http://",7)) return ESP_ERR_INVALID_ARG;
     const char *host=origin+(tls?8:7);
@@ -25,7 +25,7 @@ esp_err_t room_http(const char *origin, const char *header, const char *token,
         .disable_auto_redirect=true,.crt_bundle_attach=esp_crt_bundle_attach};
     esp_http_client_handle_t h=esp_http_client_init(&cfg);
     if (!h) return ESP_ERR_NO_MEM;
-    esp_http_client_set_header(h,header,token);
+    if(header)esp_http_client_set_header(h,header,token);
     if (post) {
         esp_http_client_set_method(h,HTTP_METHOD_POST);
         esp_http_client_set_header(h,"Content-Type","application/json");

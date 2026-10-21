@@ -58,10 +58,10 @@ static void sensor_task(void *arg)
             room_display_probe_sample(f);
             if(CONFIG_ROOM_SENSOR==3){
                 ESP_LOGI(TAG,"BMP/BME280 TEST: %.2f F (%.2f C); not sent to controller",f,(f-32.0f)/1.8f);
-            } else if(strlen(room_settings_controller_token())==32) {
+            } else {
                 bool sent=room_controller_sample(f);
                 ESP_LOGI(TAG,"Room %.2f F; report %s",f,sent?"acknowledged":"not acknowledged");
-            } else ESP_LOGI(TAG,"Local room %.2f F; controller reporting not paired",f);
+            }
         } else ESP_LOGW(TAG,"No fresh valid probe sample; no temperature report sent");
         vTaskDelay(pdMS_TO_TICKS(15000));
     }
@@ -116,6 +116,6 @@ void app_main(void)
         ESP_ERROR_CHECK(xTaskCreate(sensor_task,"room_probe",6144,NULL,3,NULL)==pdPASS?ESP_OK:ESP_ERR_NO_MEM);
     else ESP_LOGW(TAG,"Local probe disabled: configure probe type and pins");
     room_ota_confirm_boot();
-    ESP_LOGI(TAG,"Room client v0.13.0; native display and browser services ready");
+    ESP_LOGI(TAG,"Room client v0.13.1; native display and browser services ready");
 }
 

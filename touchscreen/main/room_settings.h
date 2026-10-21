@@ -8,7 +8,6 @@ void room_settings_register(httpd_handle_t server);
 const char *room_settings_ha_url(void);
 const char *room_settings_ha_token(void);
 const char *room_settings_controller_url(void);
-const char *room_settings_controller_token(void);
 const char *room_settings_ship_url(void);
 bool room_settings_ships_enabled(void);
 unsigned room_settings_ship_range(void);

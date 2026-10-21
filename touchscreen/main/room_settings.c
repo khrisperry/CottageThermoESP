@@ -23,7 +23,7 @@
 #define OLD_MAGIC 0x43544731U
 typedef struct {uint32_t magic;char ha[256],token[2049],controller[256];} old_settings_t;
 typedef struct {
-    uint32_t magic;char ha[256],token[2049],controller[256],controller_token[33];
+    uint32_t magic;char ha[256],token[2049],controller[256],reserved_controller_token[33];
     char ship_url[256];unsigned ship_range;
     bool ships_enabled,mqtt_managed,radio_managed,mqtt_password_known,mqtt_clear_password;
     cottage_integration_t integrations;
@@ -35,7 +35,6 @@ extern const unsigned char settings_end[] asm("_binary_settings_html_end");
 const char *room_settings_ha_url(void){return current.ha;}
 const char *room_settings_ha_token(void){return current.token;}
 const char *room_settings_controller_url(void){return current.controller;}
-const char *room_settings_controller_token(void){return current.controller_token;}
 const char *room_settings_ship_url(void){return current.ship_url;}
 bool room_settings_ships_enabled(void){return current.ships_enabled;}
 unsigned room_settings_ship_range(void){return current.ship_range;}
@@ -53,7 +52,6 @@ void room_settings_init(void)
     snprintf(current.ha,sizeof(current.ha),"%s",COTTAGE_HA_URL);
     snprintf(current.token,sizeof(current.token),"%s",COTTAGE_HA_TOKEN);
     snprintf(current.controller,sizeof(current.controller),"%s",CONFIG_ROOM_CONTROLLER_URL);
-    snprintf(current.controller_token,sizeof(current.controller_token),"%s",CONFIG_ROOM_API_TOKEN);
     snprintf(current.ship_url,sizeof(current.ship_url),"https://ships.freshwater-tawas.us");
     snprintf(current.integrations.prefix,sizeof(current.integrations.prefix),"homeassistant");
     snprintf(current.integrations.name,sizeof(current.integrations.name),"Cottage thermostat");
@@ -69,7 +67,7 @@ void room_settings_init(void)
         if(size==sizeof(current)&&saved->magic==SETTINGS_MAGIC){
             /* Never accept a persisted unterminated or invalid profile. */
             if(memchr(saved->ha,0,sizeof(saved->ha))&&memchr(saved->token,0,sizeof(saved->token))&&
-               memchr(saved->controller,0,sizeof(saved->controller))&&memchr(saved->controller_token,0,sizeof(saved->controller_token))&&
+               memchr(saved->controller,0,sizeof(saved->controller))&&memchr(saved->reserved_controller_token,0,sizeof(saved->reserved_controller_token))&&
                memchr(saved->ship_url,0,sizeof(saved->ship_url))&&cottage_integration_terminated(&saved->integrations))current=*saved;
         }else if(size==sizeof(old_settings_t)&&saved->magic==OLD_MAGIC){
             old_settings_t *old=(old_settings_t*)saved;
@@ -111,7 +109,7 @@ static esp_err_t page(httpd_req_t *r)
 static cJSON *sanitized(void)
 {
     cJSON *j=cJSON_CreateObject();cJSON_AddStringToObject(j,"ha_url",current.ha);cJSON_AddBoolToObject(j,"token_configured",*current.token!=0);
-    cJSON_AddStringToObject(j,"controller",current.controller);cJSON_AddBoolToObject(j,"controller_token_configured",*current.controller_token!=0);
+    cJSON_AddStringToObject(j,"controller",current.controller);
     cJSON_AddBoolToObject(j,"ships_enabled",current.ships_enabled);cJSON_AddStringToObject(j,"ship_url",current.ship_url);cJSON_AddNumberToObject(j,"ship_range",current.ship_range);
     const cottage_integration_t *p=&current.integrations;cJSON *m=cJSON_AddObjectToObject(j,"mqtt");
     cJSON_AddBoolToObject(m,"enabled",p->mqtt_enabled);cJSON_AddBoolToObject(m,"managed",current.mqtt_managed);
@@ -151,8 +149,6 @@ static esp_err_t save(httpd_req_t *r)
         if(valid){if(clear)next->token[0]=0;else if(*token->valuestring)snprintf(next->token,sizeof(next->token),"%s",token->valuestring);}
     }else if(!strcmp(section,"controller")){
         char url[256];valid=cottage_string(j,"controller",url,sizeof(url),false)&&cottage_origin(next->controller,sizeof(next->controller),url,false);
-        cJSON *token=cJSON_GetObjectItemCaseSensitive(j,"controller_token");valid=valid&&cJSON_IsString(token)&&(!*token->valuestring||(strlen(token->valuestring)==32&&printable(token->valuestring,32)));
-        if(valid&&*token->valuestring)snprintf(next->controller_token,sizeof(next->controller_token),"%s",token->valuestring);
     }else if(!strcmp(section,"ships")){
         char url[256];cJSON *range=cJSON_GetObjectItemCaseSensitive(j,"range");
         valid=cottage_bool(j,"enabled",&next->ships_enabled)&&cottage_string(j,"url",url,sizeof(url),false)&&cottage_origin(next->ship_url,sizeof(next->ship_url),url,false)&&cJSON_IsNumber(range)&&

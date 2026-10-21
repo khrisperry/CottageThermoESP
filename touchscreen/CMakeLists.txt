@@ -3,7 +3,7 @@ cmake_minimum_required(VERSION 3.16)
 set(COMPONENTS main)
 set(EXTRA_COMPONENT_DIRS "${CMAKE_CURRENT_LIST_DIR}/../shared/thermo_link")
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
-project(cottage_thermo_room_4b VERSION 0.13.0)
+project(cottage_thermo_room_4b VERSION 0.13.1)
 
 
 if(NOT CONFIG_ROOM_NATIVE_DISPLAY OR NOT CONFIG_SPIRAM_MODE_OCT OR NOT CONFIG_ESPTOOLPY_FLASHSIZE_16MB)

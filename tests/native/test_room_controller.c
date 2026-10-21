@@ -18,7 +18,6 @@ const char *room_settings_controller_url(void){return "http://controller.test";}
 void tl_radio_start(tl_radio_handler_t handler){}
 bool tl_radio_configured(void){return true;}
 bool tl_radio_online(void){return radio_up;}
-const char *room_settings_controller_token(void){return CONFIG_ROOM_API_TOKEN;}
 bool room_settings_radio_managed(void){return false;}
 const cottage_integration_t *room_settings_integrations(void){static cottage_integration_t p;return &p;}
 cJSON *room_settings_controller_integrations(void){return cJSON_CreateObject();}
@@ -39,6 +38,7 @@ esp_err_t tl_radio_exchange(const tl_packet_t *p,tl_packet_t *r)
 }
 esp_err_t room_http(const char *origin,const char *header,const char *token,const char *path,const char *post,void *out,size_t cap,int timeout,int *status,int *len)
 {
+    assert(header==NULL&&token==NULL);
     ++http_calls;if(!http_up)return ESP_FAIL;
     assert(!strcmp(path,"/api/link"));cJSON *j=cJSON_Parse(post),*v=cJSON_GetObjectItemCaseSensitive(j,"packet");tl_packet_t p,r;
     assert(tl_unhex(v->valuestring,&p));cJSON_Delete(j);server(&p,&r);

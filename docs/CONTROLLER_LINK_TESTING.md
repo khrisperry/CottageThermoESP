@@ -1,4 +1,4 @@
-# Controller links — controller 0.5.0 / room panel 0.13.0
+# Controller links — controller 0.5.1 / room panel 0.13.1
 
 The AtomS3 Lite uses GPIO38 for the existing servo. Magnetic position feedback is not installed or required to test communications. Boot keeps PWM disabled and position unknown. The existing simulation/live-bench calibration, arming and synchronization gates remain in force. Communication recovery cannot arm the servo. HA requests a target through the wall thermostat; it has no direct servo access.
 
@@ -25,11 +25,11 @@ Retain `-Bme280Test` only for the existing test sensor configuration. It still s
 
 ## Join the LAN and pair
 
-1. On the controller USB monitor, copy its pairing API token. Join `CottageThermoBench` and open `http://192.168.4.1`. Enter the token and Connect.
+1. Join `CottageThermoBench` and open `http://192.168.4.1`. The page opens directly; no local access token is required.
 2. In **Wi-Fi & thermostat connection**, enter your LAN SSID/password and save. The controller restarts. Its DHCP hostname is `CottageThermoController`. The bench AP remains available if LAN connection fails. A blank password retains the existing password only for the same secured SSID; check Open network for an open LAN. Blank SSID explicitly selects AP-only operation.
 3. Reconnect to the controller page. Record its LAN IP and **station MAC**. The page shows the channel, radio readiness, recent paired contact and HTTP link request count. Position feedback explicitly says Not installed.
-4. Open the thermostat webpage `/settings` → **Controller**. Save the controller LAN IP/URL and pairing token. After the display restarts, verify the controller is reachable over Wi-Fi.
-5. On the thermostat webpage → **ESP-NOW**, enable paired fallback, enter the controller **station MAC**, and enter a private 32-hex-digit key. Generate one locally with `python -c "import secrets; print(secrets.token_hex(16))"`. Save. The display sends its station MAC and the shared key to the controller over the paired HTTP link; the controller restarts to apply them. Wait for **Radio pairing sync: Applied** on Overview.
+4. Open the thermostat webpage `/settings` → **Controller**. Save the controller LAN IP/URL. After the display restarts, verify the controller is reachable over Wi-Fi.
+5. On the thermostat webpage → **ESP-NOW**, enable paired fallback, enter the controller **station MAC**, and enter a private 32-hex-digit key. Generate one locally with `python -c "import secrets; print(secrets.token_hex(16))"`. Save. The display sends its station MAC and the shared key to the controller over the local HTTP link; the controller restarts to apply them. Wait for **Radio pairing sync: Applied** on Overview.
 6. Click **Test Wi-Fi and ESP-NOW**, available under Controller and ESP-NOW. Expect an independent controller acknowledgement for each. This only sends status requests; it neither moves the servo nor changes the selected transport or its cached lease. Settings must already be saved; the button tests the active configuration.
 
 Encrypted ESP-NOW requires both radios on the same channel. With both connected, their APs must use the same 2.4 GHz channel to pass the radio test. Disconnected devices search channels and pause search when a bench/setup AP client is attached. Disconnect phones/laptops from the devices' setup APs before outage tests. A one-time radio probe proves the exchange at that moment; radio status can return to standby while normal control traffic uses Wi-Fi.
@@ -57,3 +57,5 @@ Software validation evidence is recorded in the change description. Mock transpo
 Three engine/protocol/network-profile tests and seventeen native service tests pass. The focused tests execute the real room transport and settings handlers with mocked HTTP/radio/NVS, including independent path acknowledgements, rejected status replies, no control mutations from diagnostics, no transport/lease changes, ambiguous mutation no-retry, controller reboot, an hour outage and Wi-Fi recovery. Network tests cover field bounds, retained passwords, new-network password requirements, open networks and AP-only configuration. Both embedded webpage scripts pass JavaScript syntax checks.
 
 The native LVGL page-rendering fixture was not run in this checkout because the JPEG managed dependency was unavailable; the other seventeen native service tests passed. These are host checks, not an ESP-IDF firmware build or physical radio verification. Build/flash both projects locally with the commands above.
+
+Controller 0.5.1 / room panel 0.13.1 removes local access-token requirements and controller-token configuration. Focused transport, settings and keepalive tests pass without local credentials, and the embedded page scripts pass syntax checks. Existing NVS profiles retain their layout; no erase-flash is needed.

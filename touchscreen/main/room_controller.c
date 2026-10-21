@@ -35,10 +35,10 @@ bool room_controller_radio_ready(void){return tl_radio_configured();}
 bool room_controller_radio_online(void){return tl_radio_online();}
 static bool http(const tl_packet_t *p,tl_packet_t *out)
 {
-    if(!room_wifi_connected()||strlen(room_settings_controller_token())!=32)return false;
+    if(!room_wifi_connected())return false;
     char hex[sizeof(*p)*2+1],body[sizeof(*p)*2+20],response[512];int status=0,length=0;
     tl_hex(p,hex);snprintf(body,sizeof(body),"{\"packet\":\"%s\"}",hex);
-    if(room_http(room_settings_controller_url(),"X-Thermo-Token",room_settings_controller_token(),
+    if(room_http(room_settings_controller_url(),NULL,NULL,
        "/api/link",body,response,sizeof(response),1800,&status,&length)!=ESP_OK||status!=200)return false;
     cJSON *j=cJSON_Parse(response),*v=cJSON_GetObjectItemCaseSensitive(j,"packet");
     bool ok=cJSON_IsString(v)&&tl_unhex(v->valuestring,out);cJSON_Delete(j);return ok;
@@ -126,10 +126,10 @@ static void sync_task(void *arg)
         if(!j)continue;
         bool managed=cJSON_GetArraySize(j)>0;
         if(!managed){cJSON_Delete(j);continue;}sync_state=1;
-        if(room_wifi_connected()&&!fallback&&strlen(room_settings_controller_token())==32){
+        if(room_wifi_connected()&&!fallback){
             char *body=cJSON_PrintUnformatted(j);char response[256];int code=0,length;
             if(body){
-                esp_err_t err=room_http(room_settings_controller_url(),"X-Thermo-Token",room_settings_controller_token(),
+                esp_err_t err=room_http(room_settings_controller_url(),NULL,NULL,
                     "/api/integrations",body,response,sizeof(response),3000,&code,&length);
                 if(err==ESP_OK&&code==200){cJSON *reply=cJSON_Parse(response);if(cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(reply,"ok")))sync_state=2;cJSON_Delete(reply);}
                 memset(body,0,strlen(body));free(body);

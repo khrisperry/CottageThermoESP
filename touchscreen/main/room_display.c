@@ -538,7 +538,7 @@ cJSON *room_display_status(void)
     bool ship_service=room_ships_service_online();
     bool probe=m.probe_at&&esp_timer_get_time()-m.probe_at<30000000;
     int mq=room_mqtt_state();
-    bool heat_configured=room_controller_radio_ready()||(strlen(room_settings_controller_token())==32&&*room_settings_controller_url());
+    bool heat_configured=room_controller_radio_ready()||(*room_settings_controller_url()!=0);
     const char *words[]={wifi?"Connected":"Disconnected",!health.ha_configured?"Not configured":ha?"Online":radio?"Paused (ESP-NOW)":"Offline",
         !heat_configured?"Not configured":heat?(radio?"ESP-NOW":"Online"):"Offline",!room_controller_radio_ready()?"Not configured":radio&&heat?"Active":"Standby",
         !CONFIG_ROOM_SENSOR?"Not configured":probe?"Fresh":"No fresh sample",!health.ship_configured?"Not configured":!ship_service?"Service offline":health.ship_online?"Online":"AIS feed offline",
@@ -592,7 +592,7 @@ static void refresh(lv_timer_t *timer)
     else lv_label_set_text(connection,status.text);
     tint(connection,status.color);lv_obj_set_style_bg_color(health_dot,lv_color_hex(status.color),0);
     lv_obj_set_style_bg_color(lv_screen_active(),lv_color_hex(!ha&&!climate?0x281218:INK),0);
-    bool heat_configured=room_controller_radio_ready()||(strlen(room_settings_controller_token())==32&&*room_settings_controller_url());
+    bool heat_configured=room_controller_radio_ready()||(*room_settings_controller_url()!=0);
     if(diagnostic_cells[0]&&!lv_obj_has_flag(diagnostic_modal,LV_OBJ_FLAG_HIDDEN)){
         const char *words[7]={wifi?"Connected":"Disconnected",
             !health.ha_configured?"Not configured":radio?"Paused (ESP-NOW)":ha?"Online":"Offline",

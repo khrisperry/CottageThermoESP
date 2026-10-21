@@ -1,6 +1,6 @@
-# Direct controller API v1 (firmware 0.2.0)
+# Direct controller API (firmware 0.5.1)
 
-All `/api/*` requests require `X-Thermo-Token: <32-character pairing token>` from the controller's serial monitor. GET `/` serves the web UI without exposing the token. Tokens are persistent per controller; no default secret is shipped. Local HTTP is for attended development. The AP is open, not an encrypted production transport.
+Local controller webpages and `/api/*` requests require no access token. Open the controller address directly. External-service credentials and encrypted ESP-NOW peer keys are separate from local webpage access.
 
 POST accepts one JSON object, maximum 4096 bytes. Incomplete, nonfinite, out-of-range values fail. Writes acknowledge only after settings commit, or after the requested session operation. Settings updates are idempotent and skip unchanged NVS writes. Invalid settings leave current runtime configuration intact. Room reports must be live acquisitions, never retained/replayed HA values. A successful command acknowledges acceptance, **not measured motion**.
 
@@ -28,16 +28,16 @@ Freshness: both sources expire after 90 seconds. `age_ms` includes known age sin
 
 `position_synchronized=true` means an explicit virtual/manual observation established this session's starting command reference. `position_measured` is always **false** until an actual encoder adapter is implemented. Never label commanded pulse as actual shaft angle.
 
-Room client serves its own paired GET `/api/status` proxy and POST `/api/target` accepting **only** `target_f` 45–80. It cannot arm/synchronize/change mode. No automatic mutation retry queue exists. Repeating a setpoint update is idempotent.
+Room client serves its own local GET `/api/status` proxy and POST `/api/target` accepting **only** `target_f` 45–80. It cannot arm/synchronize/change mode. No automatic mutation retry queue exists. Repeating a setpoint update is idempotent.
 
 ## Room transport endpoint (controller v0.3.0)
 
-`POST /api/link` requires the existing `X-Thermo-Token` and a JSON `packet` field containing the exact hex-encoded versioned `tl_packet_t` envelope from `shared/thermo_link/link_protocol.h`. Replies use the same field/envelope. This endpoint serves status, bounded target writes and fresh primary-probe readings only. HTTP 200 carries the application result in the reply packet; transport success is not command acceptance. HTTP and paired ESP-NOW use the same handler, boot nonce, short monotonic lease and sequence guard. Existing browser/bench endpoints are retained. See CONNECTIVITY_REVIEW.md for transport handover and setup; this endpoint adds no raw actuation or arming operations.
+`POST /api/link` requires a JSON `packet` field containing the exact hex-encoded versioned `tl_packet_t` envelope from `shared/thermo_link/link_protocol.h`. Replies use the same field/envelope. This endpoint serves status, bounded target writes and fresh primary-probe readings only. HTTP 200 carries the application result in the reply packet; transport success is not command acceptance. HTTP and paired ESP-NOW use the same handler, boot nonce, short monotonic lease and sequence guard. Existing browser/bench endpoints are retained. See CONNECTIVITY_REVIEW.md for transport handover and setup; this endpoint adds no raw actuation or arming operations.
 
 ## Controller network setup (v0.5.0)
 
 `GET /api/status` now includes `position_feedback: "Not installed"` and a `network` object with `hostname`, `station_mac`, `ssid`, `connected`, `ip`, `channel`, `password_configured`, `radio_ready`, `radio_online`, `radio_peer`, `http_link_requests` and optional `last_http_link_age_ms`. Radio online means recent authenticated peer contact, not a permanently selected transport. Passwords and radio keys are omitted.
 
-`POST /api/network`, with the controller's `X-Thermo-Token`, accepts `{"ssid":"LAN name","password":"passphrase","open":false}`. An empty password retains the prior secret only for the same secured SSID. Open networks require `open:true`; blank SSID selects AP-only mode. Valid profiles persist independently of calibration. Changed settings release output, clear session synchronization, enter Hold and restart. The setup AP remains available. The response includes `ok` and `restarting`.
+`POST /api/network` accepts `{"ssid":"LAN name","password":"passphrase","open":false}`. An empty password retains the prior secret only for the same secured SSID. Open networks require `open:true`; blank SSID selects AP-only mode. Valid profiles persist independently of calibration. Changed settings release output, clear session synchronization, enter Hold and restart. The setup AP remains available. The response includes `ok` and `restarting`.
 
 On the room panel, same-origin `POST /api/settings` with `{"section":"controller_test"}` performs separate read-only status exchanges over HTTP and ESP-NOW. It returns `wifi_ok`, `radio_ready`, `radio_ok` and a human-readable `message`. It does not save settings, restart, set targets, arm output or change the currently selected transport/lease. A busy link returns 409. Tests use saved configuration.

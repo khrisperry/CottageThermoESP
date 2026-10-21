@@ -154,7 +154,7 @@ The BMP280's factory-calibrated temperature is read every 15 seconds in forced m
 
 All configured local probes now read and update the dial independently of controller pairing, controller availability, Home Assistant and Wi-Fi. Readings older than 30 seconds clear to unavailable. Controller target controls still require fresh controller status. With no local probe configured, the existing controller temperature display remains in use.
 
-BMP280 test readings are never posted to the controller. SHT31/SHT4x reporting still requires the pairing token, but local measurements do not. No furnace arming or servo behavior changes.
+BMP280 test readings are never posted to the controller. SHT31/SHT4x reporting uses the configured controller address without a local access token. No furnace arming or servo behavior changes.
 
 Validation: production BMP280 driver compiled with host GCC and passed register-fixture tests under AddressSanitizer/UndefinedBehaviorSanitizer (LeakSanitizer disabled because the container blocks process inspection). Tests cover both addresses, Bosch compensation, chip ID rejection, invalid calibration, forced conversions, bounded status polling, missing/read-failing devices, stale sentinel, range validation and recovery. The native LVGL 9.2 fixture also compiled and passed, covering offline local readings, stale sample clearing, target controls and the existing UI/command/camera checks. Host RGB888 tests use a 1 MiB LVGL pool; firmware memory settings are unchanged. Full ESP-IDF build and physical sensor validation remain local.
 

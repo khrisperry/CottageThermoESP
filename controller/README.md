@@ -1,4 +1,4 @@
-# Controller v0.5.0 — thermostat development and servo bench
+# Controller v0.5.1 — thermostat development and servo bench
 
 ESP-IDF **6.0.1**, ESP32-S3, M5Stack AtomS3 Lite (8 MB flash), servo signal **G38/GPIO38**. Build defaults simulate automatic thermostat movement. No measurements or placeholder calibration map are installed.
 
@@ -30,7 +30,7 @@ COM13 was the controller port in the latest supplied build log; confirm it still
 ## First use
 
 1. Connect to **CottageThermoBench**, open Wi-Fi, no password. Open **http://192.168.4.1** manually (DNS captive-portal interception is not implemented).
-2. Copy the **Pairing API token** printed in the USB monitor into the page. Token is generated once and stored in NVS. The open Wi-Fi remains password-free; API access is paired separately.
+2. The webpage opens directly. Local setup and the controller API require no access token.
 3. The first boot is **Hold**, no map, unknown physical position, PWM off. Review status and settings without enabling motion.
 4. For software testing, enter a synthetic map **only in the simulation build**, synchronize a virtual starting dial level, submit a simulation temperature, then select Thermostat. Simulated movement is visible in events. One temperature report expires after 90 seconds.
 5. For the actual servo test: remove the horn/load, use Hold mode, **Arm unloaded bench output**, then send **1500 µs** followed by small manual pulse changes. **Raw PWM is physical even in a simulation build.** It is separately armed; the normal thermostat engine remains simulated. Stop PWM clears synchronization and disables the signal. No return to zero.

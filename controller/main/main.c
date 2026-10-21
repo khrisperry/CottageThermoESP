@@ -39,7 +39,6 @@ static const char *TAG="thermostat";
 static th_state_t state;
 static SemaphoreHandle_t lock;
 static nvs_handle_t store;
-static char token[33];
 static uint64_t controller_boot;
 static tl_guard_t room_guard;
 static atomic_bool station_up,station_connecting;
@@ -103,14 +102,6 @@ static esp_err_t json_send(httpd_req_t *r,cJSON *j)
     if (!s) return httpd_resp_send_err(r,HTTPD_500_INTERNAL_SERVER_ERROR,"Out of memory");
     httpd_resp_set_type(r,"application/json"); httpd_resp_set_hdr(r,"Cache-Control","no-store");
     esp_err_t err=httpd_resp_sendstr(r,s); free(s); return err;
-}
-static bool authorized(httpd_req_t *r)
-{
-    char supplied[48]={0};
-    if (httpd_req_get_hdr_value_str(r,"X-Thermo-Token",supplied,sizeof(supplied))!=ESP_OK) return false;
-    unsigned diff=strlen(supplied)^strlen(token);
-    for (unsigned i=0;i<32;++i) diff|=(unsigned char)supplied[i]^(unsigned char)token[i];
-    return diff==0;
 }
 static cJSON *body(httpd_req_t *r)
 {
@@ -196,7 +187,6 @@ static esp_err_t history_get(httpd_req_t *r)
 }
 static esp_err_t get_api(httpd_req_t *r)
 {
-    if(!authorized(r)) return httpd_resp_send_err(r,HTTPD_401_UNAUTHORIZED,"API token required");
     if(!strcmp(r->uri,"/api/history"))return history_get(r);
     xSemaphoreTake(lock,portMAX_DELAY);
     cJSON *j=NULL;
@@ -210,7 +200,7 @@ static esp_err_t get_api(httpd_req_t *r)
         }
     } else {
         j=cJSON_CreateObject();
-        cJSON_AddStringToObject(j,"version","0.5.0");
+        cJSON_AddStringToObject(j,"version","0.5.1");
         cJSON_AddBoolToObject(j,"simulation",state.simulated);
         cJSON_AddBoolToObject(j,"bench_armed",armed);
         cJSON_AddNumberToObject(j,"arm_remaining_ms",armed && armed_until>now_ms()?armed_until-now_ms():0);
@@ -337,7 +327,6 @@ static void link_handle(const tl_packet_t *p,tl_packet_t *reply)
 }
 static esp_err_t link_post(httpd_req_t *r)
 {
-    if(!authorized(r))return httpd_resp_send_err(r,HTTPD_401_UNAUTHORIZED,"API token required");
     cJSON *j=body(r),*v=cJSON_GetObjectItemCaseSensitive(j,"packet");tl_packet_t p,reply;
     bool valid=cJSON_IsString(v)&&tl_unhex(v->valuestring,&p)&&p.operation!=TL_REPLY;cJSON_Delete(j);
     if(!valid)return httpd_resp_send_err(r,HTTPD_400_BAD_REQUEST,"Invalid room link envelope");
@@ -347,10 +336,9 @@ static esp_err_t link_post(httpd_req_t *r)
     j=cJSON_CreateObject();cJSON_AddStringToObject(j,"packet",hex);return json_send(r,j);
 }
 static void integration_restart(void *arg){vTaskDelay(pdMS_TO_TICKS(1500));esp_restart();}
-/* Provisioning is token protected and takes effect only after restart. */
+/* Local provisioning takes effect only after restart. */
 static esp_err_t network_post(httpd_req_t *r)
 {
-    if(!authorized(r))return httpd_resp_send_err(r,HTTPD_401_UNAUTHORIZED,"API token required");
     cJSON *j=body(r),*ssid=cJSON_GetObjectItemCaseSensitive(j,"ssid"),
         *password=cJSON_GetObjectItemCaseSensitive(j,"password"),*open=cJSON_GetObjectItemCaseSensitive(j,"open");
     network_profile_t next=network;
@@ -371,7 +359,6 @@ static esp_err_t network_post(httpd_req_t *r)
 }
 static esp_err_t integrations_post(httpd_req_t *r)
 {
-    if(!authorized(r))return httpd_resp_send_err(r,HTTPD_401_UNAUTHORIZED,"API token required");
     cJSON *j=body(r);bool changed=false;
     xSemaphoreTake(lock,portMAX_DELAY);bool ok=controller_integrations_save(j,&changed);
     if(changed){release();state.config.mode=TH_HOLD;event("Integration profile saved; restart clears bench arm/synchronization");}
@@ -382,7 +369,6 @@ static esp_err_t integrations_post(httpd_req_t *r)
 }
 static esp_err_t post_api(httpd_req_t *r)
 {
-    if(!authorized(r))return httpd_resp_send_err(r,HTTPD_401_UNAUTHORIZED,"API token required");
     cJSON *j=body(r);
     if(!j)return httpd_resp_send_err(r,HTTPD_400_BAD_REQUEST,"JSON object required (max 4096 bytes)");
     bool ok=false;const char *error="Invalid request or unmet prerequisites";
@@ -540,12 +526,6 @@ void app_main(void)
     th_config_t c=th_defaults();size_t size=sizeof(c);
     th_config_t saved;
     if(nvs_get_blob(store,CONFIG_KEY,&saved,&size)==ESP_OK && size==sizeof(saved) && th_config_valid(&saved))c=saved;
-    size=sizeof(token);
-    if(nvs_get_str(store,"api_token",token,&size)!=ESP_OK || strlen(token)!=32) {
-        uint8_t bytes[16];esp_fill_random(bytes,sizeof(bytes));
-        for(unsigned i=0;i<16;++i)snprintf(token+2*i,3,"%02x",bytes[i]);
-        ESP_ERROR_CHECK(nvs_set_str(store,"api_token",token));ESP_ERROR_CHECK(nvs_commit(store));
-    }
     bool simulated=true;
 #ifdef CONFIG_THERMO_LIVE_BENCH
     simulated=false;
@@ -554,7 +534,6 @@ void app_main(void)
     lock=xSemaphoreCreateMutex();assert(lock);
     event("Boot: PWM disabled; position unknown; no restoration or homing");
     ESP_LOGW(TAG,"Attended bench firmware. Automatic output: %s",simulated?"SIMULATION":"LIVE BENCH");
-    ESP_LOGI(TAG,"Pairing API token (local bench only): %s",token);
     setenv("TZ","EST5EDT,M3.2.0/2,M11.1.0/2",1);tzset();
     controller_boot=((uint64_t)esp_random()<<32)|esp_random();if(!controller_boot)controller_boot=1;
     network.magic=NETWORK_PROFILE_MAGIC;

@@ -60,7 +60,9 @@ static void reset_upload(void){busy=false;reboot_pending=false;writes=selects=ab
 int main(int argc,char **argv){
  old_settings_t old={.magic=OLD_MAGIC,.ha="https://ha.example",.token="keep-ha-token",.controller="http://192.0.2.20"};memcpy(stored_profile,&old,sizeof(old));stored_size=sizeof(old);room_settings_init();assert(!strcmp(current.token,"keep-ha-token"));assert(room_web_authorized(&(httpd_req_t){0},false));
  httpd_req_t r=req(NULL,0,"application/json");assert(room_web_authorized(&r,true));r.headers[1].value="http://evil.example";assert(!room_web_authorized(&r,true));
- r=req(NULL,0,"application/json");get(&r);assert(r.code==200&&!strstr(r.response,"keep-ha-token")); /* Local configuration has no PIN gate. */
+ r=req(NULL,0,"application/json");get(&r);assert(r.code==200&&!strstr(r.response,"keep-ha-token")&&!strstr(r.response,"controller_token")); /* Local configuration has no PIN gate. */
+ const char *controller_only="{\"section\":\"controller\",\"controller\":\"http://192.0.2.21\"}";
+ r=req(controller_only,strlen(controller_only),"application/json");save(&r);assert(r.code==200&&reboot_pending&&!strcmp(((settings_t*)stored_profile)->controller,"http://192.0.2.21"));reboot_pending=false;
  const char *mqtt="{\"section\":\"mqtt\",\"enabled\":true,\"broker\":\"mqtt://192.0.2.30:1883\",\"username\":\"ha\",\"password\":\"\",\"prefix\":\"homeassistant\",\"name\":\"Cottage\"}";
  r=req(mqtt,strlen(mqtt),"application/json");save(&r);assert(r.code==200);reboot_pending=false;memset(&current,0,sizeof(current));room_settings_init();cJSON *sync=room_settings_controller_integrations();cJSON *m=cJSON_GetObjectItem(sync,"mqtt");assert(!m);cJSON_Delete(sync); /* MQTT credentials are never forwarded to the controller. */
  const char *probe="{\"section\":\"controller_test\"}";size_t previous_size=stored_size;

@@ -41,8 +41,8 @@ function render(){
   const row=actions(form,'mqtt',()=>({enabled:$('enabled').checked,broker:($('tls').checked?'mqtts://':'mqtt://')+$('brokerHost').value.trim()+':'+$('port').value,username:$('username').value,password:$('password').value,clear_password:$('clearPassword').checked,prefix:$('prefix').value.trim(),name:$('name').value.trim()}));
   const state=el('p',lastStatus?.mqtt?.status||'Waiting for MQTT status');state.id='mqttDetail';state.className='full';grid.append(state);const test=el('button','Republish HA discovery');test.type='button';test.id='mqttReannounce';test.disabled=!lastStatus?.mqtt?.connected;test.onclick=async()=>{try{await request({section:'mqtt_test'});message('HA Climate discovery queued.');}catch(e){message(e.message)}};row.append(test);
  }else if(page==='Controller'){
-  field(grid,'Thermostat controller IP, name or URL','controller',config.controller);field(grid,'Controller pairing token','controllerToken','','password',config.controller_token_configured?keep:'32-character token from controller monitor').maxLength=32;
-  actions(form,'controller',()=>({controller:$('controller').value.trim(),controller_token:$('controllerToken').value.trim()}));
+  field(grid,'Thermostat controller IP, name or URL','controller',config.controller);
+  actions(form,'controller',()=>({controller:$('controller').value.trim()}));
   linkTest(c);
  }else if(page==='ESP-NOW'){
   c.insertBefore(el('p','Wi-Fi stays preferred. Pair both devices with the same private key. The peer below is the controller station MAC. The display station MAC is sent to the controller automatically. Applying changes restarts the controller when reachable.'),form);
