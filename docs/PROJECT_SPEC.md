@@ -21,7 +21,7 @@ Last established: 2026-10-17. This document is the authoritative handoff of the 
 **B. Room thermostat/display ESP32-S3**
 - Candidate hardware: **Waveshare ESP32-S3-Touch-LCD-4B** (same family previously used for touchscreen projects). Native ESP-IDF, LVGL UI.
 - Shows current indoor temperature, target temperature, operating mode, dial level, furnace activity, signal/health, predicted ready time; change setpoint by touch.
-- Use a remotely mounted **SHT31/SHT4x** or similar temperature sensor away from LCD/CPU heat; BMP280 is not preferred for room temperature. Display communicates readings and commands directly to controller through Wi-Fi (authenticated local API/WebSocket; BLE optional future fallback/provisioning).
+- Use a remotely mounted **SHT31/SHT4x** or similar temperature sensor away from LCD/CPU heat; BMP280 is not preferred for room temperature. Display communicates readings and commands directly to controller through Wi-Fi (authenticated local API/WebSocket), with a planned paired ESP-NOW fallback when that link is unavailable.
 - Display is a UI/client and primary room sensor. Its restarts/updates must not remove the controller's committed thermostat settings.
 
 **C. Home Assistant optional extension**
@@ -88,7 +88,9 @@ Two distinct models:
 
 - ESP-IDF FreeRTOS, LEDC servo PWM, NVS with schema/version/checks, local web UI.
 - Direct controller-display API with authentication, idempotent commands and acknowledgements, fresh temperature reports and live status.
-- MQTT Home Assistant Discovery for climate and diagnostic sensors, optional broker; independent firmware OTA with rollback, serial diagnostics and local safe UI.
+- **Planned, not implemented:** paired ESP-NOW fallback for room temperature, target changes and controller status when Wi-Fi/controller communication fails. The display must show an explicit ESP-NOW indicator, grey out/disable all HA-dependent features during fallback, and preserve independent local temperature and valid thermostat controls. Coordinate channels/discovery and automatically return to Wi-Fi after verified recovery; use command identity, freshness and acknowledgements across both transports.
+- **Planned, not implemented:** MQTT Home Assistant Discovery for the thermostat as a climate device/entity and diagnostic sensors, optional broker; HA target changes use the same authoritative controller validation as local controls, with stable entity identity and truthful temperature/target/state/availability reporting. See the deferred checklist in DECISIONS_AND_OPEN_QUESTIONS.md.
+- Independent firmware OTA with rollback, serial diagnostics and local safe UI.
 - Event log contains sensor source, readings/age, firmware, position measured vs commanded, fault reason, power-restore, movement outcome.
 - Calibration persistence must survive ESP32 reboots (unlike issues observed in earlier ESPHome implementation).
 
@@ -109,3 +111,9 @@ Two distinct models:
 - Exact ESP32/controller board, GPIO, servo voltage/current and bracket fastening points not yet selected.
 - Temperature ratings, manufacturer approval, installed mechanical fail-safe, absolute encoder placement and actual gas furnace behavior remain unverified.
 - **Do not declare this safe for unattended occupancy or freeze-protection until all relevant reviews, tests and independent safeguards are completed.**
+
+## 11. Implementation update — 2026-10-18
+
+User authorized hardware-independent thermostat/controller work before next-weekend mechanical proof. v0.2.0 implements the map-based engine, persistent settings, weekly schedules, primary/secondary temperature API, paired web controls, simulated automatic output and explicitly armed physical bench commands. Simulation/live maps use separate NVS keys; no fictional calibration ships. The room-client project compiles independently with SHT31/SHT4x support and a browser thermostat; physical LCD/touch integration remains pending exact board/wiring.
+
+This advances the software phases without declaring mechanical proof, measured physical position, installation readiness, trained recovery prediction, MQTT Discovery, OTA or active calibration complete. Current source/build/API behavior is documented in controller/README.md, touchscreen/README.md, API.md and LOCAL_VALIDATION.md. Initial P0 bench instructions above describe the earlier prototype; the v0.2.0 controller now requires a pairing token and explicit bench arm before raw PWM.

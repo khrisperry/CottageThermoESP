@@ -1,0 +1,40 @@
+menu "Cottage room thermostat"
+    config ROOM_NATIVE_DISPLAY
+        bool "Native Waveshare ESP32-S3-Touch-LCD-4B display"
+        default y
+        help
+            Use only on the confirmed 4B (480x480, 16 MB flash, octal PSRAM).
+            External probe shares the board I2C bus on SDA47/SCL48.
+    config ROOM_DISPLAY_ROTATE_180
+        bool "Rotate display and touch 180 degrees"
+        depends on ROOM_NATIVE_DISPLAY
+        default n
+    config ROOM_WIFI_SSID
+        string "Legacy Wi-Fi SSID (optional migration only; use captive portal)"
+        default ""
+    config ROOM_WIFI_PASSWORD
+        string "Legacy Wi-Fi password (optional migration only)"
+        default ""
+    config ROOM_CONTROLLER_URL
+        string "Controller base URL (no trailing slash)"
+        default "http://192.168.4.1"
+    config ROOM_API_TOKEN
+        string "Controller pairing token from USB monitor"
+        default ""
+    config ROOM_SENSOR
+        int "Probe: 0=disabled, 1=SHT31 (0x44), 2=SHT4x (0x44), 3=BMP/BME280 test"
+        range 0 3
+        default 0
+        help
+            BMP280/BME280 temperature test auto-detects 0x76/0x77 and logs/displays temperature.
+            Test readings are never reported to the thermostat controller.
+    config ROOM_SDA
+        int "External probe SDA (-1 until wiring is confirmed)"
+        range -1 48
+        default -1
+    config ROOM_SCL
+        int "External probe SCL (-1 until wiring is confirmed)"
+        range -1 48
+        default -1
+endmenu
+

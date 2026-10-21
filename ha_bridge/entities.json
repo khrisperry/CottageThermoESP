@@ -1,0 +1,16 @@
+{
+  "ha_url": "https://cottageha.greenledges.net:8123",
+  "entities": {
+    "deck": {"entity_id": "light.cottage_porch", "label": "Deck lights", "kind": "light"},
+    "breezeway": {"entity_id": "light.breezeway_string_light", "label": "Breezeway light", "kind": "light"},
+    "blinds": {"entity_id": "cover.roller_shade_f1", "label": "Blinds", "kind": "cover"},
+    "washer1": {"entity_id": "sensor.washer_1_status", "label": "Washer 1", "kind": "laundry"},
+    "washer2": {"entity_id": "sensor.washer_2_status", "label": "Washer 2", "kind": "laundry"},
+    "dryer1": {"entity_id": "sensor.dryer_1_status", "label": "Dryer 1", "kind": "laundry"},
+    "dryer2": {"entity_id": "sensor.dryer_2_status", "label": "Dryer 2", "kind": "laundry"},
+    "kids_heat": {"entity_id": "input_boolean.kids_heat", "label": "Kids heat", "kind": "switch"},
+    "kids_temp": {"entity_id": "sensor.cottage_kids_temperature_and_humidity_temperature", "label": "Kids temperature", "kind": "temperature"},
+    "vacuum": {"entity_id": "vacuum.k11_vacuum_9d68", "label": "Vacuum", "kind": "vacuum"},
+    "camera": {"entity_id": "camera.cottagecamptz_fluent", "label": "Parking-lot camera", "kind": "camera"}
+  }
+}

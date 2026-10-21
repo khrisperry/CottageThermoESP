@@ -1,0 +1,59 @@
+cmake_minimum_required(VERSION 3.16)
+project(cottage_native_ui_test C)
+set(LVGL_DIR "${CMAKE_CURRENT_LIST_DIR}/../../touchscreen/managed_components/lvgl__lvgl" CACHE PATH "LVGL 9.2 source")
+set(LV_CONF_PATH "${CMAKE_CURRENT_BINARY_DIR}/lv_conf.h" CACHE STRING "" FORCE)
+file(READ "${LVGL_DIR}/lv_conf_template.h" CONF)
+string(REPLACE "#if 0 /*Set it to \"1\" to enable content*/" "#if 1" CONF "${CONF}")
+foreach(SIZE 14 16 20 24 28 48)
+    string(REPLACE "#define LV_FONT_MONTSERRAT_${SIZE} 0" "#define LV_FONT_MONTSERRAT_${SIZE} 1" CONF "${CONF}")
+endforeach()
+# Host RGB888 rendering and camera frames need more than the 64 KiB template pool.
+string(REPLACE "#define LV_MEM_SIZE (64 * 1024U)" "#define LV_MEM_SIZE (1024 * 1024U)" CONF "${CONF}")
+file(WRITE "${LV_CONF_PATH}" "${CONF}")
+add_subdirectory("${LVGL_DIR}" lvgl EXCLUDE_FROM_ALL)
+add_executable(native_ui_test test_native.c ../../touchscreen/managed_components/espressif__cjson/cJSON/cJSON.c)
+target_include_directories(native_ui_test PRIVATE stubs ../../touchscreen/main ../../touchscreen/managed_components/espressif__cjson/cJSON ../../touchscreen/managed_components/espressif__esp_jpeg/include)
+target_compile_options(native_ui_test PRIVATE -ffunction-sections -fdata-sections -Wall -Wextra -Wno-unused-parameter -Wno-unused-function)
+target_link_options(native_ui_test PRIVATE -Wl,--gc-sections)
+target_link_libraries(native_ui_test PRIVATE lvgl m)
+
+find_package(Python3 REQUIRED COMPONENTS Interpreter)
+execute_process(COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_LIST_DIR}/../../tools/generate-ha-entities.py" "${CMAKE_CURRENT_LIST_DIR}/../../ha_bridge/entities.json" "${CMAKE_CURRENT_BINARY_DIR}/room_ha_entities.h" COMMAND_ERROR_IS_FATAL ANY)
+add_executable(direct_ha_test test_direct_ha.c ../../touchscreen/managed_components/espressif__cjson/cJSON/cJSON.c)
+target_include_directories(direct_ha_test PRIVATE stubs "${CMAKE_CURRENT_BINARY_DIR}" ../../touchscreen/main ../../touchscreen/managed_components/espressif__cjson/cJSON)
+target_compile_options(direct_ha_test PRIVATE -Wall -Wextra -Wno-unused-parameter -Wno-unused-variable)
+target_link_libraries(direct_ha_test PRIVATE lvgl m)
+
+add_executable(empty_ha_test test_direct_ha.c ../../touchscreen/managed_components/espressif__cjson/cJSON/cJSON.c)
+target_compile_definitions(empty_ha_test PRIVATE ROOM_HA_EMPTY=1)
+target_include_directories(empty_ha_test PRIVATE stubs "${CMAKE_CURRENT_BINARY_DIR}" ../../touchscreen/main ../../touchscreen/managed_components/espressif__cjson/cJSON)
+target_link_libraries(empty_ha_test PRIVATE lvgl m)
+
+add_executable(wifi_portal_test test_wifi_portal.c)
+
+add_executable(keepalive_test test_keepalive.c)
+target_include_directories(keepalive_test PRIVATE transport_stubs ../../touchscreen/main)
+target_compile_options(keepalive_test PRIVATE -Wall -Wextra -Werror -Wno-unused-parameter)
+
+add_executable(camera_size_test test_camera_size.c)
+target_compile_options(camera_size_test PRIVATE -Wall -Wextra -Werror)
+
+add_executable(visual_state_test test_visual_state.c)
+target_compile_options(visual_state_test PRIVATE -Wall -Wextra -Werror)
+
+add_executable(feedback_test test_feedback.c)
+target_compile_options(feedback_test PRIVATE -Wall -Wextra -Werror)
+
+add_executable(audio_test test_audio.c)
+target_include_directories(audio_test PRIVATE audio_stubs ../../touchscreen/main)
+target_compile_options(audio_test PRIVATE -Wall -Wextra -Werror -Wno-unused-parameter)
+target_link_libraries(audio_test PRIVATE m)
+
+add_executable(camera_scale_test test_camera_scale.c)
+target_compile_options(camera_scale_test PRIVATE -Wall -Wextra -Werror)
+
+
+add_executable(bmp280_test test_bmp280.c)
+target_include_directories(bmp280_test PRIVATE probe_stubs ../../touchscreen/main)
+target_compile_options(bmp280_test PRIVATE -Wall -Wextra -Werror)
+target_link_libraries(bmp280_test PRIVATE m)

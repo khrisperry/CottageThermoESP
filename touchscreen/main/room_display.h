@@ -1,0 +1,9 @@
+#pragma once
+#include "driver/i2c_master.h"
+void room_display_start(void);
+/* Native 4B probe shares the board I2C bus, never repurposes LCD GPIOs. */
+i2c_master_bus_handle_t room_display_probe_bus(int sda, int scl);
+
+
+/* Local test reading only; does not alter controller-reported climate state. */
+void room_display_probe_sample(float temperature_f);

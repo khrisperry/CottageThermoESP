@@ -24,3 +24,21 @@
 .idea/
 .DS_Store
 __pycache__/
+
+# Optional browser-test dependencies
+**/node_modules/
+**/test-results/
+
+# Local Home Assistant bridge environment
+**/.venv/
+
+# Native 4B local build/configuration (can contain credentials)
+**/build-4b/
+**/sdkconfig.4b
+**/sdkconfig.4b.old
+# Pin the tested native display dependency graph.
+!touchscreen/dependencies.lock
+
+# Direct Home Assistant credentials (compiled locally into the ESP firmware)
+/touchscreen/*secrets.h*
+!/touchscreen/secrets.h.example

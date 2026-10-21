@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Cottage settings</title><style>
+body{font:16px system-ui;background:#0b111b;color:#f1f5fa;max-width:520px;margin:32px auto;padding:20px}
+form{background:#151f2d;padding:24px;border-radius:16px}label{display:block;margin:18px 0 7px}
+input,button{box-sizing:border-box;font:inherit;width:100%;padding:12px;border-radius:8px;border:1px solid #526174;background:#0b111b;color:inherit}
+button{margin-top:24px;background:#64dfc4;color:#0b111b;font-weight:600;cursor:pointer}
+button:disabled{opacity:.45}small,p{color:#a8b9ce;line-height:1.5}.check{display:flex;align-items:center;gap:10px}.check input{width:auto}
+#status{white-space:pre-wrap;color:#f5b65d}a{color:#64dfc4}
+</style><h1>Cottage settings</h1>
+<p>To edit, tap <b>Wi-Fi</b> on the device and join its setup network. Then open <a href="http://192.168.4.1/settings">192.168.4.1/settings</a>.</p>
+<form id="form"><label for="ha">Home Assistant URL</label><input id="ha" required maxlength="255" placeholder="https://cottageha.greenledges.net:8123">
+<label for="token">Home Assistant long-lived token</label><input id="token" type="password" maxlength="2048" autocomplete="new-password" spellcheck="false">
+<small id="tokenHint">Leave blank to keep the saved token.</small>
+<label class="check"><input id="show" type="checkbox">Show the token I am entering</label>
+<label class="check"><input id="clear" type="checkbox">Clear the saved token</label>
+<label for="controller">Thermostat controller IP or name</label><input id="controller" required maxlength="255" placeholder="192.168.60.100 or cottage-controller.local">
+<small>An IP/name uses HTTP. You can also enter an HTTP or HTTPS origin with a port.</small>
+<button id="save" disabled>Save and restart</button><p id="status" role="status">Loading settings...</p></form>
+<script>
+const $=id=>document.getElementById(id);
+$('show').onchange=()=>$('token').type=$('show').checked?'text':'password';
+$('clear').onchange=()=>{if($('clear').checked)$('token').value='';$('token').disabled=$('clear').checked;};
+async function load(){try{
+ const r=await fetch('/api/settings',{cache:'no-store'}),j=await r.json();
+ if(!r.ok)throw Error(j.message||'Settings unavailable');
+ $('ha').value=j.ha_url;$('controller').value=j.controller;
+ $('tokenHint').textContent=j.token_configured?'A token is saved. Leave blank to keep it.':'No token is saved yet.';
+ $('save').disabled=false;$('status').textContent='';
+}catch(e){$('status').textContent=e.message;}}
+$('form').onsubmit=async e=>{e.preventDefault();$('save').disabled=true;
+ const payload={ha_url:$('ha').value.trim(),controller:$('controller').value.trim(),ha_token:$('token').value.trim(),clear_token:$('clear').checked};
+ $('status').textContent='Saving...';
+ try{const r=await fetch('/api/settings',{method:'POST',headers:{'Content-Type':'application/json','X-Cottage-Setup':'1'},body:JSON.stringify(payload)});
+ const j=await r.json();$('status').textContent=j.message;
+ if(!r.ok)$('save').disabled=false;
+ }catch(e){$('status').textContent='Connection interrupted. Check whether the device restarted before trying again.';}
+ finally{payload.ha_token='';$('token').value='';}
+};
+load();
+</script></html>

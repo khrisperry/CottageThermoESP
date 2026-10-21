@@ -2,7 +2,7 @@
 
 ESP-IDF smart thermostat / mechanical knob actuator project for a **Williams model 1773512 direct-vent cottage furnace**.
 
-> **Status: concept documented; first milestone is a removable, direct-drive, BENCH-ONLY servo proof of concept. No unattended operation of a modified gas furnace is authorized or validated.** Do not install this on a live gas appliance without appropriate professional review and confirmation that it is permitted by the appliance manufacturer and applicable codes. Do not bypass any original furnace safety controls.
+> **Status: controller v0.2.0; native 4B room panel v0.9.4.** Controller and room client are separate ESP-IDF 6.0.1 projects. Automatic output defaults to simulation; physical servo commands are explicitly armed bench operations. Mechanical travel/torque, encoder feedback and appliance integration remain unverified.
 
 ## Start here when resuming the project
 
@@ -11,7 +11,14 @@ ESP-IDF smart thermostat / mechanical knob actuator project for a **Williams mod
 3. **[docs/MECHANICAL_NOTES.md](docs/MECHANICAL_NOTES.md)** — knobs, direct-drive coupling, cap trial sizes, measurement list and attachment concept.
 4. **[docs/DECISIONS_AND_OPEN_QUESTIONS.md](docs/DECISIONS_AND_OPEN_QUESTIONS.md)** — confirmed decisions, unknowns, next session checklist.
 5. **[hardware/cap_fit_kit.scad](hardware/cap_fit_kit.scad)** — parametric **test coupons**, not a verified knob/servo coupling.
-6. **[controller/README.md](controller/README.md)** — bench controller firmware and build steps.
+6. **[controller/README.md](controller/README.md)** — controller setup, modes, calibration and bench movement.
+7. **[touchscreen/README.md](touchscreen/README.md)** — native 4B build, captive Wi-Fi/direct HA setup and first hardware checks.
+8. **[docs/LOCAL_VALIDATION.md](docs/LOCAL_VALIDATION.md)** — local build/test steps and next cottage visit.
+9. **[docs/API.md](docs/API.md)** — direct paired API, schedules and data freshness.
+
+## Home Assistant development
+
+The native room client connects **directly to Home Assistant** using a long-lived token in ignored `touchscreen/secrets.h`. No bridge or bridge token is required. See [touchscreen setup](touchscreen/README.md) for the one-time secrets file, Wi-Fi settings and 4B build/flash commands. Climate/Home/Laundry/Camera and swipe navigation are implemented. The direct-HA v0.5.0 build/checks passed. v0.6.0 adds captive Wi-Fi provisioning, an on-screen Wi-Fi button and a 16 KB startup stack; local compilation and physical portal testing are pending.
 
 ## Goal
 
@@ -21,18 +28,25 @@ ESP-IDF smart thermostat / mechanical knob actuator project for a **Williams mod
 - Servo must not automatically go to 0, sweep, or seek a default position on reboot / power restoration.
 - Ultimately: standalone local thermostat operation, optional Home Assistant climate integration, ESP32-S3 touchscreen room thermostat, adaptive temperature-to-dial calibration, heating recovery-time learning, and HA-assisted "Heading to Cottage" preheat.
 
-## Proposed directories
+## Software now implemented
 
-\`\`\`
-CottageThermoESP/
-  controller/    ESP-IDF furnace-side controller (first bench prototype now)
-  touchscreen/   future ESP32-S3 Touch-LCD-4B UI and room-temperature sensing
-  shared/        future wire protocol
-  hardware/      parametric CAD, measured models and tests
-  docs/          requirements, test plans, engineering decisions
-\`\`\`
+Persistent modes/target/calibration, measured-map interpolation, fractional dial commands, source freshness/disagreement checks, movement limits, weekly schedules in Detroit time, paired web/API access, optional LAN Wi-Fi, events and six-hour sample CSV export. The room client reports CRC-checked SHT31/SHT4x samples and presents browser and native 4B interfaces. Native display electronics and probe wiring await physical validation.
 
-These future directories will be created as implementation begins; see the detailed design documents.
+```text
+controller/    AtomS3 Lite controller + bench web UI
+touchscreen/ native 4B + external probe + browser UI
+shared/thermo/ hardware-independent thermostat engine
+tests/        engine, LVGL host, HA bridge and browser checks
+tools/        Windows local build helper
+hardware/     CAD, reference models and tests
+docs/         specification, API, validation and engineering decisions
+```
+
+Build both locally from the configured ESP-IDF PowerShell terminal:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tools\build-local.ps1
+```
 
 ## Current short-term milestone: does the servo have enough torque?
 
@@ -41,3 +55,15 @@ Test a **TS90MD**, controlled by an **M5Stack AtomS3 Lite on rear GPIO38 (G38)**
 A fitted cap and stationary mount are independent parts. The servo horn/spline must match the **actual servo shaft** (T20 and T25 are not interchangeable); use the correct supplied/matching metal horn or hub rather than guessing a printed spline.
 
 **Project origin:** planning discussion, 2026-10-17. All example calibration temperatures, runtime estimates and cap diameters are placeholders until measured.
+
+## Consolidated display baseline (2026-10-21)
+
+Use `main` for the consolidated controller/display baseline. Waveshare ESP32-S3-Touch-LCD-4B is the planned production display (480×480, 16 MB flash, 8 MB PSRAM). User hardware tests confirm the native UI, direct Home Assistant, camera, sound and local BME280 test sensor. These results supersede older pending-display notes above. Permanent sensing and furnace mechanics still require validation. Follow-up work is reviewed separately before integration.
+
+```powershell
+git switch main
+git pull --ff-only
+.\tools\build-room-4b.ps1 -Bme280Test -Flash -Monitor -Port COM14
+```
+
+Omit `-Bme280Test` when retaining the configured permanent sensor profile. Deferred transport, status and climate requirements are tracked in `docs/DECISIONS_AND_OPEN_QUESTIONS.md`.

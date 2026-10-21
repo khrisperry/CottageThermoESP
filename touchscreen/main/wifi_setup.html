@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Cottage Wi-Fi setup</title><style>
+:root{font:17px system-ui;color:#ecf5f4;background:#102832}*{box-sizing:border-box}
+body{max-width:500px;padding:20px;margin:20px auto}h1{font-size:28px}section{padding:20px;background:#1b3743;border-radius:14px}
+label{display:block;margin:18px 0 7px}input,select,button{font:inherit;width:100%;padding:12px;border-radius:9px;border:1px solid #526f7a}
+input,select{background:#102832;color:#ecf5f4}button{margin-top:14px;background:#a5e5cc;color:#12302d;cursor:pointer;min-height:46px}
+button:disabled{opacity:.5}small{color:#aac0c7}#status{white-space:pre-wrap;overflow-wrap:anywhere;min-height:55px}
+.check{display:flex;align-items:center;gap:10px}.check input{width:auto}#status{color:#ffd69b}
+</style><h1>Cottage Wi-Fi setup</h1><section>
+<p><a href="/settings" style="color:#a5e5cc">Home Assistant and controller settings</a></p><p>Choose your 2.4 GHz Wi-Fi network. This screen tests the connection before saving it.</p>
+<button id="scan" type="button">Scan for networks</button><label for="networks">Nearby networks</label><select id="networks"><option value="">Choose a network or type its name below</option></select>
+<form id="setup"><label for="ssid">Network name (SSID)</label><input id="ssid" maxlength="32" autocomplete="off" required>
+<label for="password">Wi-Fi password</label><input id="password" type="password" maxlength="64" autocomplete="new-password">
+<label class="check"><input id="show" type="checkbox">Show password</label>
+<label class="check"><input id="open" type="checkbox">This network has no password</label>
+<button id="save" type="submit">Save and connect</button></form>
+<p id="status" role="status">Loading device status...</p>
+<small>The setup network closes after the new Wi-Fi connection is saved. Keep this page open while connecting. If it does not open automatically, use http://192.168.4.1.</small>
+</section><script>
+const el=id=>document.getElementById(id);let pending=false,polling=false,saved=false;
+async function api(path,data){const r=await fetch(path,{method:data===undefined?'GET':'POST',cache:'no-store',headers:{'Content-Type':'application/json','X-Cottage-Setup':'1'},body:data===undefined?undefined:JSON.stringify(data)});const j=await r.json();if(!r.ok)throw Error(j.error||'Request failed');return j}
+function setBusy(value){pending=value;el('save').disabled=value;el('scan').disabled=value}
+async function refresh(){if(polling)return;polling=true;try{const s=await api('/api/wifi/status');setBusy(s.pending);saved=s.saved;el('status').textContent=s.message+(s.connected?'\nDevice IP: '+s.ip:'')+(s.reason&&!s.connected?'\nDisconnect reason: '+s.reason:'')}catch(e){if(!saved)el('status').textContent='Setup connection lost. Rejoin the setup network and reopen http://192.168.4.1.'}finally{polling=false}}
+el('networks').onchange=()=>{if(el('networks').value){el('ssid').value=el('networks').value;el('open').checked=el('networks').selectedOptions[0]?.dataset.open==='1';el('password').disabled=el('open').checked}};
+el('show').onchange=()=>el('password').type=el('show').checked?'text':'password';
+el('open').onchange=()=>{el('password').disabled=el('open').checked};
+el('scan').onclick=async()=>{el('scan').disabled=true;el('status').textContent='Scanning...';try{const s=await api('/api/wifi/scan');el('networks').replaceChildren();let first=document.createElement('option');first.value='';first.textContent='Choose a network or type its name below';el('networks').appendChild(first);for(const n of s.networks){let o=document.createElement('option');o.value=n.ssid;o.dataset.open=n.open?'1':'0';o.textContent=n.ssid+' ('+n.rssi+' dBm'+(n.open?', open':'')+')';el('networks').appendChild(o)}el('status').textContent=s.networks.length?'Select a network, then enter its password.':'No networks found. You can enter the SSID manually.'}catch(e){el('status').textContent=e.message}finally{el('scan').disabled=pending}};
+el('setup').onsubmit=async event=>{event.preventDefault();if(pending)return;const ssid=el('ssid').value,password=el('open').checked?'':el('password').value;const bytes=new TextEncoder().encode(ssid).length;if(!bytes||bytes>32){el('status').textContent='Network name must be 1–32 bytes.';return}if(!el('open').checked&&(password.length<8||password.length>64)){el('status').textContent='Enter the Wi-Fi password, or select the no-password option.';return}setBusy(true);saved=false;el('status').textContent='Testing Wi-Fi connection...';try{await api('/api/wifi/connect',{ssid,password,open:el('open').checked});el('password').value='';await refresh()}catch(e){setBusy(false);el('status').textContent=e.message}};
+setInterval(refresh,2000);refresh();
+</script></html>
