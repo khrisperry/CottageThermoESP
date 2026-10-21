@@ -13,7 +13,7 @@ POST accepts one JSON object, maximum 4096 bytes. Incomplete, nonfinite, out-of-
 | POST | `/api/clock` | `{"unix_s":<current UTC epoch seconds>}` for AP-only operation; local zone is Detroit |
 | POST | `/api/sync` | `{"level":3,"confirm":"simulation"}`; live bench uses `observed_bench_position` and requires arming |
 | POST | `/api/arm` | `{"confirm":"unloaded_bench"}`; explicit 15-minute physical bench session, no motion by itself |
-| POST | `/api/pulse` | `{"us":1500}`; physical raw PWM, Hold only, armed session required, 1100–1900 inclusive; invalidates thermostat synchronization |
+| POST | `/api/pulse` | `{"us":1500}`; physical raw PWM, Hold only, armed session required, 500–2500 inclusive; invalidates thermostat synchronization |
 | POST | `/api/stop` | `{}`; disable PWM, disarm, clear synchronization, enter session Hold; never rotate to zero |
 | GET | `/api/events` | Last 64 uptime-stamped event messages (RAM) |
 | GET | `/api/history` | Up to six hours of minute samples as CSV (RAM) |

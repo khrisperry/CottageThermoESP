@@ -74,7 +74,7 @@ static void event(const char *text)
 }
 static esp_err_t pulse(int us)
 {
-    if (us<1100 || us>1900) return ESP_ERR_INVALID_ARG;
+    if (us<500 || us>2500) return ESP_ERR_INVALID_ARG;
     if (!timer_ready) {
         ledc_timer_config_t t={.speed_mode=LEDC_LOW_SPEED_MODE,.duty_resolution=LEDC_TIMER_13_BIT,
             .timer_num=LEDC_TIMER_0,.freq_hz=50,.clk_cfg=LEDC_AUTO_CLK};
@@ -201,7 +201,7 @@ static esp_err_t get_api(httpd_req_t *r)
         }
     } else {
         j=cJSON_CreateObject();
-        cJSON_AddStringToObject(j,"version","0.5.2");
+        cJSON_AddStringToObject(j,"version","0.5.3");
         cJSON_AddBoolToObject(j,"simulation",state.simulated);
         cJSON_AddBoolToObject(j,"bench_armed",armed);
         cJSON_AddNumberToObject(j,"arm_remaining_ms",armed && armed_until>now_ms()?armed_until-now_ms():0);
@@ -401,7 +401,7 @@ static esp_err_t post_api(httpd_req_t *r)
         }
     } else if(!strcmp(r->uri,"/api/pulse")) {
         double u;
-        if(armed && now_ms()<armed_until && state.config.mode==TH_HOLD && number(j,"us",&u) && floor(u)==u && u>=1100 && u<=1900) {
+        if(armed && now_ms()<armed_until && state.config.mode==TH_HOLD && number(j,"us",&u) && floor(u)==u && u>=500 && u<=2500) {
             ok=pulse((int)u)==ESP_OK;
             th_release(&state);
             if(ok)event("Explicit raw bench PWM command; thermostat synchronization cleared");

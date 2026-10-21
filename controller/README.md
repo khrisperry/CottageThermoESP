@@ -1,4 +1,4 @@
-# Controller v0.5.2 — thermostat development and servo bench
+# Controller v0.5.3 — thermostat development and servo bench
 
 ESP-IDF **6.0.1**, ESP32-S3, M5Stack AtomS3 Lite (8 MB flash), servo signal **G38/GPIO38**. Build defaults simulate automatic thermostat movement. No measurements or placeholder calibration map are installed.
 
@@ -33,7 +33,7 @@ COM13 was the controller port in the latest supplied build log; confirm it still
 2. The webpage opens directly. Local setup and the controller API require no access token.
 3. The first boot is **Hold**, no map, unknown physical position, PWM off. Review status and settings without enabling motion.
 4. For software testing, enter a synthetic map **only in the simulation build**, synchronize a virtual starting dial level, submit a simulation temperature, then select Thermostat. Simulated movement is visible in events. One temperature report expires after 90 seconds.
-5. For the actual servo test: remove the horn/load, use Hold mode, **Arm unloaded bench output**, then send **1500 µs** followed by small manual pulse changes. **Raw PWM is physical even in a simulation build.** It is separately armed; the normal thermostat engine remains simulated. Stop PWM clears synchronization and disables the signal. No return to zero.
+5. For the actual servo test: remove the horn/load, use Hold mode, **Arm unloaded bench output**, then send **1500 µs** followed by small manual pulse changes. Raw bench commands accept the full **500–2500 µs** range, including both endpoints. Find the actual usable travel with the servo unloaded; pulse width does not verify angle or position. The measured thermostat calibration map still uses 1100–1900 µs. **Raw PWM is physical even in a simulation build.** It is separately armed; the normal thermostat engine remains simulated. Stop PWM clears synchronization and disables the signal. No return to zero.
 
 No synthetic map is shipped. **Simulation and live bench maps/settings use different NVS keys**, so a simulated map cannot silently become a live calibration when you change the build option. Session arming and synchronization never persist. Neither an NVS record nor a pulse command is proof of physical position.
 
