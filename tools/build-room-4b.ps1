@@ -1,4 +1,4 @@
-param([switch]$Configure, [Alias('Bme280Test')][switch]$Bmp280Test, [switch]$Sht45, [switch]$Flash, [switch]$Monitor, [string]$Port='')
+param([switch]$Configure, [Alias('Bme280Test')][switch]$Bmp280Test, [switch]$Sht45, [switch]$Flash, [switch]$Monitor, [string]$Port='', [ValidateSet(0,180)][int]$Rotation=180)
 $ErrorActionPreference='Stop'
 if ($Bmp280Test -and $Sht45) { throw 'Select either -Bme280Test/-Bmp280Test or -Sht45, not both.' }
 if (-not (Get-Command idf.py -ErrorAction SilentlyContinue)) {
@@ -61,6 +61,12 @@ try {
             Write-Host 'BMP280/BME280 temperature test enabled: SDA47/SCL48; local display/log only, no controller reports.'
         }
     }
+    # Apply orientation to existing saved configs as well as fresh builds.
+    $configText=Get-Content $configPath -Raw
+    $configText=[regex]::Replace($configText,'(?m)^(?:CONFIG_ROOM_DISPLAY_ROTATE_180=.*|# CONFIG_ROOM_DISPLAY_ROTATE_180 is not set)\r?\n?','')
+    $rotationSetting=if ($Rotation -eq 180) { 'CONFIG_ROOM_DISPLAY_ROTATE_180=y' } else { '# CONFIG_ROOM_DISPLAY_ROTATE_180 is not set' }
+    $configText += [Environment]::NewLine + $rotationSetting + [Environment]::NewLine
+    [IO.File]::WriteAllText($configPath,$configText,[Text.UTF8Encoding]::new($false))
     if ($Configure) {
         & idf.py @idfArgs menuconfig
         if ($LASTEXITCODE -ne 0) { throw '4B configuration failed' }

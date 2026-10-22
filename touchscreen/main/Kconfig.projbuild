@@ -8,7 +8,7 @@ menu "Cottage room thermostat"
     config ROOM_DISPLAY_ROTATE_180
         bool "Rotate display and touch 180 degrees"
         depends on ROOM_NATIVE_DISPLAY
-        default n
+        default y
     config ROOM_WIFI_SSID
         string "Legacy Wi-Fi SSID (optional migration only; use captive portal)"
         default ""
