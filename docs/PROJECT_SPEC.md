@@ -19,7 +19,7 @@ Last established: 2026-10-17. This document is the authoritative handoff of the 
 - When current room-temperature data are unavailable: do NOT invent readings or move based on stale sensor values. Preserve last verified safe position, report fault and use independent low-temperature monitoring. Standalone operation with zero fresh temperature sources cannot promise active climate regulation.
 
 **B. Room thermostat/display ESP32-S3**
-- Candidate hardware: **Waveshare ESP32-S3-Touch-LCD-4B** (same family previously used for touchscreen projects). Native ESP-IDF, LVGL UI.
+- Planned production display: **Waveshare ESP32-S3-Touch-LCD-4B** (same family previously used for touchscreen projects). Native ESP-IDF, LVGL UI.
 - Shows current indoor temperature, target temperature, operating mode, dial level, furnace activity, signal/health, predicted ready time; change setpoint by touch.
 - Use a remotely mounted **SHT31/SHT4x** or similar temperature sensor away from LCD/CPU heat; BMP280 is not preferred for room temperature. Display communicates readings and commands directly to controller through Wi-Fi (authenticated local API/WebSocket), with a planned paired ESP-NOW fallback when that link is unavailable.
 - Display is a UI/client and primary room sensor. Its restarts/updates must not remove the controller's committed thermostat settings.
@@ -117,3 +117,7 @@ Two distinct models:
 User authorized hardware-independent thermostat/controller work before next-weekend mechanical proof. v0.2.0 implements the map-based engine, persistent settings, weekly schedules, primary/secondary temperature API, paired web controls, simulated automatic output and explicitly armed physical bench commands. Simulation/live maps use separate NVS keys; no fictional calibration ships. The room-client project compiles independently with SHT31/SHT4x support and a browser thermostat; physical LCD/touch integration remains pending exact board/wiring.
 
 This advances the software phases without declaring mechanical proof, measured physical position, installation readiness, trained recovery prediction, MQTT Discovery, OTA or active calibration complete. Current source/build/API behavior is documented in controller/README.md, touchscreen/README.md, API.md and LOCAL_VALIDATION.md. Initial P0 bench instructions above describe the earlier prototype; the v0.2.0 controller now requires a pairing token and explicit bench arm before raw PWM.
+
+## 2026-10-21 review implementation
+
+The working Waveshare ESP32-S3-Touch-LCD-4B is the planned production display. The consolidated reviewed baseline is `main` (panel v0.9.4); `feature/connectivity-climate-review` adds panel v0.10.0/controller v0.3.0 connectivity UI, paired ESP-NOW fallback and HA MQTT climate discovery. See CONNECTIVITY_REVIEW.md for implemented scope, defaults, transport limitations, build/test evidence and hardware acceptance checks. Historical statements that these modules are absent are superseded by that review; physical radio/MQTT validation and furnace mechanics remain pending.

@@ -2,7 +2,11 @@
 
 ESP-IDF smart thermostat / mechanical knob actuator project for a **Williams model 1773512 direct-vent cottage furnace**.
 
-> **Status: controller v0.2.0; native 4B room panel v0.9.4.** Controller and room client are separate ESP-IDF 6.0.1 projects. Automatic output defaults to simulation; physical servo commands are explicitly armed bench operations. Mechanical travel/torque, encoder feedback and appliance integration remain unverified.
+> **Review: controller v0.5.6; native 4B room panel v0.13.6.** Controller and room client are separate ESP-IDF 6.0.1 projects. Automatic output defaults to simulation; physical servo commands are explicitly armed bench operations. Mechanical travel/torque, encoder feedback and appliance integration remain unverified.
+
+The consolidated v0.9.4 baseline is on `main`; this follow-up is on `feature/connectivity-climate-review`. See [connectivity review and setup](docs/CONNECTIVITY_REVIEW.md) for the new status/diagnostics UI, paired ESP-NOW fallback, initial MQTT discovery, exact build evidence and pending physical checks. See the latest [dashboard, ship tracker and OTA setup](docs/DEVICE_DASHBOARD_SHIPS_OTA.md) for the aligned status screens, full LAN settings, live ship service integration and first USB migration to webpage updates. The latest [standalone thermostat and MQTT Climate guide](docs/STANDALONE_MQTT_MONITORING.md) describes HA target-temperature requests through the wall thermostat. HA never controls the servo directly; standalone thermostat operation remains independent of HA/MQTT.
+
+Current controller setup and independent link checks: [Wi-Fi, ESP-NOW and Omada outage testing](docs/CONTROLLER_LINK_TESTING.md).
 
 ## Start here when resuming the project
 
@@ -26,11 +30,11 @@ The native room client connects **directly to Home Assistant** using a long-live
 - Fit a removable 3D-printed cap over the existing knob, driven 1:1 by a coaxial servo (starting with **TS90MD**). **No intermediate gears.**
 - Servo body stays fixed to a removable bracket; cap and shaft rotate. Cap can stay on the knob for manual turning when servo module is detached.
 - Servo must not automatically go to 0, sweep, or seek a default position on reboot / power restoration.
-- Ultimately: standalone local thermostat operation, optional Home Assistant climate integration, ESP32-S3 touchscreen room thermostat, adaptive temperature-to-dial calibration, heating recovery-time learning, and HA-assisted "Heading to Cottage" preheat.
+- Ultimately: standalone local thermostat operation, optional Home Assistant Climate integration, ESP32-S3 touchscreen room thermostat, adaptive temperature-to-dial calibration, heating recovery-time learning, and local schedules.
 
 ## Software now implemented
 
-Persistent modes/target/calibration, measured-map interpolation, fractional dial commands, source freshness/disagreement checks, movement limits, weekly schedules in Detroit time, paired web/API access, optional LAN Wi-Fi, events and six-hour sample CSV export. The room client reports CRC-checked SHT31/SHT4x samples and presents browser and native 4B interfaces. Native display electronics and probe wiring await physical validation.
+Persistent modes/target/calibration, measured-map interpolation, fractional dial commands, source freshness/disagreement checks, movement limits, weekly schedules in Detroit time, direct local web/API access, optional LAN Wi-Fi, events and six-hour sample CSV export. The room client reports CRC-checked SHT31/SHT4x samples and presents browser and native 4B interfaces. Native display electronics and probe wiring await physical validation.
 
 ```text
 controller/    AtomS3 Lite controller + bench web UI

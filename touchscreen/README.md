@@ -1,12 +1,18 @@
 # Cottage room panel — Waveshare ESP32-S3-Touch-LCD-4B
 
-Version 0.9.4 provides the **native 480×480 LCD and capacitive touch interface**. This is for the **4B**, with 16 MB flash and 8 MB octal PSRAM. It uses Waveshare BSP 2.0.0, LVGL 9.2.0 and ESP LVGL port 2.6.2, compiled with ESP-IDF 6.0.1. The dependency lock pins the tested graph. **The ESP connects directly to Home Assistant using your long-lived token; no bridge process, bridge address or bridge token is required.** No device has been flashed or physically verified by the coding environment.
+Version 0.13.7 provides the **native 480×480 LCD and capacitive touch interface**. This is for the **4B**, with 16 MB flash and 8 MB octal PSRAM. It uses Waveshare BSP 2.0.0, LVGL 9.2.0 and ESP LVGL port 2.6.2, compiled with ESP-IDF 6.0.1. The dependency lock pins the tested graph. **The ESP connects directly to Home Assistant using your long-lived token; no bridge process, bridge address or bridge token is required.** No device has been flashed or physically verified by the coding environment.
+
+The 4B is the planned production display. User tests confirmed the earlier UI, camera, audio and BME280 temperature test. v0.11.0 adds aligned colored Connections, full LAN configuration, Ships and application-bin OTA. v0.12.1 connects this display directly to MQTT for an HA Climate entity and monitoring sensors. HA target requests use the same queue as touchscreen changes; controller v0.4.1 removes controller MQTT commands. See [standalone MQTT monitoring](../docs/STANDALONE_MQTT_MONITORING.md). Follow [dashboard, ships and OTA setup](../docs/DEVICE_DASHBOARD_SHIPS_OTA.md), including the **initial USB flash required for OTA**. Earlier milestone notes below are historical.
+
+## Display orientation
+
+The display and touch default to **180 degrees**. The Windows build helper applies this to existing `sdkconfig.4b` files too, including OTA builds. Build normally to use the new orientation. Pass `-Rotation 0` to the helper to restore the original orientation; `-Rotation 180` selects the new default explicitly. Direct `idf.py` builds with an existing saved config require `CONFIG_ROOM_DISPLAY_ROTATE_180=y` (menuconfig → Cottage room thermostat).
 
 ## Device settings
 
-With no saved Wi-Fi, the captive setup network opens immediately. After 30 seconds disconnected from a configured Wi-Fi network, it opens automatically. Join **CottageThermo-XXXX-Setup**, then open **http://192.168.4.1/settings** (also linked from Wi-Fi setup). Configure the Home Assistant HTTPS origin, its long-lived token, and the thermostat controller IP/name or HTTP(S) origin. Bare controller IPs/names use HTTP. Click **Save and restart**; the profile persists in NVS across firmware flashes that preserve NVS.
+Use `http://DEVICE_IP/settings` on normal Wi-Fi. Tap the display gear for its webpage address. The local webpage opens directly with configuration and OTA available; there is no access code. All HA/controller/MQTT/radio/ship fields are available there. Blank secrets retain existing values; explicit Clear controls remove supported secrets. Compile-time secrets/menuconfig remain boot defaults until a profile is saved.
 
-The token is never returned to the browser. Leaving the token field blank keeps the existing token; an explicit Clear checkbox removes it. Settings writes require the setup AP, local Host/Origin and custom setup header. The page at the ordinary LAN IP explains how to enter setup; no additional bridge or credential is required. Existing secrets.h/menuconfig settings are boot defaults until a settings profile is saved. They continue to support building without a web-configured profile.
+With no saved Wi-Fi the captive setup network opens immediately; after a prolonged outage it opens automatically while reconnection continues. Join **CottageThermo-XXXX-Setup**, open `http://192.168.4.1`, and provision Wi-Fi first. The Wi-Fi portal handles networking; the full settings page is separate. There is no manual Wi-Fi button on the native screen.
 
 ## Native pages
 
@@ -16,6 +22,7 @@ v0.7.0 replaces the initial flat layouts with a dark navy theme, mint/amber acce
 - **Climate** is the default. Shows the controller's reported temperature, effective target, operating mode and reason. Adjust in 0.5°F steps with −/+, then tap **Set target**. That writes only `target_f` (45–80°F); it cannot arm the servo, switch operating mode or start calibration.
 - **Home** provides explicit Deck/Breezeway On/Off, blinds Open/Stop/Close, Kids Heat On/Off with its separate temperature, and vacuum Start/Stop. Unsupported or unavailable requests are disabled.
 - **Laundry** shows the four status sensor strings, without invented progress or completion estimates.
+- **Ships** uses the existing Tawas service, a cached map and up to twelve selectable vessel markers. See the latest setup guide for bounds and performance instrumentation.
 - **Camera** requests 480×320 JPEG snapshots directly from Home Assistant only while visible, at most one per second after the previous request completes. Old images hide on failure, stale data or navigation. An already-running read may finish within its timeout, but its result is discarded after a page change; no further frames are requested. Full-motion video remains separate work.
 
 Swipe left/right or tap the bottom navigation. After 60 seconds without navigation or a control tap, it returns to Climate and stops camera requests. Network work runs in separate tasks; the display task performs no network I/O. A background task reads the eleven configured entities, waits 5 seconds, then repeats. Polls, button commands and camera reads share a single serialized persistent HTTPS client. Commands take priority between entity polls. Successful responses keep the connection open when HA permits it; failed connections are discarded for the next request, and service calls are never automatically replayed. TLS allocations use PSRAM to preserve internal memory for the RGB display; the Windows helper migrates existing configs. Individual HA reads are bounded to 32 KB. Missing entities disable only their own controls; a temporary request failure retains recent state until its normal 30-second expiry; an authentication failure invalidates all HA controls immediately. Cached entities expire after 30 seconds. The native screen also disables controls if it has not refreshed its local model for 10 seconds. The captive setup network opens automatically when Wi-Fi remains disconnected for 30 seconds. Native commands use a dedicated worker and an eight-entry FIFO. Only the device with a queued/in-flight command is disabled, so Deck then Breezeway taps are accepted independently. Requests expire after ten seconds if the command worker has not begun them and are never automatically replayed. A brief error toast overlays content; the persistent bottom Wi-Fi/status strip has been removed. The last 32 HA request IDs are held for this boot so a duplicate does not repeat an ambiguous service call. An uncertain command result asks you to inspect state before intentionally trying again.
@@ -24,7 +31,7 @@ The retired browser Climate/Home dashboards are no longer embedded or served. LA
 
 ## Windows build and first hardware test
 
-1. Pull the `feature/thermostat-foundation` branch. From repository root, create your local credential file **once**:
+1. Use `main` for the reviewed baseline or `feature/connectivity-climate-review` for the new connectivity work. From repository root, create your local credential file **once**:
 
    ```powershell
    Copy-Item .\touchscreen\secrets.h.example .\touchscreen\secrets.h
@@ -52,15 +59,15 @@ The retired browser Climate/Home dashboards are no longer embedded or served. LA
 
    The captive page should open; if it does not, browse to **http://192.168.4.1**. Use **Scan for networks**, select the 2.4 GHz SSID (or enter a hidden SSID manually), enter its password, and press **Save and connect**. Open networks require the explicit no-password option. The page supports WPA-Personal passphrases (8–63 printable characters) and 64-digit hex PSKs.
 
-4. The setup AP stays available while the ESP tests the network. New credentials are committed to the `room_wifi` NVS namespace **only after the ESP gets an IP address**. Wrong credentials time out after about 30 seconds and leave the previous saved profile intact. The status page shows the connection result/IP and numeric disconnect reason, never a stored password. The application logs disconnect reasons without logging credentials. No HA token is entered on this page; it still comes from `secrets.h`.
+4. The setup AP stays available while the ESP tests the network. New credentials are committed to the `room_wifi` NVS namespace **only after the ESP gets an IP address**. Wrong credentials time out after about 30 seconds and leave the previous saved profile intact. The status page shows the connection result/IP and numeric disconnect reason, never a stored password. The application logs disconnect reasons without logging credentials. HA credentials are configured separately through the `/settings` page or supplied as compile-time defaults in `secrets.h`.
 
 5. After a new connection is saved, the setup AP closes after **30 seconds**. Rejoin your normal network. On reboot, the ESP reconnects using NVS. Existing menuconfig credentials are attempted once for migration if there is no saved profile; the old default bench SSID is excluded. Legacy fields remain optional and are no longer the normal setup path.
 
-6. To change networks later, tap the screen's **Wi-Fi** button. It opens the same captive portal while keeping the station connected where possible. If opened manually while already online and no new network is saved, setup closes after five minutes. A prolonged loss of the configured network also reopens setup automatically. Reconnect attempts use a short backoff rather than immediate retries inside the Wi-Fi event callback.
+6. To change networks later, use the unlocked webpage's **Wi-Fi** section. A prolonged loss of the configured network also reopens the captive portal automatically. Reconnect attempts continue with backoff.
 
-The setup page and credential submission are available only through the setup AP interface. Ordinary LAN requests cannot change Wi-Fi settings. The root path and common HTTP captive-detection requests redirect/show setup on the AP; the normal thermostat browser remains at the station IP. DHCP advertises the local DNS server and portal URI; DNS maps A queries to 192.168.4.1. Automatic popup behavior varies by phone/OS, so the direct address remains supported.
+The setup page and credential submission are available only through the setup AP interface. The `/settings` webpage can also submit new credentials through its authenticated settings endpoint. The root path and common HTTP captive-detection requests redirect/show setup on the AP; the normal thermostat browser remains at the station IP. DHCP advertises the local DNS server and portal URI; DNS maps A queries to 192.168.4.1. Automatic popup behavior varies by phone/OS, so the direct address remains supported.
 
-Check the screen orientation, Wi-Fi button, all four pages, successful NVS reconnect after reboot, and fallback after a bad password. Verify the display can reach HA directly. With no furnace controller connected, Climate remains unavailable while HA pages can work. Keep the external probe disabled until wiring is confirmed. To change orientation or controller/probe settings, use `-Configure` as before.
+Check screen orientation, the status pill/diagnostics, gear Settings, all five pages, successful NVS reconnect after reboot, and provisioning after a bad password. Verify the display can reach HA directly. With no furnace controller connected, target controls remain unavailable while fresh local probe readings and HA pages can work. To change orientation or controller/probe settings, use `-Configure` as before.
 
 Camera requests use `/api/camera_proxy/camera.cottagecamptz_fluent?width=480&height=320`, with bearer authentication in the header. Home Assistant does the requested image scaling; no separate host service is involved. Camera requests allow 15 seconds for HA to obtain a still. Camera responses are bounded to 768 KB; the native decoder now accepts larger baseline JPEGs and chooses 1/2, 1/4 or 1/8 decode scaling to keep the decoded output at or below 480×320. Progressive JPEGs, invalid data, images too large even at 1/8 scale and unsupported formats produce specific on-screen errors. Full-motion HLS/WebRTC remains future work. Camera attributes and transient camera tokens are not exposed to the panel.
 
@@ -74,7 +81,7 @@ The browser-only fallback is available by disabling the native display setting; 
 
 ## v0.8.0 controls and visuals
 
-Lights have locally drawn bulb silhouettes: dark when off, yellow when on. Confirmed HA state drives the icon; a pending command shows Sending on that row. Kids heat, blinds and vacuum also change icon/color with state. Laundry classifies Washing/Drying/Rinsing/Spinning as active, Not in Use as idle, plus finished, paused and error states; colored tiles and rotating drum indicators distinguish running appliances without inventing a percentage. The reclaimed footer area enlarges all four pages.
+Lights have locally drawn bulb silhouettes: dark when off, yellow when on. Confirmed HA state drives the icon; a pending command shows Sending on that row. Kids heat, blinds and vacuum also change icon/color with state. Laundry classifies Washing/Drying/Rinsing/Spinning as active, Not in Use as idle, plus finished, paused and error states; colored tiles and rotating drum indicators distinguish running appliances without inventing a percentage. The reclaimed footer area enlarges all five pages.
 
 ## v0.8.1 feedback and completion sounds
 
@@ -151,7 +158,7 @@ The BMP280's factory-calibrated temperature is read every 15 seconds in forced m
 
 All configured local probes now read and update the dial independently of controller pairing, controller availability, Home Assistant and Wi-Fi. Readings older than 30 seconds clear to unavailable. Controller target controls still require fresh controller status. With no local probe configured, the existing controller temperature display remains in use.
 
-BMP280 test readings are never posted to the controller. SHT31/SHT4x reporting still requires the pairing token, but local measurements do not. No furnace arming or servo behavior changes.
+BMP280 test readings are never posted to the controller. SHT31/SHT4x reporting uses the configured controller address without a local access token. No furnace arming or servo behavior changes.
 
 Validation: production BMP280 driver compiled with host GCC and passed register-fixture tests under AddressSanitizer/UndefinedBehaviorSanitizer (LeakSanitizer disabled because the container blocks process inspection). Tests cover both addresses, Bosch compensation, chip ID rejection, invalid calibration, forced conversions, bounded status polling, missing/read-failing devices, stale sentinel, range validation and recovery. The native LVGL 9.2 fixture also compiled and passed, covering offline local readings, stale sample clearing, target controls and the existing UI/command/camera checks. Host RGB888 tests use a 1 MiB LVGL pool; firmware memory settings are unchanged. Full ESP-IDF build and physical sensor validation remain local.
 
@@ -170,3 +177,22 @@ BME280 users can enable the same test with the new alias:
 ```
 
 The existing `-Bmp280Test` option and previously saved probe type 3 also work; discovery identifies either model. Only temperature is read in this test, with BME280 humidity and pressure disabled. Existing local/offline temperature behavior is unchanged. Host checks explicitly cover both accepted IDs and reject BMP180 without resetting it.
+
+## SHT45 primary room probe (v0.13.6)
+
+Power down before replacing the BME280. Connect the SHT45 breakout's 3.3V-compatible supply input to rear H3 pin 4 (3.3V), GND to pin 19/20, SDA to pin 1 (GPIO47), and SCL to pin 3 (GPIO48). Follow the breakout's printed signal labels; cable colors and connector order vary. This is the same BSP-owned I2C bus used by the display's touch controller. The SHT45 is read at address 0x44, 100 kHz. Do not apply servo power to the sensor.
+
+From the repository root in the ESP-IDF PowerShell terminal:
+
+```powershell
+git pull --ff-only
+.\tools\build-room-4b.ps1 -Sht45 -Flash -Monitor -Port COM14
+```
+
+`-Sht45` replaces the saved BME280 selection with primary SHT4x mode (`CONFIG_ROOM_SENSOR=2`) on SDA47/SCL48. Do not combine it with `-Bme280Test`. Selection persists in `touchscreen/sdkconfig.4b`; later builds without either switch keep that selection.
+
+The startup log identifies `SHT45/SHT4x primary probe configured: address 0x44, SDA47/SCL48`; this confirms configuration, not detection. Successful readings follow every 15 seconds as `SHT45/SHT4x room ... F (... C); report acknowledged` (or `not acknowledged` when the controller cannot accept a report). A valid reading updates the main temperature dial and MQTT room temperature even without controller connectivity. Failed/CRC-invalid reads print `No fresh valid probe sample; no temperature report sent`; readings expire after 30 seconds.
+
+Keep the controller in Hold for the initial sensor/communication test. The SHT45 is the primary control probe, so valid samples are sent to the controller, unlike BME280 test readings. Confirm Local sensor shows Fresh, the controller receives source=room, and HA room temperature agrees. Warm the sensor gently by hand and confirm the reading responds, then let it settle away from display/CPU heat. No encoder or servo movement is needed to test temperature sensing.
+
+For a remote sensor, validate using the intended final cable length as well as short bench leads. This firmware uses ordinary I2C; a successful short-wire test does not establish long-cable reliability. Missing hardware is retried without blocking other services.

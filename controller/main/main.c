@@ -10,6 +10,7 @@
 #include "driver/gpio.h"
 #include "driver/ledc.h"
 #include "esp_event.h"
+#include "esp_system.h"
 #include "esp_http_server.h"
 #include "esp_log.h"
 #include "esp_netif.h"
@@ -23,6 +24,13 @@
 #include "nvs.h"
 #include "cJSON.h"
 #include "thermo.h"
+#include "thermo_radio.h"
+#include "controller_mqtt.h"
+#include "controller_encoder.h"
+#include "controller_integrations.h"
+#include <stdatomic.h>
+#include "network_profile.h"
+#include "controller_wifi_retry.h"
 
 static const char *TAG="thermostat";
 #ifdef CONFIG_THERMO_LIVE_BENCH
@@ -33,7 +41,15 @@ static const char *TAG="thermostat";
 static th_state_t state;
 static SemaphoreHandle_t lock;
 static nvs_handle_t store;
-static char token[33];
+static uint64_t controller_boot;
+static tl_guard_t room_guard;
+static atomic_bool station_up,station_connecting;
+static network_profile_t network;
+static esp_netif_t *station_netif;
+static char station_mac[18];
+static unsigned http_link_count;
+static uint64_t last_http_link;
+static atomic_uint reconnect_at,connect_at;
 static bool pwm, timer_ready, armed;
 static uint64_t armed_until;
 static int last_pulse=-1;
@@ -59,7 +75,7 @@ static void event(const char *text)
 }
 static esp_err_t pulse(int us)
 {
-    if (us<1100 || us>1900) return ESP_ERR_INVALID_ARG;
+    if (us<500 || us>2500) return ESP_ERR_INVALID_ARG;
     if (!timer_ready) {
         ledc_timer_config_t t={.speed_mode=LEDC_LOW_SPEED_MODE,.duty_resolution=LEDC_TIMER_13_BIT,
             .timer_num=LEDC_TIMER_0,.freq_hz=50,.clk_cfg=LEDC_AUTO_CLK};
@@ -88,14 +104,6 @@ static esp_err_t json_send(httpd_req_t *r,cJSON *j)
     if (!s) return httpd_resp_send_err(r,HTTPD_500_INTERNAL_SERVER_ERROR,"Out of memory");
     httpd_resp_set_type(r,"application/json"); httpd_resp_set_hdr(r,"Cache-Control","no-store");
     esp_err_t err=httpd_resp_sendstr(r,s); free(s); return err;
-}
-static bool authorized(httpd_req_t *r)
-{
-    char supplied[48]={0};
-    if (httpd_req_get_hdr_value_str(r,"X-Thermo-Token",supplied,sizeof(supplied))!=ESP_OK) return false;
-    unsigned diff=strlen(supplied)^strlen(token);
-    for (unsigned i=0;i<32;++i) diff|=(unsigned char)supplied[i]^(unsigned char)token[i];
-    return diff==0;
 }
 static cJSON *body(httpd_req_t *r)
 {
@@ -181,7 +189,6 @@ static esp_err_t history_get(httpd_req_t *r)
 }
 static esp_err_t get_api(httpd_req_t *r)
 {
-    if(!authorized(r)) return httpd_resp_send_err(r,HTTPD_401_UNAUTHORIZED,"API token required");
     if(!strcmp(r->uri,"/api/history"))return history_get(r);
     xSemaphoreTake(lock,portMAX_DELAY);
     cJSON *j=NULL;
@@ -195,7 +202,13 @@ static esp_err_t get_api(httpd_req_t *r)
         }
     } else {
         j=cJSON_CreateObject();
-        cJSON_AddStringToObject(j,"version","0.2.0");
+        cJSON_AddStringToObject(j,"version","0.5.6");
+#ifdef CONFIG_THERMO_SUPERMINI
+        cJSON_AddStringToObject(j,"board","HW-747 Super Mini 4 MB");
+#else
+        cJSON_AddStringToObject(j,"board","ESP32-S3 controller");
+#endif
+        cJSON_AddNumberToObject(j,"servo_gpio",CONFIG_THERMO_SERVO_GPIO);
         cJSON_AddBoolToObject(j,"simulation",state.simulated);
         cJSON_AddBoolToObject(j,"bench_armed",armed);
         cJSON_AddNumberToObject(j,"arm_remaining_ms",armed && armed_until>now_ms()?armed_until-now_ms():0);
@@ -203,6 +216,45 @@ static esp_err_t get_api(httpd_req_t *r)
         cJSON_AddNumberToObject(j,"last_command_us",last_pulse);
         cJSON_AddBoolToObject(j,"position_synchronized",state.synchronized);
         cJSON_AddBoolToObject(j,"position_measured",false);
+        cJSON_AddStringToObject(j,"position_feedback","AS5600 bench telemetry only; dial position unverified");
+        controller_encoder_sample_t enc=controller_encoder_snapshot();
+        bool fresh=enc.online && now_ms()>=enc.at_ms && now_ms()-enc.at_ms<=2000;
+        bool valid=fresh && enc.magnet_detected && !enc.too_weak && !enc.too_strong;
+        cJSON *e=cJSON_AddObjectToObject(j,"encoder");
+        cJSON_AddBoolToObject(e,"online",fresh);
+        cJSON_AddBoolToObject(e,"angle_valid",valid);
+        cJSON_AddStringToObject(e,"error",enc.online && !fresh?"Stale reading":esp_err_to_name(enc.error));
+        cJSON_AddNumberToObject(e,"sda_gpio",CONFIG_THERMO_ENCODER_SDA);
+        cJSON_AddNumberToObject(e,"scl_gpio",CONFIG_THERMO_ENCODER_SCL);
+        if(fresh) {
+            cJSON_AddBoolToObject(e,"magnet_detected",enc.magnet_detected);
+            cJSON_AddBoolToObject(e,"too_weak",enc.too_weak);
+            cJSON_AddBoolToObject(e,"too_strong",enc.too_strong);
+            cJSON_AddNumberToObject(e,"age_ms",now_ms()-enc.at_ms);
+            if(valid) {
+                cJSON_AddNumberToObject(e,"raw_angle",enc.raw_angle);
+                cJSON_AddNumberToObject(e,"angle_deg",enc.raw_angle*360.0/4096.0);
+            }
+        }
+        cJSON *net=cJSON_AddObjectToObject(j,"network");
+        cJSON_AddStringToObject(net,"hostname","CottageThermoController");
+        cJSON_AddStringToObject(net,"station_mac",station_mac);
+        cJSON_AddStringToObject(net,"ssid",network.ssid);
+        cJSON_AddBoolToObject(net,"connected",station_up);
+        cJSON_AddBoolToObject(net,"password_configured",*network.password!=0);
+        esp_netif_ip_info_t ip={0};char address[16];
+        esp_netif_get_ip_info(station_netif,&ip);
+        snprintf(address,sizeof(address),IPSTR,IP2STR(&ip.ip));
+        cJSON_AddStringToObject(net,"ip",station_up?address:"");
+        uint8_t channel=0;wifi_second_chan_t secondary;
+        esp_wifi_get_channel(&channel,&secondary);
+        cJSON_AddNumberToObject(net,"channel",channel);
+        cJSON_AddNumberToObject(net,"http_link_requests",http_link_count);
+        if(http_link_count)cJSON_AddNumberToObject(net,"last_http_link_age_ms",now_ms()-last_http_link);
+        const cottage_integration_t *profile=controller_integrations_get();
+        cJSON_AddBoolToObject(net,"radio_ready",tl_radio_configured());
+        cJSON_AddBoolToObject(net,"radio_online",tl_radio_online());
+        cJSON_AddStringToObject(net,"radio_peer",profile->peer);
         cJSON_AddStringToObject(j,"reason",state.reason);
         cJSON_AddStringToObject(j,"source",th_source_name(state.source));
         cJSON_AddStringToObject(j,"mode",th_mode_name(state.config.mode));
@@ -275,9 +327,75 @@ static bool update_config(cJSON *j)
     if(map_changed || next.mode==TH_MANUAL) release();
     state.config=next; event("Settings committed"); return true;
 }
+/* One validator/lock for paired HTTP and ESP-NOW; neither exposes bench PWM. */
+static void link_handle(const tl_packet_t *p,tl_packet_t *reply)
+{
+    xSemaphoreTake(lock,portMAX_DELAY);
+    uint64_t now=now_ms();int result=tl_check(&room_guard,p,controller_boot,now);
+    if(result==TL_OK&&p->operation!=TL_STATUS){
+        room_guard.sequence=p->sequence; /* Failed operations also consume IDs. */
+        if(p->operation==TL_TARGET){
+            cJSON *j=cJSON_CreateObject();cJSON_AddNumberToObject(j,"target_f",p->value);
+            result=update_config(j)?TL_OK:TL_SAVE_FAILED;cJSON_Delete(j);
+        }else if(p->operation==TL_SAMPLE){
+            result=th_sample(&state,TH_ROOM,p->value,p->age_ms,now)?TL_OK:TL_INVALID;
+        }
+    }
+    *reply=tl_request(TL_REPLY,p->client,p->sequence);reply->result=result;
+    reply->controller_boot=controller_boot;reply->deadline_ms=now;
+    reply->target=state.config.schedule_enabled?state.effective_target_f:state.config.target_f;
+    reply->flags=TL_HAS_TARGET|(state.simulated?TL_SIMULATION:0)|(controller_mqtt_configured()?TL_MQTT_CONFIGURED:0)|(controller_mqtt_online()?TL_MQTT_ONLINE:0);reply->mode=state.config.mode;
+    th_sample_t sample=state.source==TH_ROOM?state.room:state.secondary;
+    if(state.source!=TH_NONE&&sample.valid&&now>=sample.at_ms&&now-sample.at_ms<=THERMO_TTL_MS){
+        reply->flags|=TL_HAS_TEMP;reply->temperature=sample.f;
+    }
+    snprintf(reply->reason,sizeof(reply->reason),"%s",state.reason);
+    xSemaphoreGive(lock);
+}
+static esp_err_t link_post(httpd_req_t *r)
+{
+    cJSON *j=body(r),*v=cJSON_GetObjectItemCaseSensitive(j,"packet");tl_packet_t p,reply;
+    bool valid=cJSON_IsString(v)&&tl_unhex(v->valuestring,&p)&&p.operation!=TL_REPLY;cJSON_Delete(j);
+    if(!valid)return httpd_resp_send_err(r,HTTPD_400_BAD_REQUEST,"Invalid room link envelope");
+    link_handle(&p,&reply);
+    xSemaphoreTake(lock,portMAX_DELAY);++http_link_count;last_http_link=now_ms();xSemaphoreGive(lock);
+    char hex[sizeof(reply)*2+1];tl_hex(&reply,hex);
+    j=cJSON_CreateObject();cJSON_AddStringToObject(j,"packet",hex);return json_send(r,j);
+}
+static void integration_restart(void *arg){vTaskDelay(pdMS_TO_TICKS(1500));esp_restart();}
+/* Local provisioning takes effect only after restart. */
+static esp_err_t network_post(httpd_req_t *r)
+{
+    cJSON *j=body(r),*ssid=cJSON_GetObjectItemCaseSensitive(j,"ssid"),
+        *password=cJSON_GetObjectItemCaseSensitive(j,"password"),*open=cJSON_GetObjectItemCaseSensitive(j,"open");
+    network_profile_t next=network;
+    bool valid=cJSON_IsString(ssid)&&cJSON_IsString(password)&&cJSON_IsBool(open)&&
+        network_profile_patch(&network,ssid->valuestring,password->valuestring,cJSON_IsTrue(open),&next);
+    cJSON_Delete(j);
+    if(!valid){memset(&next,0,sizeof(next));return httpd_resp_send_err(r,HTTPD_400_BAD_REQUEST,"Invalid SSID/password; new secured networks require a password");}
+    xSemaphoreTake(lock,portMAX_DELAY);
+    bool changed=memcmp(&next,&network,sizeof(next))!=0;
+    esp_err_t err=nvs_set_blob(store,"network",&next,sizeof(next));
+    if(err==ESP_OK)err=nvs_commit(store);
+    if(err==ESP_OK&&changed){release();state.config.mode=TH_HOLD;event("Wi-Fi profile saved; restarting with PWM disabled");}
+    xSemaphoreGive(lock);memset(&next,0,sizeof(next));
+    if(err!=ESP_OK)return httpd_resp_send_err(r,HTTPD_500_INTERNAL_SERVER_ERROR,"Could not save Wi-Fi profile");
+    if(changed&&xTaskCreate(integration_restart,"network_restart",2048,NULL,3,NULL)!=pdPASS)
+        return httpd_resp_send_err(r,HTTPD_500_INTERNAL_SERVER_ERROR,"Saved; restart controller manually");
+    return httpd_resp_sendstr(r,changed?"{\"ok\":true,\"restarting\":true}":"{\"ok\":true,\"restarting\":false}");
+}
+static esp_err_t integrations_post(httpd_req_t *r)
+{
+    cJSON *j=body(r);bool changed=false;
+    xSemaphoreTake(lock,portMAX_DELAY);bool ok=controller_integrations_save(j,&changed);
+    if(changed){release();state.config.mode=TH_HOLD;event("Integration profile saved; restart clears bench arm/synchronization");}
+    xSemaphoreGive(lock);cJSON_Delete(j);
+    if(!ok)return httpd_resp_send_err(r,HTTPD_400_BAD_REQUEST,"Invalid integration settings or save failed");
+    if(changed&&xTaskCreate(integration_restart,"integration_restart",2048,NULL,3,NULL)!=pdPASS)return httpd_resp_send_err(r,HTTPD_500_INTERNAL_SERVER_ERROR,"Saved but restart could not be scheduled; retry");
+    return httpd_resp_sendstr(r,changed?"{\"ok\":true,\"restarting\":true}":"{\"ok\":true,\"restarting\":false}");
+}
 static esp_err_t post_api(httpd_req_t *r)
 {
-    if(!authorized(r))return httpd_resp_send_err(r,HTTPD_401_UNAUTHORIZED,"API token required");
     cJSON *j=body(r);
     if(!j)return httpd_resp_send_err(r,HTTPD_400_BAD_REQUEST,"JSON object required (max 4096 bytes)");
     bool ok=false;const char *error="Invalid request or unmet prerequisites";
@@ -309,7 +427,7 @@ static esp_err_t post_api(httpd_req_t *r)
         }
     } else if(!strcmp(r->uri,"/api/pulse")) {
         double u;
-        if(armed && now_ms()<armed_until && state.config.mode==TH_HOLD && number(j,"us",&u) && floor(u)==u && u>=1100 && u<=1900) {
+        if(armed && now_ms()<armed_until && state.config.mode==TH_HOLD && number(j,"us",&u) && floor(u)==u && u>=500 && u<=2500) {
             ok=pulse((int)u)==ESP_OK;
             th_release(&state);
             if(ok)event("Explicit raw bench PWM command; thermostat synchronization cleared");
@@ -357,36 +475,78 @@ static void control_task(void *unused)
 }
 static void wifi_event(void *arg,esp_event_base_t base,int32_t id,void *data)
 {
-    if(base==WIFI_EVENT && id==WIFI_EVENT_STA_DISCONNECTED) esp_wifi_connect();
+    if(base==WIFI_EVENT&&id==WIFI_EVENT_STA_DISCONNECTED){
+        wifi_event_sta_disconnected_t *e=data;
+        ESP_LOGW(TAG,"LAN Wi-Fi disconnected (reason %u); paired ESP-NOW remains available",e->reason);
+        station_up=false;station_connecting=false;
+        reconnect_at=(uint32_t)now_ms()+(tl_radio_configured()?20000:2000);
+    }
+    if(base==IP_EVENT&&id==IP_EVENT_STA_LOST_IP){
+        station_up=false;station_connecting=true;connect_at=(uint32_t)now_ms();
+    }
     if(base==IP_EVENT && id==IP_EVENT_STA_GOT_IP) {
+        station_up=true;station_connecting=false;
         ip_event_got_ip_t *e=data;ESP_LOGI(TAG,"Controller LAN address: " IPSTR,IP2STR(&e->ip_info.ip));
+    }
+}
+static void reconnect_task(void *arg)
+{
+    for(;;){
+        uint32_t now=(uint32_t)now_ms();
+        if(!station_up){
+            if(!station_connecting)tl_radio_search_tick();
+            controller_wifi_retry_t retry={.connecting=station_connecting,.started=connect_at,.due=reconnect_at};
+            controller_wifi_action_t action=controller_wifi_retry_tick(&retry,now,tl_radio_configured());
+            if(action!=CONTROLLER_WIFI_WAIT&&!station_up){
+                station_connecting=retry.connecting;connect_at=retry.started;reconnect_at=retry.due;
+                if(action==CONTROLLER_WIFI_ABORT){
+                    esp_err_t err=esp_wifi_disconnect();
+                    ESP_LOGW(TAG,"Controller Wi-Fi attempt timed out; retry scheduled (disconnect=%d)",(int)err);
+                }else if(*network.ssid){
+                    ESP_LOGI(TAG,"Controller Wi-Fi reconnect attempt");
+                    if(esp_wifi_connect()!=ESP_OK){station_connecting=false;reconnect_at=now+(tl_radio_configured()?20000:2000);}
+                }else station_connecting=false;
+            }
+        }
+        vTaskDelay(pdMS_TO_TICKS(250));
     }
 }
 static void network_start(void)
 {
     ESP_ERROR_CHECK(esp_netif_init());ESP_ERROR_CHECK(esp_event_loop_create_default());
     esp_netif_create_default_wifi_ap();
-    bool station=strlen(CONFIG_THERMO_WIFI_SSID)>0;
-    if(station)esp_netif_create_default_wifi_sta();
+    bool station=strlen(network.ssid)>0;
+    station_netif=esp_netif_create_default_wifi_sta();
+    ESP_ERROR_CHECK(esp_netif_set_hostname(station_netif,"CottageThermoController"));
     wifi_init_config_t init=WIFI_INIT_CONFIG_DEFAULT();ESP_ERROR_CHECK(esp_wifi_init(&init));
     ESP_ERROR_CHECK(esp_wifi_set_storage(WIFI_STORAGE_RAM));
     ESP_ERROR_CHECK(esp_event_handler_register(WIFI_EVENT,ESP_EVENT_ANY_ID,wifi_event,NULL));
-    ESP_ERROR_CHECK(esp_event_handler_register(IP_EVENT,IP_EVENT_STA_GOT_IP,wifi_event,NULL));
+    ESP_ERROR_CHECK(esp_event_handler_register(IP_EVENT,ESP_EVENT_ANY_ID,wifi_event,NULL));
     wifi_config_t ap={0};snprintf((char *)ap.ap.ssid,sizeof(ap.ap.ssid),"%s",CONFIG_THERMO_AP_SSID);
     ap.ap.ssid_len=strlen((char *)ap.ap.ssid);ap.ap.channel=6;ap.ap.max_connection=4;ap.ap.authmode=WIFI_AUTH_OPEN;
-    ESP_ERROR_CHECK(esp_wifi_set_mode(station?WIFI_MODE_APSTA:WIFI_MODE_AP));
+    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_APSTA));
     ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_AP,&ap));
     if(station) {
-        wifi_config_t sta={0};snprintf((char *)sta.sta.ssid,sizeof(sta.sta.ssid),"%s",CONFIG_THERMO_WIFI_SSID);
-        snprintf((char *)sta.sta.password,sizeof(sta.sta.password),"%s",CONFIG_THERMO_WIFI_PASSWORD);
+        wifi_config_t sta={0};memcpy(sta.sta.ssid,network.ssid,sizeof(sta.sta.ssid));
+        memcpy(sta.sta.password,network.password,sizeof(sta.sta.password));
         ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA,&sta));
     }
-    ESP_ERROR_CHECK(esp_wifi_start());if(station)esp_wifi_connect();
-    httpd_config_t c=HTTPD_DEFAULT_CONFIG();c.max_uri_handlers=16;c.stack_size=8192;
+    ESP_ERROR_CHECK(esp_wifi_start());ESP_ERROR_CHECK(esp_wifi_set_ps(WIFI_PS_NONE));
+    uint8_t mac[6];ESP_ERROR_CHECK(esp_wifi_get_mac(WIFI_IF_STA,mac));
+    snprintf(station_mac,sizeof(station_mac),"%02X:%02X:%02X:%02X:%02X:%02X",mac[0],mac[1],mac[2],mac[3],mac[4],mac[5]);
+    ESP_LOGI(TAG,"Controller station MAC: %s; hostname: CottageThermoController",station_mac);
+    const cottage_integration_t *integration=controller_integrations_get();
+    tl_radio_start_config(link_handle,integration->radio_enabled,integration->peer,integration->key);
+    if(station){station_connecting=true;connect_at=(uint32_t)now_ms();esp_wifi_connect();}
+    ESP_ERROR_CHECK(xTaskCreate(reconnect_task,"wifi_retry",3072,NULL,3,NULL)==pdPASS?ESP_OK:ESP_ERR_NO_MEM);
+    httpd_config_t c=HTTPD_DEFAULT_CONFIG();c.max_uri_handlers=18;c.stack_size=8192;
     httpd_handle_t h;ESP_ERROR_CHECK(httpd_start(&h,&c));
     httpd_uri_t root={.uri="/",.method=HTTP_GET,.handler=root_get};ESP_ERROR_CHECK(httpd_register_uri_handler(h,&root));
     const char *gets[]={"/api/status","/api/config","/api/events","/api/history"};
     for(unsigned i=0;i<4;++i) {httpd_uri_t u={.uri=gets[i],.method=HTTP_GET,.handler=get_api};ESP_ERROR_CHECK(httpd_register_uri_handler(h,&u));}
+    httpd_uri_t link={.uri="/api/link",.method=HTTP_POST,.handler=link_post};ESP_ERROR_CHECK(httpd_register_uri_handler(h,&link));
+    httpd_uri_t net={.uri="/api/network",.method=HTTP_POST,.handler=network_post};ESP_ERROR_CHECK(httpd_register_uri_handler(h,&net));
+    httpd_uri_t integrations={.uri="/api/integrations",.method=HTTP_POST,.handler=integrations_post};ESP_ERROR_CHECK(httpd_register_uri_handler(h,&integrations));
     const char *posts[]={"/api/config","/api/temperature","/api/stop","/api/arm","/api/sync","/api/pulse","/api/clock"};
     for(unsigned i=0;i<7;++i) {httpd_uri_t u={.uri=posts[i],.method=HTTP_POST,.handler=post_api};ESP_ERROR_CHECK(httpd_register_uri_handler(h,&u));}
     ESP_LOGI(TAG,"Open bench Wi-Fi %s; http://192.168.4.1",CONFIG_THERMO_AP_SSID);
@@ -400,12 +560,6 @@ void app_main(void)
     th_config_t c=th_defaults();size_t size=sizeof(c);
     th_config_t saved;
     if(nvs_get_blob(store,CONFIG_KEY,&saved,&size)==ESP_OK && size==sizeof(saved) && th_config_valid(&saved))c=saved;
-    size=sizeof(token);
-    if(nvs_get_str(store,"api_token",token,&size)!=ESP_OK || strlen(token)!=32) {
-        uint8_t bytes[16];esp_fill_random(bytes,sizeof(bytes));
-        for(unsigned i=0;i<16;++i)snprintf(token+2*i,3,"%02x",bytes[i]);
-        ESP_ERROR_CHECK(nvs_set_str(store,"api_token",token));ESP_ERROR_CHECK(nvs_commit(store));
-    }
     bool simulated=true;
 #ifdef CONFIG_THERMO_LIVE_BENCH
     simulated=false;
@@ -414,10 +568,23 @@ void app_main(void)
     lock=xSemaphoreCreateMutex();assert(lock);
     event("Boot: PWM disabled; position unknown; no restoration or homing");
     ESP_LOGW(TAG,"Attended bench firmware. Automatic output: %s",simulated?"SIMULATION":"LIVE BENCH");
-    ESP_LOGI(TAG,"Pairing API token (local bench only): %s",token);
     setenv("TZ","EST5EDT,M3.2.0/2,M11.1.0/2",1);tzset();
+    controller_boot=((uint64_t)esp_random()<<32)|esp_random();if(!controller_boot)controller_boot=1;
+    network.magic=NETWORK_PROFILE_MAGIC;
+    snprintf(network.ssid,sizeof(network.ssid),"%s",CONFIG_THERMO_WIFI_SSID);
+    snprintf(network.password,sizeof(network.password),"%s",CONFIG_THERMO_WIFI_PASSWORD);
+    network_profile_t saved_network;size=sizeof(saved_network);
+    if(nvs_get_blob(store,"network",&saved_network,&size)==ESP_OK&&size==sizeof(saved_network)&&network_profile_valid(&saved_network))network=saved_network;
+    memset(&saved_network,0,sizeof(saved_network));
+    controller_integrations_init();
     network_start();
-    if(strlen(CONFIG_THERMO_WIFI_SSID)) {
+    controller_mqtt_start();
+    controller_encoder_start();
+#ifdef CONFIG_THERMO_SUPERMINI
+    ESP_LOGI(TAG,"HW-747 Super Mini bench: 4 MB flash; PSRAM disabled; servo GPIO%d; encoder SDA%d/SCL%d",
+        CONFIG_THERMO_SERVO_GPIO,CONFIG_THERMO_ENCODER_SDA,CONFIG_THERMO_ENCODER_SCL);
+#endif
+    if(strlen(network.ssid)) {
         esp_sntp_setoperatingmode(SNTP_OPMODE_POLL);esp_sntp_setservername(0,"pool.ntp.org");esp_sntp_init();
     }
     xTaskCreate(control_task,"thermostat",4096,NULL,5,NULL);

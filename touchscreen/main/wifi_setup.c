@@ -2,6 +2,8 @@
  * HTTP, DNS and reconnect work never runs on the LVGL task. */
 #include "wifi_setup.h"
 #include "wifi_portal_helpers.h"
+#include "room_wifi_retry.h"
+#include "thermo_radio.h"
 #include <stdio.h>
 #include <unistd.h>
 #include <stdlib.h>
@@ -50,6 +52,7 @@ static state_t get_state(void)
 {
     state_t result;xSemaphoreTake(state_mutex,portMAX_DELAY);result=state;xSemaphoreGive(state_mutex);return result;
 }
+bool room_wifi_connected(void){return state_mutex&&get_state().connected;}
 static void set_message(const char *message)
 {
     xSemaphoreTake(state_mutex,portMAX_DELAY);snprintf(state.message,sizeof(state.message),"%s",message);xSemaphoreGive(state_mutex);
@@ -75,7 +78,7 @@ static void wifi_event(void *arg,esp_event_base_t base,int32_t id,void *data)
         xSemaphoreTake(state_mutex,portMAX_DELAY);
         state.connected=false;state.connecting=false;state.reason=e->reason;state.ip[0]=0;
         if(!state.offline_at)state.offline_at=now;
-        state.next_try=now+2000000;
+        state.next_try=now+(tl_radio_configured()?20000000:2000000);
         xSemaphoreGive(state_mutex);xEventGroupSetBits(wifi_events,DISCONNECTED_BIT);
         ESP_LOGW(TAG,"Wi-Fi disconnected: reason=%u",(unsigned)e->reason);
     }
@@ -150,7 +153,7 @@ static void network_task(void *arg)
             if(!get_state().portal)set_portal(true);
             profile_applied=apply_station(&current_profile);
             if(!profile_applied){
-                xSemaphoreTake(state_mutex,portMAX_DELAY);state.connecting=false;state.next_try=now+2000000;xSemaphoreGive(state_mutex);
+                xSemaphoreTake(state_mutex,portMAX_DELAY);state.connecting=false;state.next_try=now+(tl_radio_configured()?20000000:2000000);xSemaphoreGive(state_mutex);
             }
             connect_started=now;
         }
@@ -177,6 +180,7 @@ static void network_task(void *arg)
             was_connected=true;
         }else{
             was_connected=false;close_at=0;
+            if(!s.connecting&&!testing)tl_radio_search_tick();
             if(!s.portal&&s.offline_at&&now-s.offline_at>=30000000){
                 set_message("Wi-Fi unavailable. Select a network or check its password.");set_portal(true);
             }
@@ -189,18 +193,29 @@ static void network_task(void *arg)
                 profile_applied=configured&&apply_station(&current_profile);
                 if(!configured&&xSemaphoreTake(action_mutex,pdMS_TO_TICKS(1000))==pdTRUE){esp_wifi_disconnect();xSemaphoreGive(action_mutex);}
                 connect_started=now;
-            }else if(configured&&now>=s.next_try){
-                if(!profile_applied){
+            }else if(configured){
+                if(!profile_applied&&now>=s.next_try){
                     profile_applied=apply_station(&current_profile);connect_started=now;
                     vTaskDelay(pdMS_TO_TICKS(250));continue;
                 }
                 /* A driver can remain in authentication without producing an IP. Bound the attempt. */
-                if(!s.connecting||(connect_started&&now-connect_started>=15000000)){
+                room_wifi_retry_t retry=profile_applied?room_wifi_retry_action(s.connecting,now,connect_started,s.next_try,tl_radio_configured()):ROOM_WIFI_WAIT;
+                if(retry!=ROOM_WIFI_WAIT){
                     if(xSemaphoreTake(action_mutex,0)==pdTRUE){
-                        if(s.connecting){ESP_LOGW(TAG,"Wi-Fi attempt timed out without an IP address");esp_wifi_disconnect();}
-                        else{
+                        if(retry==ROOM_WIFI_ABORT){
+                            xSemaphoreTake(state_mutex,portMAX_DELAY);
+                            bool cancel=!state.connected&&state.connecting;
+                            if(cancel)room_wifi_retry_abort(&state.connecting,&state.next_try,now,tl_radio_configured());
+                            xSemaphoreGive(state_mutex);
+                            if(cancel){
+                                esp_err_t err=esp_wifi_disconnect();
+                                ESP_LOGW(TAG,"Wi-Fi attempt timed out; fresh retry scheduled (disconnect=%d)",(int)err);
+                                connect_started=0;
+                            }
+                        }else{
+                            ESP_LOGI(TAG,"Wi-Fi reconnect attempt");
                             esp_err_t err=esp_wifi_connect();
-                            xSemaphoreTake(state_mutex,portMAX_DELAY);state.connecting=err==ESP_OK;state.next_try=now+2000000;xSemaphoreGive(state_mutex);
+                            xSemaphoreTake(state_mutex,portMAX_DELAY);state.connecting=err==ESP_OK;state.next_try=now+(tl_radio_configured()?20000000:2000000);xSemaphoreGive(state_mutex);
                             connect_started=now;
                         }
                         xSemaphoreGive(action_mutex);
@@ -333,6 +348,22 @@ static esp_err_t scan_get(httpd_req_t *r)
         cJSON_AddBoolToObject(entry,"open",records[k].authmode==WIFI_AUTH_OPEN);cJSON_AddItemToArray(list,entry);
     }
     free(records);return json_reply(r,200,j);
+}
+cJSON *room_wifi_status(void)
+{
+    state_t s=get_state();cJSON *j=cJSON_CreateObject();
+    cJSON_AddBoolToObject(j,"connected",s.connected);cJSON_AddBoolToObject(j,"portal",s.portal);
+    cJSON_AddBoolToObject(j,"pending",s.pending);cJSON_AddStringToObject(j,"ip",s.ip);cJSON_AddStringToObject(j,"message",s.message);
+    return j;
+}
+void room_wifi_address(char *buffer,size_t size){state_t s=get_state();snprintf(buffer,size,"%s",s.ip);}
+bool room_wifi_submit(const char *ssid,const char *password,bool open)
+{
+    if(!portal_profile_valid(ssid,password)||((*password==0)!=open))return false;
+    profile_t p={.magic=PROFILE_MAGIC};snprintf(p.ssid,sizeof(p.ssid),"%s",ssid);snprintf(p.password,sizeof(p.password),"%s",password);
+    xSemaphoreTake(state_mutex,portMAX_DELAY);bool ok=!state.pending&&xQueueSend(profile_queue,&p,0)==pdTRUE;
+    if(ok){state.pending=true;state.saved=false;snprintf(state.message,sizeof(state.message),"Testing Wi-Fi connection...");}
+    xSemaphoreGive(state_mutex);memset(&p,0,sizeof(p));return ok;
 }
 static esp_err_t connect_post(httpd_req_t *r)
 {

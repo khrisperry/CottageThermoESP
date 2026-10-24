@@ -14,14 +14,6 @@
 
 extern const unsigned char home_start[] asm("_binary_home_html_start");
 extern const unsigned char home_end[] asm("_binary_home_html_end");
-static bool authorized(httpd_req_t *r)
-{
-    char token[96]={0};
-    if(strlen(CONFIG_ROOM_API_TOKEN)!=32 || httpd_req_get_hdr_value_str(r,"X-Cottage-Token",token,sizeof(token))!=ESP_OK)return false;
-    unsigned diff=strlen(token)^strlen(CONFIG_ROOM_API_TOKEN);
-    for(unsigned i=0;i<32;++i)diff|=(unsigned char)token[i]^(unsigned char)CONFIG_ROOM_API_TOKEN[i];
-    return diff==0;
-}
 static esp_err_t fail(httpd_req_t *r,const char *status,const char *message)
 {
     httpd_resp_set_status(r,status);httpd_resp_set_type(r,"application/json");
@@ -35,7 +27,6 @@ static esp_err_t home_get(httpd_req_t *r)
 }
 static esp_err_t upstream(httpd_req_t *r)
 {
-    if(!authorized(r))return fail(r,"401 Unauthorized","{\"error\":\"Room pairing token required\"}");
     bool camera=!strcmp(r->uri,"/api/ha/camera");
     httpd_resp_set_hdr(r,"Cache-Control","no-store");
     if(camera){

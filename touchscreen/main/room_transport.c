@@ -12,7 +12,7 @@ esp_err_t room_http(const char *origin, const char *header, const char *token,
                     int timeout_ms, int *status, int *length)
 {
     *status=0; *length=0;
-    if (!origin || !token || !*token || capacity<2) return ESP_ERR_INVALID_ARG;
+    if (!origin || (header&&(!token||!*token)) || (!header&&token) || capacity<2) return ESP_ERR_INVALID_ARG;
     bool tls=!strncmp(origin,"https://",8);
     if (!tls && strncmp(origin,"http://",7)) return ESP_ERR_INVALID_ARG;
     const char *host=origin+(tls?8:7);
@@ -25,7 +25,7 @@ esp_err_t room_http(const char *origin, const char *header, const char *token,
         .disable_auto_redirect=true,.crt_bundle_attach=esp_crt_bundle_attach};
     esp_http_client_handle_t h=esp_http_client_init(&cfg);
     if (!h) return ESP_ERR_NO_MEM;
-    esp_http_client_set_header(h,header,token);
+    if(header)esp_http_client_set_header(h,header,token);
     if (post) {
         esp_http_client_set_method(h,HTTP_METHOD_POST);
         esp_http_client_set_header(h,"Content-Type","application/json");
@@ -70,11 +70,14 @@ esp_err_t room_http_keepalive(room_http_session_t **session,
                     int timeout_ms,int *status,int *length)
 {
     *status=0;*length=0;
-    if(!session||!origin||!header||!token||!*token||!path||path[0]!='/'||path[1]=='/'||
+    if(!session||!origin||(header&&(!token||!*token))||(!header&&token)||!path||path[0]!='/'||path[1]=='/'||
        strpbrk(path,"\r\n")||!out||capacity<2||capacity>INT_MAX)return ESP_ERR_INVALID_ARG;
-    if(strncmp(origin,"https://",8)||!origin[8]||strpbrk(origin+8,"/@?#\\ \r\n")||
+    bool tls=!strncmp(origin,"https://",8);
+    if(!tls&&strncmp(origin,"http://",7))return ESP_ERR_INVALID_ARG;
+    const char *host=origin+(tls?8:7);
+    if(!*host||strpbrk(host,"/@?#\\ \r\n")||
        strlen(origin)>=sizeof(((room_http_session_t*)0)->origin))return ESP_ERR_INVALID_ARG;
-    if(time(NULL)<1767225600)return ESP_ERR_INVALID_STATE;
+    if(tls&&time(NULL)<1767225600)return ESP_ERR_INVALID_STATE;
     if(*session&&strcmp((*session)->origin,origin))return ESP_ERR_INVALID_ARG;
     char url[320];int size=snprintf(url,sizeof(url),"%s%s",origin,path);
     if(size<0||size>=(int)sizeof(url))return ESP_ERR_INVALID_SIZE;
@@ -94,7 +97,7 @@ esp_err_t room_http_keepalive(room_http_session_t **session,
     esp_http_client_handle_t h=s->client;
     esp_err_t err=esp_http_client_set_url(h,url);
     if(err==ESP_OK)err=esp_http_client_set_timeout_ms(h,timeout_ms);
-    if(err==ESP_OK)err=esp_http_client_set_header(h,header,token);
+    if(err==ESP_OK&&header)err=esp_http_client_set_header(h,header,token);
     if(err==ESP_OK)err=esp_http_client_set_method(h,post?HTTP_METHOD_POST:HTTP_METHOD_GET);
     /* IDF 6.0.1 set_post_field(NULL) deletes Content-Type and returns
      * ESP_ERR_NOT_FOUND if absent. Seed it before both GET reset and POST. */

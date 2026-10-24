@@ -1,0 +1,13 @@
+menu "Cottage direct fallback (configure both devices)"
+    config COTTAGE_ESPNOW
+        bool "Enable paired ESP-NOW fallback (hardware validation required)"
+        default n
+    config COTTAGE_ESPNOW_PEER
+        string "Other device STATION MAC (AA:BB:CC:DD:EE:FF)"
+        depends on COTTAGE_ESPNOW
+        default ""
+    config COTTAGE_ESPNOW_KEY
+        string "Shared random 128-bit key (32 hex digits; keep private)"
+        depends on COTTAGE_ESPNOW
+        default ""
+endmenu

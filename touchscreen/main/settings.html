@@ -1,41 +1,93 @@
-<!doctype html>
-<html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Cottage settings</title><style>
-body{font:16px system-ui;background:#0b111b;color:#f1f5fa;max-width:520px;margin:32px auto;padding:20px}
-form{background:#151f2d;padding:24px;border-radius:16px}label{display:block;margin:18px 0 7px}
-input,button{box-sizing:border-box;font:inherit;width:100%;padding:12px;border-radius:8px;border:1px solid #526174;background:#0b111b;color:inherit}
-button{margin-top:24px;background:#64dfc4;color:#0b111b;font-weight:600;cursor:pointer}
-button:disabled{opacity:.45}small,p{color:#a8b9ce;line-height:1.5}.check{display:flex;align-items:center;gap:10px}.check input{width:auto}
-#status{white-space:pre-wrap;color:#f5b65d}a{color:#64dfc4}
-</style><h1>Cottage settings</h1>
-<p>To edit, tap <b>Wi-Fi</b> on the device and join its setup network. Then open <a href="http://192.168.4.1/settings">192.168.4.1/settings</a>.</p>
-<form id="form"><label for="ha">Home Assistant URL</label><input id="ha" required maxlength="255" placeholder="https://cottageha.greenledges.net:8123">
-<label for="token">Home Assistant long-lived token</label><input id="token" type="password" maxlength="2048" autocomplete="new-password" spellcheck="false">
-<small id="tokenHint">Leave blank to keep the saved token.</small>
-<label class="check"><input id="show" type="checkbox">Show the token I am entering</label>
-<label class="check"><input id="clear" type="checkbox">Clear the saved token</label>
-<label for="controller">Thermostat controller IP or name</label><input id="controller" required maxlength="255" placeholder="192.168.60.100 or cottage-controller.local">
-<small>An IP/name uses HTTP. You can also enter an HTTP or HTTPS origin with a port.</small>
-<button id="save" disabled>Save and restart</button><p id="status" role="status">Loading settings...</p></form>
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Cottage Thermostat</title><style>
+:root{color-scheme:dark;--bg:#0b111b;--card:#151f2d;--edge:#29394d;--text:#f1f5fa;--muted:#a6b7cb;--mint:#64dfc4;--red:#ff7979;--yellow:#f5cc65;--orange:#ffa24c}*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:16px system-ui}header{display:flex;align-items:center;justify-content:space-between;gap:18px;padding:22px 28px;border-bottom:1px solid var(--edge)}h1{font-size:28px;margin:0}h2{font-size:25px;margin:0 0 12px}h3{margin:4px 0 16px}p,small{color:var(--muted);line-height:1.5}.layout{max-width:1540px;display:grid;grid-template-columns:230px 1fr;gap:20px;padding:20px;margin:auto}nav{background:var(--card);border-radius:16px;padding:10px;height:fit-content}nav button{display:block;text-align:left;width:100%;margin:4px 0;background:none;border:none;padding:15px;color:var(--muted);font-size:16px}nav button.selected{background:var(--mint);color:var(--bg)}main{min-width:0}.card{background:var(--card);border:1px solid var(--edge);padding:24px;border-radius:16px;margin-bottom:20px}.grid,.statuses{display:grid;grid-template-columns:1fr 1fr;gap:18px 28px}.status-row{display:grid;grid-template-columns:minmax(110px,1fr) minmax(150px,1fr);align-items:center;gap:18px;border-bottom:1px solid var(--edge);padding:10px 0}.badge{display:inline-flex;align-items:center;gap:10px;padding:8px 12px;border-radius:9px;font-weight:600}.badge:before{content:"";width:10px;height:10px;flex-shrink:0;border-radius:50%;background:currentColor}.ok{color:var(--mint);background:#183b32}.offline{color:var(--red);background:#3d232b}.unconfigured,.standby{color:var(--yellow);background:#3c351d}.fallback{color:var(--orange);background:#3c2c1d}label{display:block;margin-bottom:7px;color:var(--text)}input,select,button{font:inherit;border:1px solid #526174;border-radius:9px;background:var(--bg);color:var(--text);padding:12px}input,select{width:100%}input[type=checkbox]{width:auto;accent-color:var(--mint)}.secret{position:relative}.secret input{padding-right:72px}.secret button{position:absolute;right:4px;top:4px;padding:8px;border:0;background:transparent;font-size:14px;color:var(--muted)}.check{display:flex;align-items:center;gap:10px;min-height:44px}.check input{width:19px;height:19px}button{cursor:pointer}button.primary{background:var(--mint);color:var(--bg);font-weight:700;border-color:transparent}button:disabled{opacity:.4;cursor:default}.actions{display:flex;gap:14px;flex-wrap:wrap;margin-top:24px}.full{grid-column:1/-1}.hidden{display:none!important}#message{color:var(--yellow);white-space:pre-wrap}progress{width:100%;height:18px;accent-color:var(--mint)}.metrics{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}.metric{background:var(--bg);border:1px solid var(--edge);padding:14px;border-radius:10px}.metric strong{display:block;font-size:24px;margin-top:8px}.hint{font-size:13px}.inline{display:flex;align-items:center;gap:12px}code{color:var(--mint);overflow-wrap:anywhere}a{color:var(--mint)}@media(max-width:900px){.layout{grid-template-columns:1fr}nav{display:flex;overflow:auto;gap:6px}nav button{width:auto;white-space:nowrap}.grid,.statuses{grid-template-columns:1fr}.metrics{grid-template-columns:1fr 1fr}header{align-items:flex-start;padding:18px}h1{font-size:23px}.card{padding:18px}.layout{padding:12px;gap:12px}}@media(max-width:500px){.metrics{grid-template-columns:1fr}.status-row{grid-template-columns:1fr 1fr;gap:10px;font-size:14px}.badge{padding:7px 8px}}
+</style></head><body><header><div><h1>Cottage Thermostat</h1><small>Device settings</small></div><span id="summary" class="badge standby">Connecting</span></header><div class="layout"><nav id="nav"></nav><main>
+<section class="card"><h2>Connections</h2><div class="statuses" id="services"></div><small id="statusAge">Waiting for the device...</small></section>
+<section class="card" id="content"></section><section class="card"><p id="message" role="status" aria-live="polite"></p><small>Tokens, keys and passwords are never returned after saving.</small></section></main></div>
 <script>
-const $=id=>document.getElementById(id);
-$('show').onchange=()=>$('token').type=$('show').checked?'text':'password';
-$('clear').onchange=()=>{if($('clear').checked)$('token').value='';$('token').disabled=$('clear').checked;};
-async function load(){try{
- const r=await fetch('/api/settings',{cache:'no-store'}),j=await r.json();
- if(!r.ok)throw Error(j.message||'Settings unavailable');
- $('ha').value=j.ha_url;$('controller').value=j.controller;
- $('tokenHint').textContent=j.token_configured?'A token is saved. Leave blank to keep it.':'No token is saved yet.';
- $('save').disabled=false;$('status').textContent='';
-}catch(e){$('status').textContent=e.message;}}
-$('form').onsubmit=async e=>{e.preventDefault();$('save').disabled=true;
- const payload={ha_url:$('ha').value.trim(),controller:$('controller').value.trim(),ha_token:$('token').value.trim(),clear_token:$('clear').checked};
- $('status').textContent='Saving...';
- try{const r=await fetch('/api/settings',{method:'POST',headers:{'Content-Type':'application/json','X-Cottage-Setup':'1'},body:JSON.stringify(payload)});
- const j=await r.json();$('status').textContent=j.message;
- if(!r.ok)$('save').disabled=false;
- }catch(e){$('status').textContent='Connection interrupted. Check whether the device restarted before trying again.';}
- finally{payload.ha_token='';$('token').value='';}
-};
-load();
-</script></html>
+'use strict';const $=id=>document.getElementById(id);let config=null,lastStatus=null,page='Overview',timer=null,uploading=false,reconnecting=false,reconnectBoot=null;
+const pages=['Overview','Wi-Fi','Home Assistant','MQTT thermostat','Controller','ESP-NOW','Ship tracking','Sound & display','System'];
+function el(tag,text,cls){const n=document.createElement(tag);if(text!==undefined)n.textContent=String(text);if(cls)n.className=cls;return n;}
+function badge(text,kind){return el('span',text,'badge '+(['ok','offline','unconfigured','standby','fallback'].includes(kind)?kind:'standby'));}
+function field(parent,label,id,value='',type='text',placeholder=''){const wrap=el('div');const l=el('label',label);l.htmlFor=id;const i=el('input');i.id=id;i.type=type;i.value=value||'';i.placeholder=placeholder;i.autocomplete=type==='password'?'new-password':'off';if(type==='password'){const secret=el('div',undefined,'secret');const show=el('button','Show');show.type='button';show.onclick=()=>{i.type=i.type==='password'?'text':'password';show.textContent=i.type==='password'?'Show':'Hide'};secret.append(i,show);wrap.append(l,secret);}else wrap.append(l,i);parent.append(wrap);return i;}
+function check(parent,label,id,value=false){const wrap=el('label',undefined,'check');const i=el('input');i.id=id;i.type='checkbox';i.checked=!!value;wrap.append(i,el('span',label));parent.append(wrap);return i;}
+function select(parent,label,id,value,options){const wrap=el('div');const l=el('label',label);l.htmlFor=id;const i=el('select');i.id=id;options.forEach(v=>{const o=el('option',v);o.value=v;i.append(o)});i.value=value;wrap.append(l,i);parent.append(wrap);return i;}
+function message(s){$('message').textContent=s;}
+function headers(){return {'Content-Type':'application/json'};}
+async function request(payload){const r=await fetch('/api/settings',{method:'POST',headers:headers(),body:JSON.stringify(payload)});const j=await r.json();if(!r.ok)throw Error(j.message||'Request failed');message(j.message);return j;}
+function actions(form,section,getPayload,caption='Save and restart display'){const row=el('div',undefined,'actions');const save=el('button',caption,'primary');save.type='submit';row.append(save);form.append(row);form.onsubmit=async e=>{e.preventDefault();save.disabled=true;try{await request({section,...getPayload()});if(caption.includes('restart')){reconnecting=true;reconnectBoot=lastStatus?.firmware?.boot_id;message('Saved. Display restarting; reconnecting to live status...');config=null;}}catch(err){message(err.message)}finally{save.disabled=false;}};return row;}
+function linkTest(parent){const b=el('button','Test Wi-Fi and ESP-NOW');b.type='button';b.onclick=async()=>{b.disabled=true;message('Testing both controller links...');try{await request({section:'controller_test'});}catch(e){message(e.message)}finally{b.disabled=false;}};parent.append(b);}
+function needConfig(){if(config)return false;$('content').append(el('p','Loading device settings...'));return true;}
+function render(){
+ $('nav').replaceChildren();pages.forEach(name=>{const b=el('button',name,name===page?'selected':'');b.onclick=()=>{if(uploading)return;page=name;render();};$('nav').append(b)});
+ const c=$('content');c.replaceChildren(el('h2',page));
+ if(page==='Overview'){c.append(el('p','The display remains the local thermostat. Ship data and Home Assistant run in background tasks.'));
+  const metrics=el('div',undefined,'metrics');metrics.id='metrics';c.append(metrics);renderMetrics();return;}
+ if(needConfig())return;const form=el('form');const grid=el('div',undefined,'grid');form.append(grid);c.append(form);
+ const keep='Leave blank to keep the saved value.';
+ if(page==='Wi-Fi'){
+  c.insertBefore(el('p','Test a new network. The previous saved profile is retained if connection fails. The device may change its IP address.'),form);
+  field(grid,'Network name (SSID)','ssid','','text','Network name').maxLength=32;field(grid,'Wi-Fi password','wifiPassword','','password').maxLength=64;check(grid,'Open network (no password)','open',false);
+  actions(form,'wifi',()=>({ssid:$('ssid').value,password:$('wifiPassword').value,open:$('open').checked}),'Test and save Wi-Fi');
+ }else if(page==='Home Assistant'){
+  c.insertBefore(el('p','Direct connection for lights, blinds, laundry, kids heat, vacuum and camera. This token is separate from MQTT credentials.'),form);
+  field(grid,'Home Assistant URL','ha',config.ha_url,'url');field(grid,'Long-lived token','token','','password',config.token_configured?keep:'No token saved').maxLength=2048;
+  check(grid,'Clear the saved token','clear');actions(form,'ha',()=>({ha_url:$('ha').value.trim(),ha_token:$('token').value,clear_token:$('clear').checked}));
+ }else if(page==='MQTT thermostat'){
+  c.insertBefore(el('p','The wall thermostat connects directly to your broker. Home Assistant can adjust the thermostat target through a Climate entity. Requests use the same queue and controller validation as touchscreen changes. HA has no direct servo or mode control; the thermostat operates without HA or the broker.'),form);
+  const m=config.mqtt;check(grid,'Enable MQTT thermostat','enabled',m.enabled);field(grid,'Broker host / IP','brokerHost',m.broker.replace(/^mqtts?:\/\//,'').replace(/:\d+$/,''),'text','192.168.60.63');
+  field(grid,'Port','port',m.broker.match(/:(\d+)$/)?.[1]||(/mqtts:/.test(m.broker)?8883:1883),'number');
+  field(grid,'Username','username',m.username);field(grid,'Password','password','','password',m.password_configured?keep:'MQTT password');check(grid,'Clear saved MQTT password','clearPassword');
+  check(grid,'Use TLS (verified certificate)','tls',m.broker.startsWith('mqtts://'));field(grid,'Discovery prefix','prefix',m.prefix);field(grid,'Device name','name',m.name);
+  const row=actions(form,'mqtt',()=>({enabled:$('enabled').checked,broker:($('tls').checked?'mqtts://':'mqtt://')+$('brokerHost').value.trim()+':'+$('port').value,username:$('username').value,password:$('password').value,clear_password:$('clearPassword').checked,prefix:$('prefix').value.trim(),name:$('name').value.trim()}));
+  const state=el('p',lastStatus?.mqtt?.status||'Waiting for MQTT status');state.id='mqttDetail';state.className='full';grid.append(state);const test=el('button','Republish HA discovery');test.type='button';test.id='mqttReannounce';test.disabled=!lastStatus?.mqtt?.connected;test.onclick=async()=>{try{await request({section:'mqtt_test'});message('HA Climate discovery queued.');}catch(e){message(e.message)}};row.append(test);
+ }else if(page==='Controller'){
+  field(grid,'Thermostat controller IP, name or URL','controller',config.controller);
+  actions(form,'controller',()=>({controller:$('controller').value.trim()}));
+  linkTest(c);
+ }else if(page==='ESP-NOW'){
+  c.insertBefore(el('p','Wi-Fi stays preferred. Pair both devices with the same private key. The peer below is the controller station MAC. The display station MAC is sent to the controller automatically. Applying changes restarts the controller when reachable.'),form);
+  check(grid,'Enable paired fallback','enabled',config.radio.enabled);field(grid,'Controller station MAC','peer',config.radio.peer,'text','AA:BB:CC:DD:EE:FF').maxLength=17;field(grid,'Shared key (32 hex digits)','key','','password',config.radio.key_configured?keep:'Private shared key').maxLength=32;
+  actions(form,'radio',()=>({enabled:$('enabled').checked,peer:$('peer').value.trim(),key:$('key').value.trim()}));
+  linkTest(c);
+ }else if(page==='Ship tracking'){
+  c.insertBefore(el('p','Uses the existing Tawas ship service. AIS processing and map rendering stay on CottageServices. The display caches one map, polls every 10 seconds to keep the service dashboard heartbeat online.'),form);
+  check(grid,'Enable ship tracking','enabled',config.ships_enabled);field(grid,'Ship service URL','shipUrl',config.ship_url,'url');select(grid,'Range (miles)','range',String(config.ship_range),['10','30','50','75','100']);
+  actions(form,'ships',()=>({enabled:$('enabled').checked,url:$('shipUrl').value.trim(),range:Number($('range').value)}));
+ }else if(page==='Sound & display'){
+  const slider=field(grid,'Volume (0–100%)','volume',config.volume,'range');slider.min=0;slider.max=100;const value=el('small',config.volume+'%');slider.after(value);slider.oninput=()=>value.textContent=slider.value+'%';
+  check(grid,'Camera: Fill (crop edges)','fill',config.camera_fill);const row=actions(form,'sound',()=>({volume:Number($('volume').value),camera_fill:$('fill').checked}),'Apply');
+  const test=el('button','Test sound');test.type='button';test.onclick=async()=>{try{await request({section:'sound',volume:Number($('volume').value),camera_fill:$('fill').checked});await request({section:'sound_test'});}catch(e){message(e.message)}};row.append(test);
+ }else if(page==='System'){
+  c.insertBefore(el('p','Upload the application .bin built for this Waveshare 4B display. Do not upload a bootloader, merged flash image, or controller firmware. One initial USB flash installs the OTA partition layout.'),form);
+  const details=el('p');details.id='firmwareInfo';c.insertBefore(details,form);renderFirmware();
+  const file=field(grid,'Firmware .bin file','firmware','','file');file.accept='.bin,application/octet-stream';
+  const progress=el('progress');progress.id='uploadProgress';progress.max=100;progress.value=0;form.append(progress);
+  const row=el('div',undefined,'actions');const b=el('button','Upload firmware','primary');b.type='submit';row.append(b);form.append(row);
+  form.onsubmit=e=>{e.preventDefault();const f=file.files[0];if(!f||!f.name.toLowerCase().endsWith('.bin')){message('Choose an application .bin file.');return;}
+   const slot=lastStatus?.firmware?.slot_bytes;if(!slot){message('OTA layout unavailable. Flash this version once over USB first.');return;}
+   if(f.size>slot){message('The file is larger than the OTA slot.');return;}
+   uploading=true;b.disabled=true;const x=new XMLHttpRequest();x.open('POST','/api/firmware');x.setRequestHeader('Content-Type','application/octet-stream');
+   x.upload.onprogress=e=>{if(e.lengthComputable){progress.value=Math.round(e.loaded/e.total*100);message('Uploading '+progress.value+'% — keep power connected.');}};
+   x.onload=()=>{uploading=false;b.disabled=false;let j={};try{j=JSON.parse(x.responseText)}catch{}if(x.status===200){progress.value=100;reconnecting=true;reconnectBoot=lastStatus?.firmware?.boot_id;message(j.message||'Image validated. Rebooting...');}else message(j.message||'Upload rejected. Previous firmware remains active.');};
+   x.onerror=()=>{uploading=false;b.disabled=false;message('Upload connection interrupted. Check the device status before retrying.');};x.timeout=180000;x.ontimeout=x.onerror;x.send(f);
+  };
+ }
+}
+function metric(parent,title,value){const m=el('div',undefined,'metric');m.append(el('small',title),el('strong',value));parent.append(m);}
+function renderMetrics(){const m=$('metrics');if(!m||!lastStatus)return;m.replaceChildren();const p=lastStatus.performance||{};
+ metric(m,'Local temperature',lastStatus.temperature_f===undefined?'No fresh sample':lastStatus.temperature_f.toFixed(1)+' °F');metric(m,'Target',lastStatus.target_f===undefined?'Unavailable':lastStatus.target_f.toFixed(1)+' °F');
+ metric(m,'Frame last / peak',(p.frame_ms||0).toFixed(1)+' / '+(p.max_frame_ms||0).toFixed(1)+' ms');metric(m,'LVGL stack minimum free',Math.round((p.lvgl_stack_min_free||0)/1024)+' KiB');metric(m,'Free internal RAM',Math.round((p.free_internal||0)/1024)+' KiB');metric(m,'Largest internal block',Math.round((p.largest_internal||0)/1024)+' KiB');metric(m,'Free PSRAM',((p.free_psram||0)/1048576).toFixed(1)+' MiB');
+ metric(m,'Ships shown / nearby',(lastStatus.ships?.count||0)+' / '+(lastStatus.ships?.nearby||0));metric(m,'Ship request',(lastStatus.ships?.request_ms||0)+' ms / '+(lastStatus.ships?.bytes||0)+' B');metric(m,'Ship service / AIS',!lastStatus.ships?.service_online?'Service offline':lastStatus.ships?.feed_online?'Online / online':'Online / AIS offline');metric(m,'Last ship refresh',lastStatus.ships?.last_error||'OK');metric(m,'MQTT',lastStatus.mqtt?.status||'Not configured');metric(m,'Radio pairing sync',lastStatus.integration_sync||'Not managed');
+}
+function renderFirmware(){const n=$('firmwareInfo');if(!n||!lastStatus)return;const f=lastStatus.firmware||{};n.textContent='Version '+(f.version||'?')+' • '+(f.board||'Waveshare 4B')+' • Slot '+(f.running_slot||'?')+' • OTA '+(f.slot_bytes?Math.round(f.slot_bytes/1048576)+' MiB':'not available');}
+async function loadConfig(){const r=await fetch('/api/settings',{cache:'no-store'});const j=await r.json();if(!r.ok)throw Error(j.message||'Settings unavailable');config=j;render();}
+async function poll(){if(uploading)return;try{const r=await fetch('/api/device/status',{cache:'no-store'});if(!r.ok)throw Error('Status unavailable');const j=await r.json();lastStatus=j;
+ $('services').replaceChildren();(j.services||[]).forEach(s=>{const row=el('div',undefined,'status-row');row.append(el('span',s.name),badge(s.state,s.kind));$('services').append(row)});
+ const summary=j.summary_kind||'standby';$('summary').replaceWith(Object.assign(badge(j.summary,summary),{id:'summary'}));
+ $('statusAge').textContent='Live status • updated '+new Date().toLocaleTimeString();renderMetrics();renderFirmware();if($('mqttDetail'))$('mqttDetail').textContent=j.mqtt?.status||'Not configured';if($('mqttReannounce'))$('mqttReannounce').disabled=!j.mqtt?.connected;
+ if(reconnecting&&j.firmware?.boot_id!==reconnectBoot){reconnecting=false;message('Device is back online. Running firmware '+(j.firmware?.version||'?')+'.');try{await loadConfig()}catch{config=null}}
+ if(!config&&!reconnecting)await loadConfig();
+ }catch(e){$('statusAge').textContent=reconnecting?'Device restarting; reconnecting...':'Device unreachable; retrying...';$('summary').replaceWith(Object.assign(badge('Offline','offline'),{id:'summary'}));}
+}
+render();poll();timer=setInterval(poll,3000);
+</script></body></html>
