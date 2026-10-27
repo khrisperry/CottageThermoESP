@@ -10,19 +10,19 @@ enum {
     ROOM_CLIMATE_RING_SIZE=252,
     ROOM_CLIMATE_MODE_Y=267,
     ROOM_CLIMATE_REASON_Y=292,
-    ROOM_CLIMATE_STATUS_W=310,
-    ROOM_CLIMATE_AWAY_X=320,
-    ROOM_CLIMATE_AWAY_Y=271,
-    ROOM_CLIMATE_AWAY_W=136,
-    ROOM_CLIMATE_AWAY_H=41,
+    ROOM_CLIMATE_STATUS_W=456,
+    /* One bottom row: -1 | Set Temp | +1 | Away/Home.
+     * Four full-height touch targets and equal 8px gutters. */
     ROOM_CLIMATE_BUTTON_Y=317,
     ROOM_CLIMATE_BUTTON_H=46,
     ROOM_CLIMATE_MINUS_X=0,
-    ROOM_CLIMATE_MINUS_W=76,
-    ROOM_CLIMATE_SET_X=84,
-    ROOM_CLIMATE_SET_W=288,
-    ROOM_CLIMATE_PLUS_X=380,
-    ROOM_CLIMATE_PLUS_W=76,
+    ROOM_CLIMATE_MINUS_W=64,
+    ROOM_CLIMATE_SET_X=72,
+    ROOM_CLIMATE_SET_W=184,
+    ROOM_CLIMATE_PLUS_X=264,
+    ROOM_CLIMATE_PLUS_W=64,
+    ROOM_CLIMATE_AWAY_X=336,
+    ROOM_CLIMATE_AWAY_W=120,
     ROOM_HOME_TILE_W=224,
     ROOM_HOME_TILE_GAP=8,
     ROOM_HOME_TILE_H=108,
@@ -36,18 +36,20 @@ _Static_assert(ROOM_CLIMATE_RING_Y>=12,"Leave clearance for arc knob above dial"
 _Static_assert(ROOM_CLIMATE_RING_X*2+ROOM_CLIMATE_RING_SIZE==ROOM_PAGE_W,"Center ring");
 _Static_assert(ROOM_CLIMATE_RING_Y+ROOM_CLIMATE_RING_SIZE<=ROOM_CLIMATE_MODE_Y,
                "Dial must not overlap status text");
-_Static_assert(ROOM_CLIMATE_STATUS_W<ROOM_CLIMATE_AWAY_X,
-               "Away button must not overlap text");
+_Static_assert(ROOM_CLIMATE_STATUS_W<=ROOM_PAGE_W,
+               "Mode and status must remain inside content width");
 _Static_assert(ROOM_CLIMATE_AWAY_X+ROOM_CLIMATE_AWAY_W<=ROOM_PAGE_W,
-               "Away button outside screen");
-_Static_assert(ROOM_CLIMATE_AWAY_Y+ROOM_CLIMATE_AWAY_H<ROOM_CLIMATE_BUTTON_Y,
-               "Away must not overlap setpoint row");
+               "Away/Home outside screen");
+_Static_assert(ROOM_CLIMATE_PLUS_X+ROOM_CLIMATE_PLUS_W<ROOM_CLIMATE_AWAY_X,
+               "Plus / Away overlap");
+_Static_assert(ROOM_CLIMATE_BUTTON_Y>ROOM_CLIMATE_REASON_Y,
+               "Bottom controls must not overlap status");
 _Static_assert(ROOM_CLIMATE_MINUS_X+ROOM_CLIMATE_MINUS_W<ROOM_CLIMATE_SET_X,
                "Minus / Set overlap");
 _Static_assert(ROOM_CLIMATE_SET_X+ROOM_CLIMATE_SET_W<ROOM_CLIMATE_PLUS_X,
                "Set / Plus overlap");
-_Static_assert(ROOM_CLIMATE_PLUS_X+ROOM_CLIMATE_PLUS_W<=ROOM_PAGE_W,
-               "Plus outside screen");
+_Static_assert(ROOM_CLIMATE_AWAY_X+ROOM_CLIMATE_AWAY_W==ROOM_PAGE_W,
+               "Four-button row should use the full content width");
 _Static_assert(ROOM_CLIMATE_BUTTON_Y+ROOM_CLIMATE_BUTTON_H<=ROOM_PAGE_H,
                "Controls must clear bottom navigation");
 _Static_assert(ROOM_HOME_TILE_W*2+ROOM_HOME_TILE_GAP==ROOM_PAGE_W,
