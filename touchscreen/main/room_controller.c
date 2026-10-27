@@ -171,6 +171,7 @@ static cJSON *status_json(const tl_packet_t *r)
     if(r->flags&TL_HAS_TARGET)cJSON_AddNumberToObject(j,"target_f",r->target);
     cJSON_AddBoolToObject(j,"simulation",(r->flags&TL_SIMULATION)!=0);
     cJSON_AddBoolToObject(j,"away",(r->flags&TL_AWAY_ACTIVE)!=0);
+    cJSON_AddBoolToObject(j,"live_active",(r->flags&TL_LIVE_ACTIVE)!=0);
     const char *modes[]={"hold","manual","direct","thermostat"};
     cJSON_AddStringToObject(j,"mode",r->mode<4?modes[r->mode]:"unknown");
     cJSON_AddStringToObject(j,"reason",r->reason);return j;
