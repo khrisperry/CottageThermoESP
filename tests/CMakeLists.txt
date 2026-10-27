@@ -41,6 +41,16 @@ if(NOT MSVC)
 endif()
 add_test(NAME controller_encoder COMMAND test_controller_encoder)
 
+# Compile the EXACT production PWM update implementation with a fake ESP-IDF
+# LEDC interface. The fake header deliberately excludes fade-service methods;
+# accidental reuse of the ESP-IDF 6.0.1 fade-dependent combined call fails CI.
+add_executable(test_controller_pwm_duty test_controller_pwm_duty.c ../controller/main/controller_pwm_duty.c)
+target_include_directories(test_controller_pwm_duty PRIVATE ledc_stubs ../controller/main)
+if(NOT MSVC)
+    target_compile_options(test_controller_pwm_duty PRIVATE -Wall -Wextra -Werror)
+endif()
+add_test(NAME controller_pwm_duty COMMAND test_controller_pwm_duty)
+
 add_executable(test_controller_setup test_controller_setup.c ../controller/main/controller_setup.c ../shared/thermo/thermo.c)
 target_include_directories(test_controller_setup PRIVATE ../controller/main ../shared/thermo)
 if(NOT MSVC)
