@@ -164,10 +164,32 @@ th_action_t th_tick(th_state_t *s,uint64_t now)
     if (!th_map_level(&s->config,desired,&pulse)) { s->reason="level_outside_measured_map"; return a; }
     s->proposed_level=desired;
     if (fabsf(desired-s->commanded_level) < s->config.level_deadband) { s->reason="mapped_setting_reached"; return a; }
-    if (s->last_move_ms && now-s->last_move_ms < s->config.dwell_ms) { s->reason="movement_dwell"; return a; }
-    float delta=desired-s->commanded_level;
-    if (fabsf(delta)>s->config.max_level_step) desired=s->commanded_level+copysignf(s->config.max_level_step,delta);
-    if (!th_map_level(&s->config,desired,&pulse)) { s->reason="invalid_move"; return a; }
+    if (s->config.mode == TH_AUTO) {
+        /* This mode maps an explicit setpoint (panel/HA or scheduled change)
+         * to a furnace dial setting. Room-temperature fluctuations do NOT
+         * change the mapped position. Follow the full calibrated setpoint
+         * promptly, not in 0.25-dial / 5-minute increments. A two-second
+         * guard coalesces rapid repeated setpoint edits; safety validation,
+         * calibration, freshness and position synchronization were already
+         * checked above. All pulse output remains bounded by controller limits.
+         */
+        if (s->last_move_ms && now >= s->last_move_ms &&
+            now-s->last_move_ms < THERMO_SETPOINT_GUARD_MS) {
+            s->reason="setpoint_cooldown"; return a;
+        }
+    } else {
+        /* Retain conservative stepping/dwell for non-setpoint control. */
+        if (s->last_move_ms && now>=s->last_move_ms &&
+            now-s->last_move_ms < s->config.dwell_ms) {
+            s->reason="movement_dwell"; return a;
+        }
+        float delta=desired-s->commanded_level;
+        if (fabsf(delta)>s->config.max_level_step)
+            desired=s->commanded_level+copysignf(s->config.max_level_step,delta);
+        if (!th_map_level(&s->config,desired,&pulse)) {
+            s->reason="invalid_move"; return a;
+        }
+    }
     s->reason=s->simulated ? "simulated_move" : "bench_move";
     return (th_action_t){.move=true,.level=desired,.pulse_us=pulse};
 }
