@@ -33,7 +33,7 @@ static esp_err_t pulse(int us){if(!controller_setup_contains(&setup,us))return E
 static void release(void)
 {
     if(pwm){int err=ledc_stop(LEDC_LOW_SPEED_MODE,LEDC_CHANNEL_0,0);if(err!=ESP_OK)(void)esp_err_to_name(err);}
-    pwm=false;last_pulse=-1;armed=false;go_active=false;state.simulated=true;th_release(&state);
+    pwm=false;last_pulse=-1;armed=false;go_active=false;state.simulated=true;state.config.mode=TH_HOLD;th_release(&state);
 }
 static cJSON *body(httpd_req_t *r){return cJSON_Parse(r->request);}
 static int httpd_resp_send_err(httpd_req_t *r,const char *status,const char *error){(void)status;snprintf(r->response,sizeof(r->response),"%s",error);return 400;}
