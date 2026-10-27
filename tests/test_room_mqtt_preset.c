@@ -11,7 +11,7 @@ static const char *value(cJSON *j,const char *key){
 }
 int main(void)
 {
-    cJSON *j=room_mqtt_discovery("room_f4","cottage/thermostat/room_f4","Cottage Room","0.14.0",3);
+    cJSON *j=room_mqtt_discovery("room_f4","cottage/thermostat/room_f4","Cottage Room","0.14.1",3);
     assert(j&&strcmp(value(j,"preset_mode_command_topic"),"~/preset/set")==0);
     assert(!strcmp(value(j,"preset_mode_state_topic"),"~/state"));
     assert(strstr(value(j,"preset_mode_value_template"),"value_json.away"));
@@ -25,7 +25,7 @@ int main(void)
     assert(!cJSON_GetObjectItemCaseSensitive(j,"fan_mode_command_topic"));
     assert(!cJSON_GetObjectItemCaseSensitive(j,"swing_mode_command_topic"));
     cJSON_Delete(j);
-    j=room_mqtt_discovery("room_f4","cottage/thermostat/room_f4","Cottage Room","0.14.0",0);
+    j=room_mqtt_discovery("room_f4","cottage/thermostat/room_f4","Cottage Room","0.14.1",0);
     assert(j&&!cJSON_GetObjectItemCaseSensitive(j,"preset_mode_command_topic"));
     cJSON_Delete(j);
     /* The switch is a separate visible entity on the same HA device:
