@@ -674,9 +674,11 @@ static void refresh(lv_timer_t *timer)
     char text[80];
     if(room_temp){snprintf(text,sizeof(text),"%.1f F",room_f);lv_label_set_text(temp_label,text);}
     else lv_label_set_text(temp_label,"-- F");
-    if(climate&&m.has_target){snprintf(text,sizeof(text),m.away?"AWAY / FREEZE  %.1f F":"%s %.1f F",m.away?m.target:draft);
-        if(!m.away)snprintf(text,sizeof(text),"%s %.1f F",editing?"Set to":"Target",draft);
-        lv_label_set_text(target_label,text);}
+    if(climate&&m.has_target){
+        if(m.away)snprintf(text,sizeof(text),"AWAY / FREEZE  %.1f F",m.target);
+        else snprintf(text,sizeof(text),"%s %.1f F",editing?"Set to":"Target",draft);
+        lv_label_set_text(target_label,text);
+    }
     else lv_label_set_text(target_label,"Target unavailable");
     lv_arc_set_value(temperature_ring,room_temp?(int)fmaxf(45,fminf(80,room_f)):45);
     lv_obj_set_style_arc_color(temperature_ring,lv_color_hex(room_temp?AMBER:EDGE),LV_PART_INDICATOR);
