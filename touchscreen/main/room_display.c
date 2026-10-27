@@ -582,6 +582,17 @@ static void blinds_icon(lv_obj_t *parent)
     blind_rail=icon_bar(p,2,39,27,4,BLUE,1);
     icon_bar(p,33,5,1,26,MUTED,0);icon_bar(p,31,30,4,5,MUTED,2);
 }
+/* Lightweight robot vacuum glyph: concentric disc, no bitmap or font asset. */
+static void vacuum_icon(lv_obj_t *parent)
+{
+    lv_obj_t *disc=panel(parent,11,12,42,42,LIFT,21);
+    lv_obj_set_style_border_color(disc,lv_color_hex(BLUE),0);
+    lv_obj_set_style_border_width(disc,2,0);
+    lv_obj_t *inner=panel(disc,10,9,20,20,SURFACE,10);
+    lv_obj_set_style_border_color(inner,lv_color_hex(MUTED),0);
+    lv_obj_t *sensor=panel(disc,19,4,4,4,MINT,2);
+    lv_obj_set_style_border_width(sensor,0,0);
+}
 static void heater_icon(lv_obj_t *parent)
 {
     lv_obj_t *p=panel(parent,8,8,36,50,CARD,0);
@@ -853,10 +864,13 @@ static void refresh(lv_timer_t *timer)
             lv_label_set_text(icon_badge[k],symbol);tint(icon_badge[k],color);
         }
         if(tile[k]){
-            uint32_t background=active?(laundry?(k<5?0x142d45:0x392c1c):
-                (k<2?0x312a1b:0x16342f)):
-                visual==ROOM_VIS_DONE?0x16342f:
-                visual==ROOM_VIS_ERROR?0x3e2028:CARD;
+            /* Common midnight-blue card grammar: restrained active tint,
+             * state-colored outline, no translucent overlay layers. */
+            uint32_t background=active?
+                (laundry?(k<5?0x15384f:0x3a3025):
+                    k<2?LIGHT_ACTIVE:k==7?0x383027:0x153f3c):
+                visual==ROOM_VIS_DONE?0x143d37:
+                visual==ROOM_VIS_ERROR?0x3c2632:CARD;
             lv_obj_set_style_bg_color(tile[k],lv_color_hex(background),0);
             lv_obj_set_style_border_color(tile[k],
                 lv_color_hex(pending?AMBER:
@@ -873,7 +887,7 @@ static void refresh(lv_timer_t *timer)
             uint32_t fill=glowing?0xffd54a:0x45546a;
             if(bulb_glow[k])
                 lv_obj_set_style_bg_color(bulb_glow[k],
-                    lv_color_hex(glowing?0x786020:0x223248),0);
+                    lv_color_hex(glowing?0x655224:0x1d3547),0);
             lv_obj_set_style_bg_color(bulb_head[k],lv_color_hex(fill),0);
             lv_obj_set_style_border_color(bulb_head[k],
                 lv_color_hex(glowing?0xffedaa:0x60748b),0);
@@ -890,7 +904,7 @@ static void refresh(lv_timer_t *timer)
         for(int a=0;a<6;++a)if(control[k][a]){
             enabled(control[k][a],available&&!(m.pending&(1U<<k))&&(m.items[k].actions&(1U<<a)));
             bool selected=available&&((a==0&&!strcmp(m.items[k].state,"on"))||(a==1&&!strcmp(m.items[k].state,"off")));
-            lv_obj_set_style_bg_color(control[k][a],lv_color_hex(selected?(k<2?0xffd54a:MINT):EDGE),0);
+            lv_obj_set_style_bg_color(control[k][a],lv_color_hex(selected?(k<2?0xffd54a:MINT):LIFT),0);
             tint(control[k][a],selected?INK:TEXT);
         }
     }
@@ -1020,12 +1034,12 @@ static void build_ui(void)
     for(int key=0;key<2;++key){
         const int x=key==0?0:ROOM_HOME_TILE_W+ROOM_HOME_TILE_GAP;
         lv_obj_t *p=tile[key]=panel(body[1],x,0,
-            ROOM_HOME_TILE_W,ROOM_HOME_TILE_H,CARD,15);
+            ROOM_HOME_TILE_W,ROOM_HOME_TILE_H,CARD,18);
         lv_obj_add_flag(p,LV_OBJ_FLAG_CLICKABLE);
-        lv_obj_set_style_bg_color(p,lv_color_hex(0x394761),LV_STATE_PRESSED);
+        lv_obj_set_style_bg_color(p,lv_color_hex(0x27445a),LV_STATE_PRESSED);
         lv_obj_set_style_bg_opa(p,LV_OPA_50,LV_STATE_DISABLED);
         lv_obj_add_event_cb(p,light_tile_event,LV_EVENT_CLICKED,(void*)(intptr_t)key);
-        bulb_glow[key]=panel(p,82,6,60,53,0x223248,28);
+        bulb_glow[key]=panel(p,82,6,60,53,0x1d3547,28);
         lv_obj_set_style_border_width(bulb_glow[key],0,0);
         lv_obj_t *bulb=panel(p,92,10,40,48,CARD,0);
         lv_obj_set_style_bg_opa(bulb,LV_OPA_TRANSP,0);
@@ -1051,13 +1065,10 @@ static void build_ui(void)
     for(int idx=0;idx<3;++idx){
         const int key=home_keys[idx];
         lv_obj_t *p=tile[key]=panel(body[1],home_x[idx],home_y[idx],
-                                   ROOM_HOME_TILE_W,ROOM_HOME_TILE_H,CARD,13);
+                                   ROOM_HOME_TILE_W,ROOM_HOME_TILE_H,CARD,18);
         if(key==2)blinds_icon(p);
         else if(key==7)heater_icon(p);
-        else{
-            icon_badge[key]=label(p,LV_SYMBOL_HOME,13,17,30,&lv_font_montserrat_24);
-            tint(icon_badge[key],BLUE);
-        }
+        else vacuum_icon(p);
         label(p,home_names[idx],52,10,ROOM_HOME_TILE_W-58,&lv_font_montserrat_16);
         states[key]=label(p,"Unavailable",52,37,
                           key==7?60:ROOM_HOME_TILE_W-58,&lv_font_montserrat_14);
