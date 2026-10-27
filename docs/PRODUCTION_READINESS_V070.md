@@ -1,4 +1,21 @@
-# Cottage Thermostat — v0.7.1 Controller / v0.14.3 Waveshare 4B acceptance
+# Cottage Thermostat — v0.7.1 Controller / v0.14.5 Waveshare 4B acceptance
+
+## v0.14.5 Design #3 native LVGL visual polish (no protocol change)
+
+A native, memory-conscious UI-only theme refresh for the 480×480 Waveshare panel. This changes `touchscreen/main/room_display.c` styling: consistent midnight-blue palette, raised rounded cards, readable text and bright teal/electric-blue navigation accents, restrained amber heat-target colors. **Climate, Home, Laundry and Camera** receive matching visual styles. The **Ships** tab remains visible and functioning; its page contents are not updated in this release, only the shared app-shell header/nav. Camera is not placed on the Home page.
+
+Climate keeps its saved target ring, 1-degree controls, Home/Away and Set Temp submission logic. Home keeps the same five compact tiles and Home Assistant actions. Laundry keeps four appliance states, activity indications and Notify buttons. Camera keeps exactly the same image decoding, viewport size, crop/fit, update strategy and connection handling. No modifications to controller firmware, ESP-NOW/Wi-Fi fallback, MQTT, HA devices or commands, sensors, mode persistence, calibration, motor safety, NVS or network timing.
+
+**Local build only.** GitHub Actions is intentionally skipped. From ESP-IDF 6.0.1 PowerShell, repository root:
+
+```powershell
+git pull --ff-only
+.\tools\build-room-4b.ps1 -Flash -Monitor -Port COM21
+```
+
+Verify the actual 4B screen and tap targets, including the Ships tab, before deployment. The local ESP-IDF compile and device rendering are still needed; static source and geometry checks are not hardware acceptance.
+
+
 
 ## v0.14.3 final 4B layout for local hardware testing
 
