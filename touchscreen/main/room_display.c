@@ -911,7 +911,7 @@ static void refresh(lv_timer_t *timer)
     for(int k=3;k<=6;++k)if(notify_button[k-3]){
         bool on=room_audio_notify_enabled(k);
         lv_label_set_text(lv_obj_get_child(notify_button[k-3],0),on?"Notify: On":"Notify: Off");
-        lv_obj_set_style_bg_color(notify_button[k-3],lv_color_hex(on?MINT:EDGE),0);
+        lv_obj_set_style_bg_color(notify_button[k-3],lv_color_hex(on?MINT:LIFT),0);
         tint(notify_button[k-3],on?INK:MUTED);
     }
     if(!ha||!m.items[10].available){
@@ -1097,31 +1097,62 @@ static void build_ui(void)
             lv_obj_set_style_text_align(states[8],LV_TEXT_ALIGN_RIGHT,0);
         }
     }
+    /* Laundry shares the same cards, accent icon boxes, thin dividers and
+     * status colors as Home. Existing state polling and notification actions
+     * remain exactly as before. */
     const char *laundry[]={"Washer 1","Washer 2","Dryer 1","Dryer 2"};
     for(int n=0;n<4;++n){
-        int key=n+3;tile[key]=panel(body[2],(n%2)*234,(n/2)*184,222,174,CARD,18);
-        lv_obj_t *p=tile[key];icon_badge[key]=label(p,LV_SYMBOL_LOOP,16,14,40,&lv_font_montserrat_28);tint(icon_badge[key],BLUE);
-        lv_obj_t *kind=label(p,n<2?"WASH":"DRY",62,24,78,&lv_font_montserrat_14);tint(kind,MUTED);
-        label(p,laundry[n],16,76,190,&lv_font_montserrat_20);
-        activity_ring[key]=lv_arc_create(p);lv_obj_set_pos(activity_ring[key],148,13);lv_obj_set_size(activity_ring[key],56,56);
+        int key=n+3;
+        tile[key]=panel(body[2],(n%2)*234,(n/2)*184,222,174,CARD,19);
+        lv_obj_t *p=tile[key];
+        lv_obj_t *icon_back=panel(p,12,12,48,48,LIFT,14);
+        lv_obj_set_style_border_width(icon_back,0,0);
+        icon_badge[key]=label(p,LV_SYMBOL_LOOP,20,18,36,&lv_font_montserrat_28);
+        tint(icon_badge[key],BLUE);
+        lv_obj_t *kind=label(p,n<2?"WASHER":"DRYER",72,22,70,&lv_font_montserrat_14);
+        tint(kind,MUTED);
+        activity_ring[key]=lv_arc_create(p);
+        lv_obj_set_pos(activity_ring[key],148,12);lv_obj_set_size(activity_ring[key],56,56);
         lv_arc_set_bg_angles(activity_ring[key],0,360);lv_arc_set_angles(activity_ring[key],0,360);
-        lv_obj_remove_style(activity_ring[key],NULL,LV_PART_KNOB);lv_obj_remove_flag(activity_ring[key],LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_remove_style(activity_ring[key],NULL,LV_PART_KNOB);
+        lv_obj_remove_flag(activity_ring[key],LV_OBJ_FLAG_CLICKABLE);
         lv_obj_add_flag(activity_ring[key],LV_OBJ_FLAG_GESTURE_BUBBLE);
-        lv_obj_set_style_arc_width(activity_ring[key],4,LV_PART_MAIN);lv_obj_set_style_arc_width(activity_ring[key],4,LV_PART_INDICATOR);
+        lv_obj_set_style_arc_width(activity_ring[key],5,LV_PART_MAIN);
+        lv_obj_set_style_arc_width(activity_ring[key],5,LV_PART_INDICATOR);
         lv_obj_set_style_arc_color(activity_ring[key],lv_color_hex(EDGE),LV_PART_MAIN);
-        states[key]=label(p,"Unavailable",16,104,190,&lv_font_montserrat_16);lv_label_set_long_mode(states[key],LV_LABEL_LONG_DOT);lv_obj_set_height(states[key],23);
-        notify_button[n]=button(p,"Notify: Off",16,132,190,34,notify_event,key);lv_obj_set_style_text_font(notify_button[n],&lv_font_montserrat_14,0);
+        lv_obj_t *line=panel(p,16,69,190,1,EDGE,0);
+        lv_obj_set_style_border_width(line,0,0);
+        lv_obj_t *device_name=label(p,laundry[n],16,77,190,&lv_font_montserrat_20);
+        tint(device_name,TEXT);
+        states[key]=label(p,"Unavailable",16,105,190,&lv_font_montserrat_16);
+        lv_label_set_long_mode(states[key],LV_LABEL_LONG_DOT);
+        lv_obj_set_height(states[key],23);
+        notify_button[n]=button(p,"Notify: Off",16,132,190,34,notify_event,key);
+        lv_obj_set_style_text_font(notify_button[n],&lv_font_montserrat_14,0);
+        lv_obj_set_style_radius(notify_button[n],11,0);
     }
-    lv_obj_t *camera_title=label(body[3],"Parking lot",0,1,240,&lv_font_montserrat_24);
-    (void)camera_title;
-    camera_status=label(body[3],LV_SYMBOL_VIDEO "  CONNECTING",252,7,204,&lv_font_montserrat_14);tint(camera_status,MINT);
-    /* Rounded child clipping creates ARGB layers in LVGL's small private heap.
-     * A rectangular viewport uses normal clipping and direct image drawing. */
+    /* Camera keeps exactly the same image viewport and decoder. Only
+     * its title strip and lightweight frame take on the shared theme. */
+    lv_obj_t *camera_header=panel(body[3],0,0,456,30,CARD,11);
+    lv_obj_set_style_border_color(camera_header,lv_color_hex(EDGE),0);
+    lv_obj_t *camera_accent=panel(body[3],12,8,4,15,BLUE,2);
+    lv_obj_set_style_border_width(camera_accent,0,0);
+    lv_obj_t *camera_title=label(body[3],"Parking Lot",24,3,216,&lv_font_montserrat_20);
+    tint(camera_title,TEXT);
+    camera_status=label(body[3],LV_SYMBOL_VIDEO "  CONNECTING",252,7,204,&lv_font_montserrat_14);
+    tint(camera_status,MINT);
+    /* No corner clipping or ARGB intermediate layer: unchanged 456x308
+     * video window, JPEG processing, image scaling and camera requests. */
     camera_frame=panel(body[3],0,32,456,308,0x05090e,0);
+    lv_obj_set_style_border_color(camera_frame,lv_color_hex(EDGE),0);
+    lv_obj_set_style_border_width(camera_frame,2,0);
     lv_obj_remove_flag(camera_frame,LV_OBJ_FLAG_OVERFLOW_VISIBLE);
     lv_obj_set_style_clip_corner(camera_frame,false,0);
-    camera_image=lv_image_create(camera_frame);lv_obj_add_flag(camera_image,LV_OBJ_FLAG_HIDDEN);lv_obj_add_flag(camera_image,LV_OBJ_FLAG_GESTURE_BUBBLE);
-    camera_note=label(body[3],"Loading camera...",0,346,456,&lv_font_montserrat_14);centered(camera_note);tint(camera_note,MUTED);
+    camera_image=lv_image_create(camera_frame);
+    lv_obj_add_flag(camera_image,LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_flag(camera_image,LV_OBJ_FLAG_GESTURE_BUBBLE);
+    camera_note=label(body[3],"Loading camera...",0,346,456,&lv_font_montserrat_14);
+    centered(camera_note);tint(camera_note,MUTED);
     ship_title=label(body[4],"Ships nearby",0,0,456,&lv_font_montserrat_24);
     lv_obj_t *map_frame=panel(body[4],0,35,278,246,0x102837,0);
     lv_obj_set_style_clip_corner(map_frame,false,0);lv_obj_remove_flag(map_frame,LV_OBJ_FLAG_OVERFLOW_VISIBLE);
