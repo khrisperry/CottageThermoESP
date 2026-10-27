@@ -225,7 +225,7 @@ static esp_err_t get_api(httpd_req_t *r)
         }
     } else {
         j=cJSON_CreateObject();
-        cJSON_AddStringToObject(j,"version","0.6.3");
+        cJSON_AddStringToObject(j,"version","0.6.4");
 #ifdef CONFIG_THERMO_SUPERMINI
         cJSON_AddStringToObject(j,"board","HW-747 Super Mini 4 MB");
 #else
@@ -300,7 +300,28 @@ static esp_err_t get_api(httpd_req_t *r)
         uint64_t remaining=since_move<next_delay ? next_delay-since_move : 0;
         cJSON_AddNumberToObject(j,"dwell_remaining_ms",remaining);
         cJSON_AddNumberToObject(j,"setpoint_guard_ms",THERMO_SETPOINT_GUARD_MS);
-        cJSON_AddStringToObject(j,"dial_move_policy",state.config.mode==TH_AUTO?"prompt_setpoint":"conservative");
+        cJSON_AddStringToObject(j,"dial_move_policy",state.config.mode==TH_AUTO?"prompt_setpoint_with_heat_feedback":"conservative");
+        cJSON *feedback=cJSON_AddObjectToObject(j,"heat_feedback");
+        cJSON_AddNumberToObject(feedback,"overshoot_threshold_f",THERMO_OVERSHOOT_THRESHOLD_F);
+        cJSON_AddNumberToObject(feedback,"hold_ms",THERMO_OVERSHOOT_CONFIRM_MS);
+        cJSON_AddNumberToObject(feedback,"observation_ms",THERMO_HEAT_OBSERVE_MS);
+        cJSON_AddNumberToObject(feedback,"correction_dwell_ms",THERMO_FEEDBACK_ADJUST_DWELL_MS);
+        cJSON_AddNumberToObject(feedback,"correction_step",THERMO_FEEDBACK_STEP);
+        cJSON_AddBoolToObject(feedback,"tracking",go_active && state.feedback_tracking);
+        cJSON_AddBoolToObject(feedback,"target_reached",state.feedback_reached);
+        cJSON_AddNumberToObject(feedback,"corrections",state.feedback_corrections);
+        cJSON_AddNumberToObject(feedback,"trim_dial",state.feedback_trim);
+        if(isfinite(state.feedback_peak_f) && state.feedback_tracking)
+            cJSON_AddNumberToObject(feedback,"observed_peak_f",state.feedback_peak_f);
+        if(state.feedback_tracking) {
+            cJSON_AddNumberToObject(feedback,"target_observed_ms",
+                now_ms()>=state.feedback_target_since_ms ? now_ms()-state.feedback_target_since_ms : 0);
+            cJSON_AddNumberToObject(feedback,"overshoot_confirmed_ms",
+                state.feedback_over_since_ms && now_ms()>=state.feedback_over_since_ms ?
+                now_ms()-state.feedback_over_since_ms : 0);
+        }
+        cJSON_AddStringToObject(feedback,"policy",
+            "2F sustained 5min after 10min observation; lower by 0.25 dial no more often than 15min; unverified provisional mapping; never overwrites saved calibration");
         cJSON_AddStringToObject(j,"reason",state.reason);
         cJSON_AddStringToObject(j,"source",th_source_name(state.source));
         cJSON_AddStringToObject(j,"mode",th_mode_name(state.config.mode));
@@ -501,8 +522,9 @@ static void control_task(void *unused)
                 else {release();state.reason="pwm_error";event("PWM error; motion disabled");}
             } else state.reason="bench_arm_required";
             if(state.last_move_ms==now) {
-                char msg[96];snprintf(msg,sizeof(msg),"%s level %.2f / %d us (command, not measured)",
-                    state.simulated?"SIMULATED":"BENCH",a.level,a.pulse_us);event(msg);
+                char msg[96];snprintf(msg,sizeof(msg),"%s %slevel %.2f / %d us (command, not measured)",
+                    state.simulated?"SIMULATED":"BENCH",
+                    a.feedback_adjustment?"OVERSHOOT TRIM ":"",a.level,a.pulse_us);event(msg);
             }
         }
         if(strcmp(last_reason,state.reason)) {
