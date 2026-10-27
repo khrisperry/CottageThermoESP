@@ -59,6 +59,19 @@ int main(void)
     request("{\"action\":\"pulse\",\"us\":600}",NULL);request("{\"action\":\"capture\",\"kind\":\"start\"}",NULL);
     request("{\"action\":\"capture\",\"kind\":\"end\"}","Limits must differ");
     request("{\"action\":\"pulse\",\"us\":2400}",NULL);request("{\"action\":\"capture\",\"kind\":\"end\"}",NULL);
+    /* Correct an end limit captured too early without destroying the start. */
+    request("{\"action\":\"edit_limit\",\"kind\":\"end\"}","Confirm");
+    request("{\"action\":\"edit_limit\",\"kind\":\"unknown\",\"confirm\":\"recalibrate_limit\"}","Choose");
+    assert(setup.start_us==600 && setup.end_us==2400 && armed && pwm);
+    request("{\"action\":\"edit_limit\",\"kind\":\"end\",\"confirm\":\"recalibrate_limit\"}",NULL);
+    assert(setup.start_us==600 && setup.end_us==0 && persisted.end_us==0);
+    assert(!armed && !pwm && !go_active && last_pulse==-1 && state.config.mode==TH_HOLD);
+    assert(controller_setup_contains(&setup,2500) && controller_setup_ready(&setup));
+    request("{\"action\":\"pulse\",\"us\":2450}","Test Mode");
+    request("{\"action\":\"test\",\"confirm\":\"unloaded_bench\"}",NULL);
+    request("{\"action\":\"pulse\",\"us\":2450}",NULL);
+    request("{\"action\":\"capture\",\"kind\":\"end\"}",NULL);
+    assert(setup.start_us==600 && setup.end_us==2450);
     int count=moves;request("{\"action\":\"jog\",\"delta_us\":10}","outside");assert(moves==count);
     request("{\"action\":\"pulse\",\"us\":500}","outside");
     for(int i=0;i<8;i++) {
@@ -69,6 +82,22 @@ int main(void)
     fail_save=true;request("{\"action\":\"temperatures\",\"values\":[45,52,59,66,73,80]}","Could not save");assert(setup.temperature_mask==0);fail_save=false;
     request("{\"action\":\"temperatures\",\"values\":[45,52,52,66,73,80]}","increase");
     request("{\"action\":\"temperatures\",\"values\":[45,52,59,66,73,80]}",NULL);assert(!controller_setup_ready(&setup));
+    /* Revising the start keeps every captured point and estimated temperature. */
+    request("{\"action\":\"edit_limit\",\"kind\":\"start\",\"confirm\":\"recalibrate_limit\"}",NULL);
+    assert(setup.start_us==0 && setup.end_us==2450 && persisted.start_us==0);
+    assert(setup.pulse_us[7]==2100 && setup.angle_mask==255 && setup.temperature_mask==63);
+    assert(setup.temperature_f[4]==73 && !armed && !pwm && controller_setup_ready(&setup));
+    request("{\"action\":\"go\",\"position\":3,\"confirm\":\"start_bench\"}","Capture both travel limits");
+    request("{\"action\":\"test\",\"confirm\":\"unloaded_bench\"}",NULL);
+    request("{\"action\":\"pulse\",\"us\":550}",NULL);
+    request("{\"action\":\"capture\",\"kind\":\"start\"}",NULL);
+    assert(setup.start_us==550 && setup.end_us==2450 && !controller_setup_ready(&setup));
+    /* Failed NVS writes must leave prior calibration intact and movement off. */
+    fail_save=true;
+    request("{\"action\":\"edit_limit\",\"kind\":\"start\",\"confirm\":\"recalibrate_limit\"}","Could not reopen");
+    assert(setup.start_us==550 && persisted.start_us==550 && !armed && !pwm);
+    fail_save=false;
+    request("{\"action\":\"test\",\"confirm\":\"unloaded_bench\"}",NULL);
     cJSON *saved=setup_json();assert(cJSON_IsTrue(cJSON_GetObjectItem(saved,"ready")));cJSON_Delete(saved);
     request("{\"action\":\"go\",\"position\":0,\"confirm\":\"start_bench\"}","1 through 6");
     request("{\"action\":\"go\",\"position\":3,\"confirm\":\"start_bench\"}","saved starting");
@@ -84,5 +113,5 @@ int main(void)
     request("{\"action\":\"test\",\"confirm\":\"unloaded_bench\"}",NULL);assert(!go_active&&!pwm&&state.simulated);
     clock_ms=armed_until;request("{\"action\":\"pulse\",\"us\":1300}","Test Mode");
     request("{\"action\":\"reset\",\"confirm\":\"reset_calibration\"}",NULL);assert(!setup.start_us&&!setup.temperature_mask&&!armed&&!pwm);
-    puts("PASS: actual setup HTTP handler: capture, travel enforcement, persistence failure, Go prerequisites, physical mode transition, manual exclusion and timeout");
+    puts("PASS: setup HTTP: selective limit edits, saved-position/temperature preservation, disarm, NVS failure, travel enforcement, Go and timeout");
 }
