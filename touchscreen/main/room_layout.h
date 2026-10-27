@@ -23,15 +23,14 @@ enum {
     ROOM_CLIMATE_SET_W=288,
     ROOM_CLIMATE_PLUS_X=380,
     ROOM_CLIMATE_PLUS_W=76,
-    ROOM_HOME_LIGHT_W=224,
-    ROOM_HOME_LIGHT_GAP=8,
-    ROOM_HOME_LIGHT_H=104,
-    ROOM_HOME_BLINDS_Y=112,
-    ROOM_HOME_BLINDS_H=78,
-    ROOM_HOME_KIDS_Y=198,
-    ROOM_HOME_KIDS_H=78,
-    ROOM_HOME_VACUUM_Y=284,
-    ROOM_HOME_VACUUM_H=80
+    ROOM_HOME_TILE_W=224,
+    ROOM_HOME_TILE_GAP=8,
+    ROOM_HOME_TILE_H=108,
+    ROOM_HOME_ROW2_Y=116,
+    ROOM_HOME_ROW3_Y=236,
+    ROOM_HOME_ACTION_Y=73,
+    ROOM_HOME_ACTION_H=32,
+    ROOM_HOME_ACTION_GAP=6
 };
 _Static_assert(ROOM_CLIMATE_RING_Y>=12,"Leave clearance for arc knob above dial");
 _Static_assert(ROOM_CLIMATE_RING_X*2+ROOM_CLIMATE_RING_SIZE==ROOM_PAGE_W,"Center ring");
@@ -51,13 +50,13 @@ _Static_assert(ROOM_CLIMATE_PLUS_X+ROOM_CLIMATE_PLUS_W<=ROOM_PAGE_W,
                "Plus outside screen");
 _Static_assert(ROOM_CLIMATE_BUTTON_Y+ROOM_CLIMATE_BUTTON_H<=ROOM_PAGE_H,
                "Controls must clear bottom navigation");
-_Static_assert(ROOM_HOME_LIGHT_W*2+ROOM_HOME_LIGHT_GAP==ROOM_PAGE_W,
-               "Two equal light tiles");
-_Static_assert(ROOM_HOME_LIGHT_H<ROOM_HOME_BLINDS_Y,
-               "Light tiles overlap blinds row");
-_Static_assert(ROOM_HOME_BLINDS_Y+ROOM_HOME_BLINDS_H<ROOM_HOME_KIDS_Y,
-               "Blinds / kids overlap");
-_Static_assert(ROOM_HOME_KIDS_Y+ROOM_HOME_KIDS_H<ROOM_HOME_VACUUM_Y,
-               "Kids / vacuum overlap");
-_Static_assert(ROOM_HOME_VACUUM_Y+ROOM_HOME_VACUUM_H<=ROOM_PAGE_H,
-               "Vacuum tile below page viewport");
+_Static_assert(ROOM_HOME_TILE_W*2+ROOM_HOME_TILE_GAP==ROOM_PAGE_W,
+               "Two equal columns must fill Home viewport");
+_Static_assert(ROOM_HOME_TILE_H+ROOM_HOME_TILE_GAP<=ROOM_HOME_ROW2_Y,
+               "Home first and second rows must not overlap");
+_Static_assert(ROOM_HOME_ROW2_Y+ROOM_HOME_TILE_H+ROOM_HOME_TILE_GAP<=ROOM_HOME_ROW3_Y,
+               "Home second and third rows must not overlap");
+_Static_assert(ROOM_HOME_ROW3_Y+ROOM_HOME_TILE_H<=ROOM_PAGE_H,
+               "Home grid must clear bottom navigation");
+_Static_assert(ROOM_HOME_ACTION_Y+ROOM_HOME_ACTION_H<=ROOM_HOME_TILE_H,
+               "Home actions must fit inside tiles");
