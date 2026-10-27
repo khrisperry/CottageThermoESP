@@ -962,28 +962,72 @@ static void build_ui(void)
         ROOM_CLIMATE_PLUS_W,ROOM_CLIMATE_BUTTON_H,send_event,-3);
     lv_obj_set_style_bg_color(apply_button,lv_color_hex(AMBER),0);
     tint(apply_button,INK);
-    const int rows[]={0,1,2,7,9};
-    const char *names[]={"Deck lights","Breezeway lights","Blinds","Kids heat","Vacuum"};
-    const char *symbols[]={LV_SYMBOL_POWER,LV_SYMBOL_POWER,LV_SYMBOL_UP,LV_SYMBOL_CHARGE,LV_SYMBOL_HOME};
-    for(int row=0;row<5;++row){
-        int key=rows[row];tile[key]=panel(body[1],0,row*73,456,67,CARD,13);
-        lv_obj_t *p=tile[key];if(key<2){
-            /* Bulb silhouette drawn locally: dark glass when off, yellow when on. */
-            lv_obj_t *bulb=panel(p,8,9,36,48,CARD,0);lv_obj_set_style_bg_opa(bulb,LV_OPA_TRANSP,0);lv_obj_set_style_border_width(bulb,0,0);
-            bulb_head[key]=panel(bulb,5,0,26,29,0x303b49,13);
-            bulb_stem[key]=panel(bulb,12,23,12,12,0x303b49,3);lv_obj_set_style_border_width(bulb_stem[key],0,0);
-            bulb_base[key]=panel(bulb,11,37,14,4,0x647386,2);lv_obj_set_style_border_width(bulb_base[key],0,0);
-        } else if(key==2)blinds_icon(p);
+    /* Compact Home Assistant-style light tiles: touch anywhere on a tile
+     * to toggle it, and the bulb glows only for a known/optimistic On state.
+     * Blinds, Kids Heat, Vacuum keep explicit actions below in full rows. */
+    for(int key=0;key<2;++key){
+        const int x=key==0?0:ROOM_HOME_LIGHT_W+ROOM_HOME_LIGHT_GAP;
+        lv_obj_t *p=tile[key]=panel(body[1],x,0,
+            ROOM_HOME_LIGHT_W,ROOM_HOME_LIGHT_H,CARD,15);
+        lv_obj_add_flag(p,LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_set_style_bg_color(p,lv_color_hex(0x394761),LV_STATE_PRESSED);
+        lv_obj_set_style_bg_opa(p,LV_OPA_55,LV_STATE_DISABLED);
+        lv_obj_add_event_cb(p,light_tile_event,LV_EVENT_CLICKED,(void*)(intptr_t)key);
+        bulb_glow[key]=panel(p,82,6,60,53,0x223248,28);
+        lv_obj_set_style_border_width(bulb_glow[key],0,0);
+        lv_obj_t *bulb=panel(p,92,10,40,48,CARD,0);
+        lv_obj_set_style_bg_opa(bulb,LV_OPA_TRANSP,0);
+        lv_obj_set_style_border_width(bulb,0,0);
+        bulb_head[key]=panel(bulb,6,0,28,30,0x45546a,14);
+        bulb_stem[key]=panel(bulb,13,25,14,12,0x45546a,3);
+        lv_obj_set_style_border_width(bulb_stem[key],0,0);
+        bulb_base[key]=panel(bulb,11,39,18,4,0x60748b,2);
+        lv_obj_set_style_border_width(bulb_base[key],0,0);
+        lv_obj_t *name=label(p,key==0?"Deck Lights":"Breezeway Lights",
+            4,60,ROOM_HOME_LIGHT_W-8,&lv_font_montserrat_16);
+        centered(name);
+        states[key]=label(p,"Unavailable",4,83,
+            ROOM_HOME_LIGHT_W-8,&lv_font_montserrat_14);
+        centered(states[key]);
+        lv_label_set_long_mode(states[key],LV_LABEL_LONG_DOT);
+        lv_obj_set_height(states[key],19);
+    }
+    const int rows[]={2,7,9};
+    const char *names[]={"Blinds","Kids Heat","Vacuum"};
+    const char *symbols[]={LV_SYMBOL_UP,LV_SYMBOL_CHARGE,LV_SYMBOL_HOME};
+    const int y[]={ROOM_HOME_BLINDS_Y,ROOM_HOME_KIDS_Y,ROOM_HOME_VACUUM_Y};
+    const int height[]={ROOM_HOME_BLINDS_H,ROOM_HOME_KIDS_H,ROOM_HOME_VACUUM_H};
+    for(int row=0;row<3;++row){
+        int key=rows[row];
+        lv_obj_t *p=tile[key]=panel(body[1],0,y[row],ROOM_PAGE_W,height[row],CARD,13);
+        if(key==2)blinds_icon(p);
         else if(key==7)heater_icon(p);
-        else {icon_badge[key]=label(p,symbols[row],13,21,28,&lv_font_montserrat_24);tint(icon_badge[key],BLUE);}
+        else{
+            icon_badge[key]=label(p,symbols[row],13,21,28,&lv_font_montserrat_24);
+            tint(icon_badge[key],BLUE);
+        }
         label(p,names[row],52,8,186,&lv_font_montserrat_16);
-        states[key]=label(p,"Unavailable",52,33,key==7?66:184,&lv_font_montserrat_14);lv_label_set_long_mode(states[key],LV_LABEL_LONG_DOT);lv_obj_set_height(states[key],22);
-        if(key==2){control_button(p,"Open",key,2,240,9,66);control_button(p,"Stop",key,3,312,9,66);control_button(p,"Close",key,4,384,9,66);}
-        else if(key==9){control_button(p,LV_SYMBOL_PLAY " Start",key,5,246,9,96);control_button(p,LV_SYMBOL_STOP " Stop",key,3,350,9,96);}
-        else {control_button(p,"On",key,0,266,9,86);control_button(p,"Off",key,1,360,9,86);}
-        if(key==7){states[8]=label(p,"--",119,28,137,&lv_font_montserrat_28);tint(states[8],TEXT);
-            lv_label_set_long_mode(states[8],LV_LABEL_LONG_DOT);lv_obj_set_height(states[8],34);
-            lv_obj_set_style_text_align(states[8],LV_TEXT_ALIGN_RIGHT,0);}
+        states[key]=label(p,"Unavailable",52,33,key==7?66:184,&lv_font_montserrat_14);
+        lv_label_set_long_mode(states[key],LV_LABEL_LONG_DOT);
+        lv_obj_set_height(states[key],22);
+        if(key==2){
+            control_button(p,"Open",key,2,240,16,66);
+            control_button(p,"Stop",key,3,312,16,66);
+            control_button(p,"Close",key,4,384,16,66);
+        } else if(key==9){
+            control_button(p,LV_SYMBOL_PLAY " Start",key,5,246,19,96);
+            control_button(p,LV_SYMBOL_STOP " Stop",key,3,350,19,96);
+        } else{
+            control_button(p,"On",key,0,266,17,86);
+            control_button(p,"Off",key,1,360,17,86);
+        }
+        if(key==7){
+            states[8]=label(p,"--",119,29,137,&lv_font_montserrat_28);
+            tint(states[8],TEXT);
+            lv_label_set_long_mode(states[8],LV_LABEL_LONG_DOT);
+            lv_obj_set_height(states[8],34);
+            lv_obj_set_style_text_align(states[8],LV_TEXT_ALIGN_RIGHT,0);
+        }
     }
     const char *laundry[]={"Washer 1","Washer 2","Dryer 1","Dryer 2"};
     for(int n=0;n<4;++n){
