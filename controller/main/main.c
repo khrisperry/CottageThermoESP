@@ -102,13 +102,9 @@ static esp_err_t pulse(int us)
             ESP_LOGI(TAG,"Servo PWM channel initialized once on GPIO %d",CONFIG_THERMO_SERVO_GPIO);
         }
     } else {
-        /* ESP-IDF 6.0.1 ledc_set_duty_and_update() requires the LEDC fade
-         * service even when no fading is requested. Servo PWM does not use
-         * fades: use the non-fade set_duty + update_duty API pair instead.
-         * update_duty re-enables the signal after ledc_stop(), while keeping
-         * GPIO5 reserved only once and preserving the calibrated limits. */
-        err=ledc_set_duty(LEDC_LOW_SPEED_MODE,LEDC_CHANNEL_0,duty);
-        if (err==ESP_OK) err=ledc_update_duty(LEDC_LOW_SPEED_MODE,LEDC_CHANNEL_0);
+        /* Production non-fade helper is host-tested for repeated movements,
+         * Stop/re-enable behavior and errors. Never use the fade API here. */
+        err=controller_pwm_duty_update(LEDC_LOW_SPEED_MODE,LEDC_CHANNEL_0,duty);
     }
     if (err==ESP_OK) { pwm=true; last_pulse=us; }
     else ESP_LOGE(TAG,"Servo PWM command failed: %s",esp_err_to_name(err));
