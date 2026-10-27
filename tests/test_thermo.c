@@ -98,8 +98,18 @@ int main(void)
     assert(!th_scheduled_target(&c,7,360,&target));
     th_init(&s,&c,true);assert(th_sync(&s,3));assert(th_sample(&s,TH_ROOM,60,0,100000));
     expect_reason(&s,100000,"schedule_clock_unavailable");
-    th_clock(&s,true,0,360);assert(th_tick(&s,100000).move);assert(s.effective_target_f==68);
-    th_clock(&s,true,9,360);expect_reason(&s,100000,"schedule_clock_unavailable");
+    th_clock(&s,true,0,360);
+    a=th_tick(&s,100000);
+    assert(a.move && fabsf(a.level-3.6f)<0.001f);
+    assert(s.effective_target_f==68);
+    th_commit_move(&s,a,100000);
+    /* A scheduled setback is also an intentional setpoint change, not a
+     * five-minute series of 0.25-level moves. */
+    th_clock(&s,true,0,1320);
+    expect_reason(&s,101000,"setpoint_cooldown");
+    a=th_tick(&s,102000);
+    assert(a.move && fabsf(a.level-(1.0f+5.0f/15.0f*2.0f))<0.001f);
+    th_clock(&s,true,9,360);expect_reason(&s,102000,"schedule_clock_unavailable");
     c.schedule[1].minute=360;assert(!th_config_valid(&c)); // Overlap rejected.
     c.schedule[1].days=0;assert(!th_config_valid(&c));
     // Long simulation of conservative DIRECT mode: bounded steps and dwell.
