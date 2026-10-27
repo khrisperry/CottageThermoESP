@@ -25,7 +25,7 @@ static bool network_allowed(void){return room_wifi_connected();}
 static esp_mqtt_client_handle_t mqtt;
 static atomic_bool connected,announce,subscribe_pending;
 static atomic_int stage,broker_error,socket_error; /* 0 disabled,1 WiFi,2 clock,3 connecting,4 online,5 error */
-static char identity[64],base[96],availability[112],birth[96],target_topic[112];
+static char identity[64],base[96],availability[112],birth[96],target_topic[112],preset_topic[112];
 static const char *description(void)
 {
     if(!profile||!profile->mqtt_enabled)return "Not configured";
@@ -54,6 +54,16 @@ static void mqtt_event(void *arg,esp_event_base_t event_base,int32_t id,void *da
     }else if(id==MQTT_EVENT_DATA&&e&&e->topic&&e->data&&e->topic_len==(int)strlen(birth)&&!memcmp(e->topic,birth,e->topic_len)&&
              !e->current_data_offset&&e->total_data_len==e->data_len&&e->data_len==6&&!memcmp(e->data,"online",6))announce=true;
     else if(id==MQTT_EVENT_DATA&&connected&&!suspended&&network_allowed()&&e&&e->topic&&e->data&&
+            e->topic_len==(int)strlen(preset_topic)&&!memcmp(e->topic,preset_topic,e->topic_len)&&
+            !e->retain&&!e->dup&&!e->current_data_offset&&e->total_data_len==e->data_len){
+        /* Climate preset only: no heater off / servo arm control. */
+        bool away=e->data_len==4&&!memcmp(e->data,"away",4);
+        bool home=e->data_len==4&&!memcmp(e->data,"none",4);
+        if(!(away||home)||!room_display_request_away(away))
+            ESP_LOGW("room_mqtt","Preset mode rejected: choose away or none; controller must be online");
+        else ESP_LOGI("room_mqtt","Climate preset %s queued through thermostat",away?"away":"none");
+    }
+    else if(id==MQTT_EVENT_DATA&&connected&&!suspended&&network_allowed()&&e&&e->topic&&e->data&&
             e->topic_len==(int)strlen(target_topic)&&!memcmp(e->topic,target_topic,e->topic_len)&&
             !e->retain&&!e->dup&&!e->current_data_offset&&e->total_data_len==e->data_len&&e->data_len>0&&e->data_len<24){
         char payload[24];memcpy(payload,e->data,e->data_len);payload[e->data_len]=0;
@@ -65,7 +75,8 @@ static void mqtt_event(void *arg,esp_event_base_t event_base,int32_t id,void *da
         if(!valid||!room_display_request_target(target))ESP_LOGW("room_mqtt","Target request rejected: invalid, busy or controller unavailable");
         else ESP_LOGI("room_mqtt","Target %.1f F queued through thermostat",(double)target);
     }
-    /* No mode, power, raw PWM, calibration or direct-controller subscriptions. */
+    /* No HVAC power, calibration, servo PWM or controller Service/Live
+     * subscriptions. Only heat target and freeze-hold presets are accepted. */
 }
 static bool discovery(void)
 {
@@ -83,6 +94,7 @@ static void cycle(void)
     if(atomic_exchange(&subscribe_pending,false)){
         bool ok=esp_mqtt_client_subscribe(mqtt,birth,0)>=0;
         if(esp_mqtt_client_subscribe(mqtt,target_topic,0)<0)ok=false;
+        if(esp_mqtt_client_subscribe(mqtt,preset_topic,0)<0)ok=false;
         if(!ok)subscribe_pending=true;
     }
     if(atomic_exchange(&announce,false)&&!discovery())announce=true;
@@ -140,6 +152,8 @@ void room_mqtt_start(void)
     uint8_t mac[6];ESP_ERROR_CHECK(esp_read_mac(mac,ESP_MAC_WIFI_STA));
     snprintf(identity,sizeof(identity),"cottage_room_%02x%02x%02x%02x%02x%02x",mac[0],mac[1],mac[2],mac[3],mac[4],mac[5]);
     snprintf(base,sizeof(base),"cottage/thermostat/%s",identity);snprintf(availability,sizeof(availability),"%s/availability",base);
-    snprintf(birth,sizeof(birth),"homeassistant/status");snprintf(target_topic,sizeof(target_topic),"%s/target/set",base);stage=1;
+    snprintf(birth,sizeof(birth),"homeassistant/status");
+    snprintf(target_topic,sizeof(target_topic),"%s/target/set",base);
+    snprintf(preset_topic,sizeof(preset_topic),"%s/preset/set",base);stage=1;
     ESP_ERROR_CHECK(xTaskCreate(worker,"room_mqtt",8192,NULL,1,NULL)==pdPASS?ESP_OK:ESP_ERR_NO_MEM);
 }
