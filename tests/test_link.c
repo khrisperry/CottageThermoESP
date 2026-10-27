@@ -21,6 +21,16 @@ int main(void)
     p.value=81;assert(tl_check(&g,&p,boot,now)==TL_INVALID);
     p.operation=TL_SAMPLE;p.value=65;p.age_ms=2001;assert(tl_check(&g,&p,boot,now)==TL_INVALID);
     p.age_ms=1000;assert(tl_check(&g,&p,boot,now)==TL_OK);
+    /* Away commands share the same authenticated lease and replay guard,
+     * accept exactly 0/1, never accept raw PWM or bypass transport security. */
+    p.operation=TL_AWAY;p.value=1;p.age_ms=0;
+    assert(tl_check(&g,&p,boot,now)==TL_OK);
+    p.value=0;assert(tl_check(&g,&p,boot,now)==TL_OK);
+    p.value=2;assert(tl_check(&g,&p,boot,now)==TL_INVALID);
+    p.value=1;g.sequence=p.sequence;assert(tl_check(&g,&p,boot,now)==TL_REPLAY);
+    ++p.sequence;assert(tl_check(&g,&p,boot,now)==TL_OK);
+    p.operation=TL_REPLY;
+
     /* A stale hello cannot reset a current client's sequence or enroll a new
      * panel during the previous panel's command lease. */
     p=tl_request(TL_STATUS,42,1);assert(tl_check(&g,&p,boot,now)==TL_OK);assert(g.sequence==2);
