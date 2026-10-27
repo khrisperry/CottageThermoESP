@@ -1,4 +1,10 @@
-# Controller v0.6.2 — editable travel limits, guided dial setup and bench control
+# Controller v0.6.3 — responsive setpoints and safer PWM channel usage
+
+**v0.6.3 prompt setpoints:** In attended **Go** mode, thermostat/panel/Home Assistant/scheduled target updates move directly to the calibrated dial value after at most a short 2-second anti-chatter guard. The five-minute / quarter-dial policy now applies only to non-setpoint adjustments. Room temperature alone does not drive oscillatory dial corrections: the target is mapped to the Williams dial's empirical temperature setting. All calibration/travel, position-sync, fresh sensor, valid target, explicit Go, Stop, and 15-minute bench expiry checks remain. Go still does **not** restore after restart, and this is **not** unattended furnace firmware. Servo PWM now configures LEDC channel once and changes duty for subsequent commands rather than attempting to reserve GPIO5 repeatedly; verify the pin and AS5600 motion in the unloaded fixture before installation.
+
+## Previous v0.6.2 changes
+
+**v0.6.2 — editable travel limits, guided dial setup and bench control**
 
 **v0.6.2 endpoint correction:** On the controller webpage, Calibration → **Re-measure start limit…** or **Re-measure end limit…** stops PWM, exits Go/Test, clears only the selected limit and retains the other limit, all eight dial positions/recorded angles and all six estimated temperatures. Re-enter attended Test Mode, move carefully using a starting pulse and small jogs, then **Capture current start/end** to save the corrected boundary. With either bound missing, manual PWM is restricted only to the 500–2500 µs firmware limits and **Go is blocked**. Do not perform this on the mounted furnace; use an unloaded supervised bench. Correct any captured dial position outside a revised narrower range before completing travel limits. Calibration stays in NVS; never erase flash/NVS to correct an endpoint.
 
