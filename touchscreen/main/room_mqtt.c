@@ -58,10 +58,11 @@ static void mqtt_event(void *arg,esp_event_base_t event_base,int32_t id,void *da
             !e->retain&&!e->dup&&!e->current_data_offset&&e->total_data_len==e->data_len){
         /* Climate preset only: no heater off / servo arm control. */
         bool away=e->data_len==4&&!memcmp(e->data,"away",4);
-        bool home=e->data_len==4&&!memcmp(e->data,"none",4);
+        bool home=(e->data_len==4&&!memcmp(e->data,"home",4)) ||
+                  (e->data_len==4&&!memcmp(e->data,"none",4));
         if(!(away||home)||!room_display_request_away(away))
-            ESP_LOGW("room_mqtt","Preset mode rejected: choose away or none; controller must be online");
-        else ESP_LOGI("room_mqtt","Climate preset %s queued through thermostat",away?"away":"none");
+            ESP_LOGW("room_mqtt","Preset not queued: use home/away (none also accepted); controller may be busy");
+        else ESP_LOGI("room_mqtt","Climate preset %s queued through thermostat",away?"away":"home");
     }
     else if(id==MQTT_EVENT_DATA&&connected&&!suspended&&network_allowed()&&e&&e->topic&&e->data&&
             e->topic_len==(int)strlen(away_topic)&&!memcmp(e->topic,away_topic,e->topic_len)&&
