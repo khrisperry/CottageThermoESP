@@ -25,17 +25,41 @@ int main(void)
     th_config_t c=example();assert(th_config_valid(&c));
     th_state_t s;th_init(&s,&c,true);expect_reason(&s,100000,"position_unsynchronized");
     assert(!s.synchronized && !s.has_command); // Never restore a persisted target as position.
-    s=prepared();th_action_t a=th_tick(&s,100000);assert(a.move&&fabsf(a.level-3.25f)<0.001f);
-    th_commit_move(&s,a,100000);assert(s.commanded_us==1525);expect_reason(&s,101000,"movement_dwell");
-    assert(th_sample(&s,TH_ROOM,60,0,400000));assert(th_tick(&s,400000).move);
+    /* A thermostat setpoint maps straight to the calibrated dial position,
+     * without 0.25-level steps or the five-minute adaptive dwell. */
+    s=prepared();th_action_t a=th_tick(&s,100000);
+    assert(a.move&&fabsf(a.level-4.0f)<0.001f&&a.pulse_us==1600);
+    th_commit_move(&s,a,100000);assert(s.commanded_us==1600);
+    expect_reason(&s,101000,"mapped_setting_reached");
+    s.config.target_f=80;
+    expect_reason(&s,101000,"setpoint_cooldown");
+    assert(th_tick(&s,101999).move==false);
+    a=th_tick(&s,102000);assert(a.move&&a.level==6&&a.pulse_us==1800);
+    th_commit_move(&s,a,102000);
+    s.config.target_f=50;expect_reason(&s,103000,"setpoint_cooldown");
+    a=th_tick(&s,104000);assert(a.move&&a.level==1&&a.pulse_us==1200);
+    th_commit_move(&s,a,104000);
+    assert(th_sample(&s,TH_ROOM,61,0,105000));
+    expect_reason(&s,105000,"mapped_setting_reached");
+    s.config.target_f=65;
+    expect_reason(&s,105000,"setpoint_cooldown");
+    a=th_tick(&s,106000);assert(a.move&&a.level==3&&a.pulse_us==1500);
+    /* The room can warm/cool without inventing any additional dial moves. */
+    th_commit_move(&s,a,106000);
+    assert(th_sample(&s,TH_ROOM,56,0,108000));expect_reason(&s,108000,"mapped_setting_reached");
     s=prepared();expect_reason(&s,190001,"temperature_stale");
     assert(th_sample(&s,TH_SWITCHBOT,62,0,190001));expect_reason(&s,190001,"temperature_stale");
     s.config.secondary_enabled=true;assert(th_tick(&s,190001).move&&s.source==TH_SWITCHBOT);
     assert(th_sample(&s,TH_ROOM,70,0,190002));expect_reason(&s,190002,"sensor_disagreement");
     s.config.secondary_enabled=false;assert(th_tick(&s,190002).move&&s.source==TH_ROOM);
     s.config.target_f=45;expect_reason(&s,190002,"target_outside_measured_map");
+    /* Non-setpoint/direct and future background adjustments keep the original
+     * dwell and fractional movement safety policy. */
     s=prepared();s.config.mode=TH_DIRECT;s.config.direct_level=6;assert(th_tick(&s,300000).move);
     s.config.direct_level=1;assert(th_tick(&s,300000).level==2.75f);
+    s.config.direct_level=6;a=th_tick(&s,300000);assert(a.move&&a.level==3.25f);
+    th_commit_move(&s,a,300000);
+    s.config.direct_level=1;expect_reason(&s,301000,"movement_dwell");
     s.config.direct_level=0;expect_reason(&s,300000,"level_outside_measured_map");
     s=prepared();s.config.mode=TH_HOLD;expect_reason(&s,100000,"hold");
     s.config.mode=TH_MANUAL;expect_reason(&s,100000,"manual");
@@ -78,8 +102,9 @@ int main(void)
     th_clock(&s,true,9,360);expect_reason(&s,100000,"schedule_clock_unavailable");
     c.schedule[1].minute=360;assert(!th_config_valid(&c)); // Overlap rejected.
     c.schedule[1].days=0;assert(!th_config_valid(&c));
-    // Long simulation: every accepted action stays within map and step/dwell limits.
-    s=prepared();float previous=s.commanded_level;uint64_t last=0;
+    // Long simulation of conservative DIRECT mode: bounded steps and dwell.
+    s=prepared();s.config.mode=TH_DIRECT;s.config.direct_level=4;
+    float previous=s.commanded_level;uint64_t last=0;
     for(uint64_t now=100000;now<4000000;now+=1000) {
         assert(th_sample(&s,TH_ROOM,60,0,now+1));
         a=th_tick(&s,now+1);
@@ -90,5 +115,5 @@ int main(void)
         }
     }
     assert(fabsf(s.commanded_level-4)<0.001f);
-    puts("PASS: thermostat startup, maps, reverse direction, freshness, source selection, disagreements, modes, dwell, bounds, persistence validation and long simulation");
+    puts("PASS: setpoint full-travel response with 2-second guard, slow direct-mode dwell, maps, freshness, safety checks, and long simulation");
 }
