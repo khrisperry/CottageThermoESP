@@ -1,4 +1,4 @@
-# Cottage Thermostat — v0.7.0 Controller / v0.14.0 Waveshare 4B acceptance
+# Cottage Thermostat — v0.7.1 Controller / v0.14.1 Waveshare 4B acceptance
 
 **Release scope:** Persistent locally selected Service/Calibration vs Live controller operation; full-room SHT45 and AS5600 startup guards; quick temperature buttons; controller-owned 50°F Away / Freeze Hold on Waveshare and HA MQTT Climate preset. The servo controller continues accepting temperature and Away commands over the SAME leased/replay-protected Wi-Fi HTTP and encrypted ESP-NOW channels. Home Assistant never directly drives the servo or changes controller operating modes.
 
@@ -19,7 +19,7 @@
 
 ## Field acceptance (must complete before unattended installation)
 
-1. With servo **unmounted and unloaded**, flash controller v0.7.0 and Waveshare v0.14.0 using the local private SHT45 profile. Do **not** erase NVS. Verify controller online + encrypted ESP-NOW fallback after a temporary thermostat-only Wi-Fi block.
+1. With servo **unmounted and unloaded**, flash controller v0.7.1 and Waveshare v0.14.1 using the local private SHT45 profile. Do **not** erase NVS. Verify controller online + encrypted ESP-NOW fallback after a temporary thermostat-only Wi-Fi block.
 2. In persistent Service, use Test to move all captured positions in both directions; verify **GPIO5 repeated moves** and live AS5600 angles follow. Ensure STOP disables PWM and persists Service over reset.
 3. Confirm ±1/±5 buttons change the proposed temperature without repeated tiny taps; submit **Set target** once. Verify controller receives it and moves appropriately in Bench Go. Check the touch buttons don't overlap the 4B bottom navigation.
 4. Confirm Away on the 4B reports 50°F. In Home Assistant, Climate → Preset → Away also sets 50°F; Preset → None or **Resume Home** restores the previously requested comfort target. Test while MQTT is down; ESP-NOW should still carry the paired command.
