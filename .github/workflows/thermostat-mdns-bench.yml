@@ -97,7 +97,7 @@ jobs:
       - name: Upload 4B app image for OTA
         uses: actions/upload-artifact@v4
         with:
-          name: CottageRoomPanel-v0.13.8-4B-application
+          name: CottageRoomPanel-v0.13.9-4B-application
           retention-days: 14
           if-no-files-found: error
           path: |
