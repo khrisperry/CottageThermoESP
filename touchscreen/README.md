@@ -1,5 +1,26 @@
 # Cottage room panel — Waveshare ESP32-S3-Touch-LCD-4B
 
+## v0.14.5 — Design #3 native LVGL visual refresh (local build)
+
+**Visual-only upgrade** of the existing Waveshare ESP32-S3 Touch LCD 4B interface. The new shared **midnight-blue design system** uses brighter electric-blue/teal accents, warm amber for the heat target, high-contrast typography, rounded raised cards, consistent status colors, a unified header and a highlighted bottom navigation tab. No new bitmap assets, fonts, animation engines, web dependencies or LVGL alpha-layer effects were added. Ships is **still present and functional in navigation**; only its common header and navigation adopt the style, and its page contents have not been redesigned.
+
+- **Climate:** enlarged draggable setpoint ring and one-row `-1 | Set Temp | +1 | Away/Home` controls remain. The dial sits in a single rounded dark surface, the setpoint knob has a brighter outline, and live/bench/service status is grouped in a subtle card with consistent accent color. Dragging remains a **preview only** until Set Temp is pressed.
+- **Home:** preserves exactly the five compact 2-column tiles and the vacant sixth slot. Light tiles retain touch-to-toggle, golden lit bulbs, and known-state/pending command gating. Blinds retains Open/Stop/Close, Vacuum retains Start/Stop with a new lightweight LVGL robot-vacuum icon, and Kids Heat retains On/Off plus temperature. Active tiles receive a restrained tinted background and colored outline.
+- **Laundry:** the original four equipment cards and their Notify buttons remain, but gain modern blue icon plaques, thin dividers, clear WASHER/DRYER labels, unified borders/spacing, consistent status capitalization and subtle animated activity rings.
+- **Camera:** Parking Lot gets a matching title strip, connection/status label and border treatment. **Camera requests, media decoding, image scale, viewport dimensions and clip policy are unchanged.** There is no camera tile on Home.
+- **Ships:** left as-is. It remains visible in the five-tab navigation and continues to function as before.
+
+**No communication or controller changes whatsoever:** ESP-NOW fallback, Wi-Fi recovery/discovery, MQTT/HA climate/away, all Home Assistant actions, notification toggles, thermostat control and mode flags, calibration, NVS, schedule and network timing remain unchanged. The only edited production code is the native Waveshare `room_display.c` styling, plus the displayed firmware version.
+
+**Local flash only; GitHub Actions not used:** run in the Windows ESP-IDF 6.0.1 PowerShell from the project root:
+
+```powershell
+git pull --ff-only
+.\tools\build-room-4b.ps1 -Flash -Monitor -Port COM21
+```
+
+Controller Super Mini **v0.7.1 stays unchanged**. Do not erase NVS. After flashing, verify the rounded card text doesn't overlap, all five tabs including Ships still switch, Climate drag/setpoint buttons behave exactly as before, lights and cover/vacuum/radiator controls work, Laundry notifications remain togglable, and Camera still displays its feed.
+
 ## v0.14.4 — one-row Climate controls and shorter Away display
 
 On the Waveshare 480×480 Climate page, **all four buttons now share the same bottom row**: `-1 | Set Temp | +1 | Away` (or `Home` while Away is selected). They use the full 456px content width with eight-pixel gutters. The separate Away button row has been removed, giving the dial and status more room. The large target label reads only **Away** in Freeze Hold, while the existing controller-owned 50°F setting, Home resume behavior and Home Assistant climate presets remain unchanged. The ring hint is now two centered lines: **DRAG RING** / **TO ADJUST**; its knob and touch behavior are unchanged. The mode and status text span the full width below the dial.
