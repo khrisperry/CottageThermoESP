@@ -685,7 +685,7 @@ static void refresh(lv_timer_t *timer)
     lv_arc_set_value(temperature_ring,room_temp?(int)fmaxf(45,fminf(80,room_f)):45);
     lv_obj_set_style_arc_color(temperature_ring,lv_color_hex(room_temp?AMBER:EDGE),LV_PART_INDICATOR);
     lv_label_set_text_fmt(mode_label,"%s%s",climate?(m.away?"Away / Freeze Hold":m.live_active?"Live heating":m.mode):"Controller offline",
-        climate?(m.live_active?" · Active":m.simulation?" · Service":" · Bench Go"):"");
+        climate?(m.live_active?" - Active":m.simulation?" - Service":" - Bench Go"):"");
     lv_label_set_text(reason_label,climate?m.reason:"Home controls are available on the Home page");
     bool can_adjust=climate&&m.has_target&&!m.away&&!(m.pending&CLIMATE_PENDING);
     enabled(minus_button,can_adjust);enabled(plus_button,can_adjust);
