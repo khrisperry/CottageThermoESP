@@ -1,0 +1,47 @@
+name: Super Mini controller test firmware v0.5.7
+
+on:
+  push:
+    branches:
+      - fix/supermini-wifi-recovery-v0.5.7
+  pull_request:
+    branches:
+      - feature/connectivity-climate-review
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-supermini:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Host recovery policy tests
+        run: |
+          cc -std=c11 -Wall -Wextra -Werror tests/test_controller_wifi_recovery.c -o /tmp/test_controller_wifi_recovery
+          /tmp/test_controller_wifi_recovery
+          cc -std=c11 -Wall -Wextra -Werror tests/test_controller_wifi_retry.c -o /tmp/test_controller_wifi_retry
+          /tmp/test_controller_wifi_retry
+      - name: Build ESP32-S3 4MB Super Mini
+        uses: espressif/esp-idf-ci-action@v1
+        with:
+          esp_idf_version: v6.0.1
+          target: esp32s3
+          path: controller
+          command: idf.py -B build-supermini -D SDKCONFIG=sdkconfig.supermini -D SDKCONFIG_DEFAULTS=sdkconfig.supermini.defaults build
+      - name: Upload flashable components
+        uses: actions/upload-artifact@v4
+        with:
+          name: supermini-v0.5.7-flash-images
+          retention-days: 14
+          if-no-files-found: error
+          path: |
+            controller/build-supermini/bootloader/bootloader.bin
+            controller/build-supermini/partition_table/partition-table.bin
+            controller/build-supermini/*.bin
+            controller/build-supermini/flasher_args.json
+            controller/build-supermini/flash_args
