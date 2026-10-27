@@ -914,26 +914,49 @@ static void build_ui(void)
 {
     lv_display_add_event_cb(lv_display_get_default(),frame_event,LV_EVENT_REFR_START,NULL);
     lv_display_add_event_cb(lv_display_get_default(),frame_event,LV_EVENT_REFR_READY,NULL);
-    lv_obj_t *screen=lv_screen_active();lv_obj_set_style_bg_color(screen,lv_color_hex(INK),0);
+    lv_obj_t *screen=lv_screen_active();
+    lv_obj_set_style_bg_color(screen,lv_color_hex(INK),0);
     tint(screen,TEXT);lv_obj_set_style_text_font(screen,&lv_font_montserrat_16,0);
-    lv_obj_remove_flag(screen,LV_OBJ_FLAG_SCROLLABLE);lv_obj_add_event_cb(screen,gesture,LV_EVENT_GESTURE,NULL);
-    label(screen,"Cottage",16,12,138,&lv_font_montserrat_24);
+    lv_obj_remove_flag(screen,LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_event_cb(screen,gesture,LV_EVENT_GESTURE,NULL);
+    /* One shared app shell across Climate/Home/Laundry/Camera/Ships.
+     * Both existing screen bounds and every tab interaction remain intact. */
+    lv_obj_t *top_bar=panel(screen,12,5,456,46,SURFACE,15);
+    lv_obj_set_style_border_color(top_bar,lv_color_hex(EDGE),0);
+    lv_obj_t *brand_accent=panel(screen,20,17,4,23,BLUE,2);
+    lv_obj_set_style_border_width(brand_accent,0,0);
+    lv_obj_t *brand=label(screen,"Cottage",32,12,123,&lv_font_montserrat_24);
+    tint(brand,TEXT);
     health_button=button(screen,"",157,8,244,40,diagnostics_event,0);
-    health_dot=panel(health_button,12,14,12,12,0xff6464,6);lv_obj_set_style_border_width(health_dot,0,0);
+    lv_obj_set_style_bg_color(health_button,lv_color_hex(CARD),0);
+    lv_obj_set_style_border_color(health_button,lv_color_hex(EDGE),0);
+    health_dot=panel(health_button,12,14,12,12,0xff6464,6);
+    lv_obj_set_style_border_width(health_dot,0,0);
     connection=label(health_button,"Offline",34,11,204,&lv_font_montserrat_16);
     lv_obj_set_height(connection,24);lv_obj_remove_flag(connection,LV_OBJ_FLAG_CLICKABLE);
     settings_button=button(screen,LV_SYMBOL_SETTINGS,416,8,48,40,settings_event,0);
+    lv_obj_set_style_bg_color(settings_button,lv_color_hex(LIFT),0);
     const char *nav_text[]={"Climate","Home","Laundry","Camera","Ships"};
     for(int n=0;n<5;++n){
-        body[n]=lv_obj_create(screen);lv_obj_remove_style_all(body[n]);lv_obj_set_pos(body[n],12,57);lv_obj_set_size(body[n],456,364);
-        lv_obj_remove_flag(body[n],LV_OBJ_FLAG_SCROLLABLE|LV_OBJ_FLAG_CLICKABLE);lv_obj_add_flag(body[n],LV_OBJ_FLAG_GESTURE_BUBBLE);
+        body[n]=lv_obj_create(screen);lv_obj_remove_style_all(body[n]);
+        lv_obj_set_pos(body[n],12,57);lv_obj_set_size(body[n],456,364);
+        lv_obj_remove_flag(body[n],LV_OBJ_FLAG_SCROLLABLE|LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_add_flag(body[n],LV_OBJ_FLAG_GESTURE_BUBBLE);
         nav[n]=button(screen,nav_text[n],12+n*93,429,84,44,nav_event,n);
+        lv_obj_set_style_bg_color(nav[n],lv_color_hex(SURFACE),0);
         lv_obj_set_style_text_font(nav[n],&lv_font_montserrat_14,0);
+        nav_marker[n]=panel(nav[n],20,39,44,3,MINT,2);
+        lv_obj_set_style_border_width(nav_marker[n],0,0);
+        lv_obj_add_flag(nav_marker[n],LV_OBJ_FLAG_HIDDEN);
     }
     /* Transient error toast overlays content; no persistent footer takes space. */
     notice=label(screen,"",24,379,432,&lv_font_montserrat_14);tint(notice,AMBER);
-    lv_obj_set_style_bg_color(notice,lv_color_hex(CARD),0);lv_obj_set_style_bg_opa(notice,LV_OPA_COVER,0);
-    lv_obj_set_style_pad_all(notice,8,0);lv_obj_set_style_radius(notice,10,0);
+    lv_obj_set_style_bg_color(notice,lv_color_hex(CARD),0);
+    lv_obj_set_style_bg_opa(notice,LV_OPA_COVER,0);
+    lv_obj_set_style_border_color(notice,lv_color_hex(AMBER),0);
+    lv_obj_set_style_border_width(notice,1,0);
+    lv_obj_set_style_pad_all(notice,8,0);
+    lv_obj_set_style_radius(notice,12,0);
     lv_label_set_long_mode(notice,LV_LABEL_LONG_DOT);lv_obj_set_height(notice,42);lv_obj_add_flag(notice,LV_OBJ_FLAG_HIDDEN);
     /* Keep the enlarged, unclipped dial. All four controls now share
      * one bottom row: -1 | Set Temp | +1 | Away/Home. */
