@@ -17,6 +17,22 @@
 - MQTT-discovered **Thermostat** climate exposes preset modes **none** (Home) and **away**. It publishes both preset and heat-only target/current temperature state from the thermostat. The preset command `~/preset/set` accepts *only* `away` or `none`; it passes through the thermostat and paired controller link. It cannot arm PWM, set controller Service/Live, disable the furnace, or directly set a dial position. Climate continues without MQTT when Home Assistant is offline.
 - **Freeze safety caveat:** 50°F is a temperature *request*, not a hard frost-protection guarantee. If the minimum calibrated dial setting corresponds to more than 50°F, Away commands dial **1** and reports `freeze_below_calibrated_range` instead of pretending the hardware can reach 50°F. If the minimum dial does not provide enough heat, real-world observations are needed. Use an independent low-temperature alarm/backup freeze-protection strategy for unoccupied winter use.
 
+## v0.14.2 Waveshare-only UX/command update (local ESP-IDF build)
+
+No controller firmware update is required after v0.7.1. The 4B screen now provides a **draggable target ring**, −1/+1 fine adjustment, a single **Set Temperature** confirmation, and a separate Away / Resume Home button. Moving the ring does **not** send a command. User-facing states replace raw internal error identifiers. Intentional controller mutations now do a fresh **read-only status handshake** before one authenticated, non-replayed request; a failure gives an actionable reason. The 50°F hold continues to be saved by the controller, not the screen or HA.
+
+Home Assistant MQTT Climate reports **Home** or **Away** as named presets. HA adds a built-in **None** selection that cannot be renamed by device discovery; selecting None remains backward compatible with Home. The same thermostat device has an explicit Away / Freeze Hold switch for simple automation. After flashing the 4B, use its local settings → **MQTT thermostat** → **Republish HA discovery**. Test on the bench before enabling unattended Live control.
+
+From the project root in ESP-IDF PowerShell:
+
+```powershell
+git pull --ff-only
+.\tools\build-room-4b.ps1 -Flash -Monitor -Port COM21
+```
+
+Do **not** erase flash or NVS. Existing Super Mini v0.7.1 stays as-is. Confirm the new knob does not accidentally send commands during drag, the final **Set Temperature** sends exactly once, and repeated Home/Away taps report precise errors instead of generic rejection. Use `cmake -S tests -B build-host` and `cmake --build build-host`/`ctest --test-dir build-host` for optional local host tests, if you have CMake and a C compiler installed; adding `-DCJSON_SOURCE_DIR=...` enables MQTT-discovery tests.
+
+
 ## Field acceptance (must complete before unattended installation)
 
 1. With servo **unmounted and unloaded**, flash controller v0.7.1 and Waveshare v0.14.1 using the local private SHT45 profile. Do **not** erase NVS. Verify controller online + encrypted ESP-NOW fallback after a temporary thermostat-only Wi-Fi block.
