@@ -1,5 +1,17 @@
 # Cottage room panel — Waveshare ESP32-S3-Touch-LCD-4B
 
+## v0.14.2 — local-build Climate polish and reliable controller commands
+
+The Climate page uses a **draggable target-temperature ring** with a visible handle (45–80°F, one-degree steps). The large center number remains the **current room temperature**, while the amber target indicator and ring show the *proposed setpoint*. Sliding the ring or tapping the small **−1 / +1** buttons only edits a draft; tap **Set Temperature** once to send it to the controller. **Away (50 F)** and **Resume Home** remain a prominent independent button. Raw firmware states such as `mapped_setting_reached` are translated to user-facing status labels, with consistent capitalization and no unsupported special-font separators.
+
+Each deliberate target/Away request now obtains a **fresh read-only controller lease before the single mutation**, avoiding intermittently expired five-second leases. The previously ambiguous "Request rejected" toast now reports whether the controller was busy, denied a command (e.g. because Away is active), had an expired/replaced session, or had an uncertain reply. **Do not automatically retry an uncertain command**; inspect the reported setpoint first. Encrypted ESP-NOW fallback, controller authorization and calibrations are unchanged.
+
+Home Assistant MQTT Climate now advertises **Home** and **Away** as explicit presets and reports Home when Away is off. Home Assistant *always* inserts its own built-in **None** entry; MQTT firmware cannot rename or suppress that built-in control. The existing separate **Away / Freeze Hold (50 F)** switch on the device is another convenient option. Republish discovery from the touchscreen settings after flashing.
+
+**Build locally, no GitHub Actions required:** from your configured ESP-IDF 6.0.1 PowerShell in the repo root, after `git pull --ff-only`, run `.\tools\build-room-4b.ps1 -Flash -Monitor -Port COM21`. Preserve existing `sdkconfig.4b`, local secrets and NVS. **Controller v0.7.1 does not need reflashing.** Validate the slider touch and ±1 controls, one-time submit, Home/Away MQTT state, and reconnecting from Wi-Fi to ESP-NOW before the cottage installation.
+
+
+
 Version 0.13.8 provides the **native 480×480 LCD and capacitive touch interface**. This is for the **4B**, with 16 MB flash and 8 MB octal PSRAM. It uses Waveshare BSP 2.0.0, LVGL 9.2.0 and ESP LVGL port 2.6.2, compiled with ESP-IDF 6.0.1. The dependency lock pins the tested graph. **The ESP connects directly to Home Assistant using your long-lived token; no bridge process, bridge address or bridge token is required.** No device has been flashed or physically verified by the coding environment.
 
 The 4B is the planned production display. User tests confirmed the earlier UI, camera, audio and BME280 temperature test. v0.11.0 adds aligned colored Connections, full LAN configuration, Ships and application-bin OTA. v0.12.1 connects this display directly to MQTT for an HA Climate entity and monitoring sensors. HA target requests use the same queue as touchscreen changes; controller v0.4.1 removes controller MQTT commands. See [standalone MQTT monitoring](../docs/STANDALONE_MQTT_MONITORING.md). Follow [dashboard, ships and OTA setup](../docs/DEVICE_DASHBOARD_SHIPS_OTA.md), including the **initial USB flash required for OTA**. Earlier milestone notes below are historical.
