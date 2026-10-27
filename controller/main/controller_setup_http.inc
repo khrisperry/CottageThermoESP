@@ -89,7 +89,7 @@ static esp_err_t setup_post(httpd_req_t *r)
                     if(valid){next.angle_mask|=1U<<i;next.angle_deg[i]=e.raw_angle*360.0f/4096.0f;}
                 }
             } else error="Choose a travel limit or a dial marking to capture.";
-            if(!error && !controller_setup_valid(&next))error="Limits must differ and contain all saved positions. Reset calibration to expand travel.";
+            if(!error && !controller_setup_valid(&next))error="Limits must differ and contain saved dial points. Use Re-measure or recapture an out-of-range dial position before saving the limit.";
             if(!error && !save_setup(&next))error="Could not save calibration. No new calibration was applied.";
         }
     } else if(text_is(j,"action","temperatures")) {
