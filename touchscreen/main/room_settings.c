@@ -148,7 +148,13 @@ static esp_err_t save(httpd_req_t *r)
         cJSON *token=cJSON_GetObjectItemCaseSensitive(j,"ha_token");valid=valid&&cJSON_IsString(token)&&printable(token->valuestring,2048)&&!(clear&&*token->valuestring);
         if(valid){if(clear)next->token[0]=0;else if(*token->valuestring)snprintf(next->token,sizeof(next->token),"%s",token->valuestring);}
     }else if(!strcmp(section,"controller")){
-        char url[256];valid=cottage_string(j,"controller",url,sizeof(url),false)&&cottage_origin(next->controller,sizeof(next->controller),url,false);
+        char url[256];
+        valid=cottage_string(j,"controller",url,sizeof(url),false);
+        if(valid){
+            /* "auto" preserves NVS layout and opts into controller discovery. */
+            if(!*url||!strcmp(url,"auto"))snprintf(next->controller,sizeof(next->controller),"auto");
+            else valid=cottage_origin(next->controller,sizeof(next->controller),url,false);
+        }
     }else if(!strcmp(section,"ships")){
         char url[256];cJSON *range=cJSON_GetObjectItemCaseSensitive(j,"range");
         valid=cottage_bool(j,"enabled",&next->ships_enabled)&&cottage_string(j,"url",url,sizeof(url),false)&&cottage_origin(next->ship_url,sizeof(next->ship_url),url,false)&&cJSON_IsNumber(range)&&
