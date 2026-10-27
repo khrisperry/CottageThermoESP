@@ -77,7 +77,7 @@ static lv_obj_t *blind_slats[5],*blind_rail,*heater_fins[4],*heater_rays[3];
 static lv_image_dsc_t image_desc;
 static void *image_pixels;
 static float draft=65;
-static bool editing;
+static bool editing,ring_rendering;
 static int64_t last_touch;
 static unsigned visible_page;
 
@@ -368,6 +368,7 @@ static void send_event(lv_event_t *e)
 static void target_ring_event(lv_event_t *e)
 {
     (void)e;
+    if(ring_rendering)return; /* Painting status must never edit a setpoint. */
     /* Large model stays off the LVGL callback stack. */
     static model_t snapshot;copy_model(&snapshot);
     last_touch=esp_timer_get_time();
@@ -727,7 +728,9 @@ static void refresh(lv_timer_t *timer)
     /* Slider is for the proposed TARGET, not the actual room temperature.
      * No network/servo command is issued until the user presses Set. */
     const int shown_target=(int)lroundf(m.away?50.0f:editing?draft:m.target);
+    ring_rendering=true;
     lv_arc_set_value(temperature_ring,climate&&m.has_target?shown_target:45);
+    ring_rendering=false;
     lv_obj_set_style_arc_color(temperature_ring,lv_color_hex(m.away?MUTED:AMBER),LV_PART_INDICATOR);
     const bool bench=climate&&!m.simulation&&!m.live_active&&!strcmp(m.mode,"thermostat");
     if(!climate)lv_label_set_text(mode_label,"Controller Offline");
