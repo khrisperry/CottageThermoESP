@@ -38,6 +38,21 @@
 #include "room_home_policy.h"
 #include <stdatomic.h>
 
+/* Native styling uses LVGL primitives, so no browser or bitmap UI is required. */
+/* Design #3: uniform midnight-blue palette, strong contrast, vivid accent.
+ * Simple fills/borders keep rendering inexpensive on ESP32-S3 / LVGL. */
+#define INK 0x071321
+#define CARD 0x10253a
+#define EDGE 0x294560
+#define MUTED 0x9ab1c9
+#define TEXT 0xf4f8ff
+#define MINT 0x44e6c4
+#define AMBER 0xffc566
+#define BLUE 0x62bfff
+#define SURFACE 0x0c1b2d
+#define LIFT 0x1b3853
+#define LIGHT_ACTIVE 0x26362f
+
 #define COUNT 11
 #define FRESH_US 10000000LL
 #define COMMAND_TTL_US 10000000LL
@@ -450,20 +465,6 @@ static const char *climate_reason_label(const char *reason)
     if(!strcmp(reason,"pwm_error"))return "Servo output fault - Service required";
     return "Controller status available in diagnostics";
 }
-/* Native styling uses LVGL primitives, so no browser or bitmap UI is required. */
-/* Design #3: uniform midnight-blue palette, strong contrast, vivid accent.
- * Simple fills/borders keep rendering inexpensive on ESP32-S3 / LVGL. */
-#define INK 0x071321
-#define CARD 0x10253a
-#define EDGE 0x294560
-#define MUTED 0x9ab1c9
-#define TEXT 0xf4f8ff
-#define MINT 0x44e6c4
-#define AMBER 0xffc566
-#define BLUE 0x62bfff
-#define SURFACE 0x0c1b2d
-#define LIFT 0x1b3853
-#define LIGHT_ACTIVE 0x26362f
 static lv_obj_t *label(lv_obj_t *parent,const char *text,int x,int y,int width,const lv_font_t *font)
 {
     lv_obj_t *o=lv_label_create(parent);lv_obj_set_pos(o,x,y);lv_obj_set_width(o,width);
