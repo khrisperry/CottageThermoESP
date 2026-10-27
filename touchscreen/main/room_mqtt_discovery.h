@@ -27,10 +27,12 @@ static inline cJSON *room_mqtt_discovery(const char *id,const char *base,const c
         cJSON_AddStringToObject(j,"preset_mode_command_topic","~/preset/set");
         cJSON_AddStringToObject(j,"preset_mode_state_topic","~/state");
         cJSON_AddStringToObject(j,"preset_mode_value_template",
-            "{{ 'away' if value_json.away else 'none' }}");
+            "{{ 'away' if value_json.away else 'home' }}");
         cJSON *presets=cJSON_AddArrayToObject(j,"preset_modes");
-        /* HA uses "none" as the special value for clearing a preset, not
-         * a named selectable preset. Subscribe to "none" to resume Home. */
+        /* Explicit Home and Away presets. Home Assistant itself adds
+         * the built-in None entry, which cannot be renamed by MQTT.
+         * The state reports Home instead of None when away is disabled. */
+        cJSON_AddItemToArray(presets,cJSON_CreateString("home"));
         cJSON_AddItemToArray(presets,cJSON_CreateString("away"));
         cJSON_AddStringToObject(j,"mode_state_topic","~/state");
         cJSON_AddStringToObject(j,"mode_state_template","{{ 'heat' if value_json.mode == 'thermostat' else 'None' }}");
