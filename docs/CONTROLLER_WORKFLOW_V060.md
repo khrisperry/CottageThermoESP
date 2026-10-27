@@ -15,7 +15,19 @@ Capture the start and end of usable travel, short of binding. Both may be in
 either pulse order. Once both are saved, all PWM commands, including legacy
 manual endpoints and Go commands, must stay inside that inclusive range. Until
 both exist, the hard electrical command range remains 500–2500 microseconds.
-To expand a previously captured range, reset calibration and repeat the setup.
+**v0.6.2 correction:** If you captured a boundary too early, do **not** reset
+all calibration. Click **Re-measure start limit…** or **Re-measure end limit…**
+under the saved boundary. Confirm the attended unloaded bench operation. The
+controller immediately stops PWM, cancels any Go/Test session and clears only
+that one travel limit; the other limit, captured dial points and reference
+encoder angles, and estimated dial temperatures remain saved. Enter Test Mode
+again, send a deliberate starting pulse, jog to the corrected endpoint and
+click **Capture current start/end**. While one limit is open, only the hard
+500–2500 µs range is enforced for attended manual movement, and Go is
+unavailable. If the new narrower limit would exclude a previously captured
+dial point, recapture that point inside the intended travel before completing
+the limits. This workflow is for supervised unloaded bench calibration,
+never an unattended mounted furnace. No flash erase is necessary.
 
 Jog to each marking and capture **Off, 1, 2, 3, 4, 5, 6, Max**. Capture records the
 pulse actually being sent; typing a number alone does not capture a position.
