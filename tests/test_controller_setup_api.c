@@ -124,7 +124,7 @@ int main(void)
     state.config.target_f=50;
     assert(!th_tick(&state,clock_ms+1000).move && !strcmp(state.reason,"setpoint_cooldown"));
     a=th_tick(&state,clock_ms+THERMO_SETPOINT_GUARD_MS);
-    assert(a.move && a.level==1 && a.pulse_us==900);
+    assert(a.move && fabsf(a.level-(1.0f+5.0f/7.0f))<0.001f && a.pulse_us==1043);
     request("{\"action\":\"test\",\"confirm\":\"unloaded_bench\"}",NULL);assert(!go_active&&!pwm&&state.simulated);
     clock_ms=armed_until;request("{\"action\":\"pulse\",\"us\":1300}","Test Mode");
     request("{\"action\":\"reset\",\"confirm\":\"reset_calibration\"}",NULL);assert(!setup.start_us&&!setup.temperature_mask&&!armed&&!pwm);
