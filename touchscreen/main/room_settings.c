@@ -211,6 +211,8 @@ cJSON *room_settings_controller_integrations(void)
 static esp_err_t status(httpd_req_t *r)
 {
     cJSON *j=room_display_status();cJSON_AddItemToObject(j,"wifi",room_wifi_status());cJSON_AddItemToObject(j,"firmware",room_ota_status());
+    cJSON *discovery=room_controller_discovery_status();
+    if(discovery)cJSON_AddItemToObject(j,"controller_discovery",discovery);
     return json_reply(r,200,j);
 }
 void room_settings_register(httpd_handle_t server)
