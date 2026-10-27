@@ -80,7 +80,13 @@ static esp_err_t setup_post(httpd_req_t *r)
             if(text_is(j,"kind","start"))next.start_us=last_pulse;
             else if(text_is(j,"kind","end"))next.end_us=last_pulse;
             else if(text_is(j,"kind","position") && number(j,"index",&value) && value>=0 && value<=7 && floor(value)==value) {
-                if(!setup.start_us || !setup.end_us)error="Capture both travel limits before the dial markings.";
+                /* During an endpoint correction, previously captured
+                 * dial positions may be recaptured before the new end is
+                 * locked, avoiding a narrower-range deadlock. */
+                bool has_saved_point=false;
+                for(int k=0;k<8;k++)if(setup.pulse_us[k]){has_saved_point=true;break;}
+                if((!setup.start_us || !setup.end_us) && !has_saved_point)
+                    error="Capture both travel limits before the first dial marking.";
                 else {
                     int i=(int)value;next.pulse_us[i]=last_pulse;
                     controller_encoder_sample_t e=controller_encoder_snapshot();
