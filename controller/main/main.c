@@ -51,7 +51,7 @@ static esp_netif_t *station_netif;
 static char station_mac[18];
 static unsigned http_link_count;
 static uint64_t last_http_link;
-static atomic_uint reconnect_at,connect_at;
+static atomic_uint reconnect_at,connect_at,setup_discovery_until;
 static bool pwm, timer_ready, armed;
 static uint64_t armed_until;
 static int last_pulse=-1;
@@ -541,7 +541,8 @@ static void reconnect_task(void *arg)
         wifi_sta_list_t clients={0};
         bool setup_client=esp_wifi_ap_get_sta_list(&clients)==ESP_OK&&clients.num>0;
         if(!station_up&&!setup_client){
-            if(!station_connecting)tl_radio_search_tick();
+            /* Keep the setup AP on one channel during initial discovery. */
+            if(!station_connecting&&(int32_t)(now-setup_discovery_until)>=0)tl_radio_search_tick();
             controller_wifi_retry_t retry={.connecting=station_connecting,.started=connect_at,.due=reconnect_at};
             controller_wifi_action_t action=controller_wifi_retry_tick(&retry,now,tl_radio_configured());
             if(action!=CONTROLLER_WIFI_WAIT&&!station_up){
@@ -599,6 +600,7 @@ static void network_start(void)
     /* Give the bench AP 15 seconds without station scans after startup. */
     station_connecting=false;
     reconnect_at=(uint32_t)now_ms()+15000U;
+    setup_discovery_until=reconnect_at;
     ESP_LOGI(TAG,"Setup AP discovery window 15 s; station SSID configured=%s",station?"yes":"no");
     ESP_ERROR_CHECK(xTaskCreate(reconnect_task,"wifi_retry",3072,NULL,3,NULL)==pdPASS?ESP_OK:ESP_ERR_NO_MEM);
     httpd_config_t c=HTTPD_DEFAULT_CONFIG();c.max_uri_handlers=18;c.stack_size=8192;
