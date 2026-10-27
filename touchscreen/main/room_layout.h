@@ -1,0 +1,63 @@
+#pragma once
+/* 480x480 Waveshare Touch LCD 4B. The page viewport begins at x=12,y=57
+ * and is 456x364 pixels; navigation starts at y=429. Keep the control row
+ * and LED tiles inside that viewport, and leave clearance for the LVGL
+ * arc knob above the dial. Values are deliberately usable in host tests. */
+enum {
+    ROOM_PAGE_W=456, ROOM_PAGE_H=364,
+    ROOM_CLIMATE_RING_X=102,
+    ROOM_CLIMATE_RING_Y=13,
+    ROOM_CLIMATE_RING_SIZE=252,
+    ROOM_CLIMATE_MODE_Y=267,
+    ROOM_CLIMATE_REASON_Y=292,
+    ROOM_CLIMATE_STATUS_W=310,
+    ROOM_CLIMATE_AWAY_X=320,
+    ROOM_CLIMATE_AWAY_Y=271,
+    ROOM_CLIMATE_AWAY_W=136,
+    ROOM_CLIMATE_AWAY_H=41,
+    ROOM_CLIMATE_BUTTON_Y=317,
+    ROOM_CLIMATE_BUTTON_H=46,
+    ROOM_CLIMATE_MINUS_X=0,
+    ROOM_CLIMATE_MINUS_W=76,
+    ROOM_CLIMATE_SET_X=84,
+    ROOM_CLIMATE_SET_W=288,
+    ROOM_CLIMATE_PLUS_X=380,
+    ROOM_CLIMATE_PLUS_W=76,
+    ROOM_HOME_LIGHT_W=224,
+    ROOM_HOME_LIGHT_GAP=8,
+    ROOM_HOME_LIGHT_H=104,
+    ROOM_HOME_BLINDS_Y=112,
+    ROOM_HOME_BLINDS_H=78,
+    ROOM_HOME_KIDS_Y=198,
+    ROOM_HOME_KIDS_H=78,
+    ROOM_HOME_VACUUM_Y=284,
+    ROOM_HOME_VACUUM_H=80
+};
+_Static_assert(ROOM_CLIMATE_RING_Y>=12,"Leave clearance for arc knob above dial");
+_Static_assert(ROOM_CLIMATE_RING_X*2+ROOM_CLIMATE_RING_SIZE==ROOM_PAGE_W,"Center ring");
+_Static_assert(ROOM_CLIMATE_RING_Y+ROOM_CLIMATE_RING_SIZE<=ROOM_CLIMATE_MODE_Y,
+               "Dial must not overlap status text");
+_Static_assert(ROOM_CLIMATE_STATUS_W<ROOM_CLIMATE_AWAY_X,
+               "Away button must not overlap text");
+_Static_assert(ROOM_CLIMATE_AWAY_X+ROOM_CLIMATE_AWAY_W<=ROOM_PAGE_W,
+               "Away button outside screen");
+_Static_assert(ROOM_CLIMATE_AWAY_Y+ROOM_CLIMATE_AWAY_H<ROOM_CLIMATE_BUTTON_Y,
+               "Away must not overlap setpoint row");
+_Static_assert(ROOM_CLIMATE_MINUS_X+ROOM_CLIMATE_MINUS_W<ROOM_CLIMATE_SET_X,
+               "Minus / Set overlap");
+_Static_assert(ROOM_CLIMATE_SET_X+ROOM_CLIMATE_SET_W<ROOM_CLIMATE_PLUS_X,
+               "Set / Plus overlap");
+_Static_assert(ROOM_CLIMATE_PLUS_X+ROOM_CLIMATE_PLUS_W<=ROOM_PAGE_W,
+               "Plus outside screen");
+_Static_assert(ROOM_CLIMATE_BUTTON_Y+ROOM_CLIMATE_BUTTON_H<=ROOM_PAGE_H,
+               "Controls must clear bottom navigation");
+_Static_assert(ROOM_HOME_LIGHT_W*2+ROOM_HOME_LIGHT_GAP==ROOM_PAGE_W,
+               "Two equal light tiles");
+_Static_assert(ROOM_HOME_LIGHT_H<ROOM_HOME_BLINDS_Y,
+               "Light tiles overlap blinds row");
+_Static_assert(ROOM_HOME_BLINDS_Y+ROOM_HOME_BLINDS_H<ROOM_HOME_KIDS_Y,
+               "Blinds / kids overlap");
+_Static_assert(ROOM_HOME_KIDS_Y+ROOM_HOME_KIDS_H<ROOM_HOME_VACUUM_Y,
+               "Kids / vacuum overlap");
+_Static_assert(ROOM_HOME_VACUUM_Y+ROOM_HOME_VACUUM_H<=ROOM_PAGE_H,
+               "Vacuum tile below page viewport");
