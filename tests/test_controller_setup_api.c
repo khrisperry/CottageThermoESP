@@ -151,6 +151,19 @@ int main(void)
     request("{\"action\":\"temperatures\",\"values\":[45,52,59,66,73,80]}","Switch to Service");
     request("{\"action\":\"service\"}",NULL);
     assert(!live_selected&&!go_active&&!pwm&&state.config.mode==TH_HOLD);
+    /* Once Bench Go is running and its physical encoder agrees, switching
+     * to persistent Live must NOT require a second Test session or jog.
+     * The supplied Test selector position is ignored in favor of the
+     * actual synchronized commanded fractional dial position. */
+    request("{\"action\":\"test\",\"confirm\":\"unloaded_bench\"}",NULL);
+    request("{\"action\":\"pulse\",\"us\":1300}",NULL);
+    request("{\"action\":\"go\",\"position\":3,\"confirm\":\"start_bench\"}",NULL);
+    assert(go_active && !state.simulated && state.has_command && state.synchronized);
+    int move_count=moves;
+    request("{\"action\":\"live\",\"position\":99,\"confirm\":\"enable_live\"}",NULL);
+    assert(live_selected && go_active && !armed && moves==move_count);
+    request("{\"action\":\"service\"}",NULL);
+    assert(!live_selected && !go_active && !pwm);
 
     clock_ms=armed_until;request("{\"action\":\"pulse\",\"us\":1300}","Test Mode");
     request("{\"action\":\"reset\",\"confirm\":\"reset_calibration\"}",NULL);assert(!setup.start_us&&!setup.temperature_mask&&!armed&&!pwm);
