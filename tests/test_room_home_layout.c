@@ -27,6 +27,19 @@ int main(void)
     assert(ROOM_CLIMATE_RING_Y>0);
     assert(ROOM_CLIMATE_RING_Y+ROOM_CLIMATE_RING_SIZE<=ROOM_CLIMATE_MODE_Y);
     assert(ROOM_CLIMATE_BUTTON_Y+ROOM_CLIMATE_BUTTON_H<=ROOM_PAGE_H);
+    /* Four climate actions all fit on ONE bottom row, with nonzero
+     * 8px gutters: -1 | Set Temp | +1 | Away/Home. */
+    assert(within(ROOM_CLIMATE_MINUS_X,ROOM_CLIMATE_MINUS_W,ROOM_PAGE_W));
+    assert(within(ROOM_CLIMATE_SET_X,ROOM_CLIMATE_SET_W,ROOM_PAGE_W));
+    assert(within(ROOM_CLIMATE_PLUS_X,ROOM_CLIMATE_PLUS_W,ROOM_PAGE_W));
+    assert(within(ROOM_CLIMATE_AWAY_X,ROOM_CLIMATE_AWAY_W,ROOM_PAGE_W));
+    assert(ROOM_CLIMATE_MINUS_X+ROOM_CLIMATE_MINUS_W+8==ROOM_CLIMATE_SET_X);
+    assert(ROOM_CLIMATE_SET_X+ROOM_CLIMATE_SET_W+8==ROOM_CLIMATE_PLUS_X);
+    assert(ROOM_CLIMATE_PLUS_X+ROOM_CLIMATE_PLUS_W+8==ROOM_CLIMATE_AWAY_X);
+    assert(ROOM_CLIMATE_AWAY_X+ROOM_CLIMATE_AWAY_W==ROOM_PAGE_W);
+    assert(ROOM_CLIMATE_MODE_Y<ROOM_CLIMATE_REASON_Y);
+    assert(ROOM_CLIMATE_REASON_Y<ROOM_CLIMATE_BUTTON_Y);
+    assert(ROOM_CLIMATE_STATUS_W==ROOM_PAGE_W);
     /* A single light tile tap chooses the opposite valid HA action. */
     assert(room_home_light_toggle_action("off",3,true,false)==0);
     assert(room_home_light_toggle_action("on",3,true,false)==1);
