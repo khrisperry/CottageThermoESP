@@ -78,7 +78,12 @@ esp_err_t room_http_keepalive(room_http_session_t **session,
     if(!*host||strpbrk(host,"/@?#\\ \r\n")||
        strlen(origin)>=sizeof(((room_http_session_t*)0)->origin))return ESP_ERR_INVALID_ARG;
     if(tls&&time(NULL)<1767225600)return ESP_ERR_INVALID_STATE;
-    if(*session&&strcmp((*session)->origin,origin))return ESP_ERR_INVALID_ARG;
+    /* DHCP/mDNS may change the selected controller IP between attempts.
+     * A failed old connection is never reused for a new origin. */
+    if(*session&&strcmp((*session)->origin,origin)){
+        if((*session)->client)esp_http_client_cleanup((*session)->client);
+        free(*session);*session=NULL;
+    }
     char url[320];int size=snprintf(url,sizeof(url),"%s%s",origin,path);
     if(size<0||size>=(int)sizeof(url))return ESP_ERR_INVALID_SIZE;
     if(!*session){
