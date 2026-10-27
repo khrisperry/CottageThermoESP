@@ -918,32 +918,50 @@ static void build_ui(void)
     lv_obj_set_style_bg_color(notice,lv_color_hex(CARD),0);lv_obj_set_style_bg_opa(notice,LV_OPA_COVER,0);
     lv_obj_set_style_pad_all(notice,8,0);lv_obj_set_style_radius(notice,10,0);
     lv_label_set_long_mode(notice,LV_LABEL_LONG_DOT);lv_obj_set_height(notice,42);lv_obj_add_flag(notice,LV_OBJ_FLAG_HIDDEN);
-    /* Drag the visible knob to preview 45..80 F in 1 F increments. */
-    temperature_ring=lv_arc_create(body[0]);lv_obj_set_size(temperature_ring,220,220);lv_obj_set_pos(temperature_ring,118,0);
+    /* Make the dial dominant and leave clearance above for the large knob.
+     * The previous y=0 arc clipped the knob against the page's top edge.
+     * One bottom row has -1 / Set Temperature / +1; Away stays separate. */
+    temperature_ring=lv_arc_create(body[0]);
+    lv_obj_set_size(temperature_ring,ROOM_CLIMATE_RING_SIZE,ROOM_CLIMATE_RING_SIZE);
+    lv_obj_set_pos(temperature_ring,ROOM_CLIMATE_RING_X,ROOM_CLIMATE_RING_Y);
     lv_arc_set_range(temperature_ring,45,80);lv_arc_set_rotation(temperature_ring,135);
     lv_arc_set_bg_angles(temperature_ring,0,270);
     lv_arc_set_mode(temperature_ring,LV_ARC_MODE_NORMAL);
-    lv_obj_set_style_arc_width(temperature_ring,13,LV_PART_MAIN);
-    lv_obj_set_style_arc_width(temperature_ring,13,LV_PART_INDICATOR);
+    lv_obj_set_style_arc_width(temperature_ring,14,LV_PART_MAIN);
+    lv_obj_set_style_arc_width(temperature_ring,14,LV_PART_INDICATOR);
     lv_obj_set_style_arc_color(temperature_ring,lv_color_hex(EDGE),LV_PART_MAIN);
     lv_obj_set_style_bg_color(temperature_ring,lv_color_hex(AMBER),LV_PART_KNOB);
-    lv_obj_set_style_pad_all(temperature_ring,7,LV_PART_KNOB);
+    lv_obj_set_style_pad_all(temperature_ring,8,LV_PART_KNOB);
     lv_obj_set_style_radius(temperature_ring,LV_RADIUS_CIRCLE,LV_PART_KNOB);
     lv_obj_add_flag(temperature_ring,LV_OBJ_FLAG_CLICKABLE);
     lv_obj_remove_flag(temperature_ring,LV_OBJ_FLAG_GESTURE_BUBBLE);
     lv_obj_add_event_cb(temperature_ring,target_ring_event,LV_EVENT_VALUE_CHANGED,NULL);
-    lv_obj_t *room_caption=label(body[0],"ROOM TEMPERATURE",0,48,456,&lv_font_montserrat_14);centered(room_caption);tint(room_caption,MUTED);
-    temp_label=label(body[0],"-- F",0,78,456,&lv_font_montserrat_48);centered(temp_label);
-    target_label=label(body[0],"Target unavailable",0,144,456,&lv_font_montserrat_20);centered(target_label);tint(target_label,AMBER);
-    mode_label=label(body[0],"Controller Offline",0,219,456,&lv_font_montserrat_16);centered(mode_label);tint(mode_label,AMBER);
-    reason_label=label(body[0],"Waiting for status",12,247,432,&lv_font_montserrat_14);centered(reason_label);tint(reason_label,MUTED);lv_label_set_long_mode(reason_label,LV_LABEL_LONG_DOT);lv_obj_set_height(reason_label,24);
-    minus_button=button(body[0],"-1",0,271,100,42,send_event,-2);
-    lv_obj_t *hint=label(body[0],"DRAG THE RING TO SET",106,281,244,&lv_font_montserrat_14);
+    lv_obj_t *room_caption=label(body[0],"ROOM TEMPERATURE",0,72,ROOM_PAGE_W,&lv_font_montserrat_14);
+    centered(room_caption);tint(room_caption,MUTED);
+    temp_label=label(body[0],"-- F",0,101,ROOM_PAGE_W,&lv_font_montserrat_48);
+    centered(temp_label);
+    target_label=label(body[0],"Target unavailable",0,165,ROOM_PAGE_W,&lv_font_montserrat_20);
+    centered(target_label);tint(target_label,AMBER);
+    lv_obj_t *hint=label(body[0],"DRAG RING TO ADJUST",0,206,ROOM_PAGE_W,&lv_font_montserrat_14);
     centered(hint);tint(hint,MUTED);
-    plus_button=button(body[0],"+1",356,271,100,42,send_event,-3);
-    apply_button=button(body[0],"Set Temperature",0,319,278,44,send_event,-1);
-    away_button=button(body[0],"Away (50 F)",290,319,166,44,send_event,-10);
-    lv_obj_set_style_bg_color(apply_button,lv_color_hex(AMBER),0);tint(apply_button,INK);
+    mode_label=label(body[0],"Controller Offline",0,ROOM_CLIMATE_MODE_Y,
+        ROOM_CLIMATE_STATUS_W,&lv_font_montserrat_16);
+    centered(mode_label);tint(mode_label,AMBER);
+    reason_label=label(body[0],"Waiting for status",0,ROOM_CLIMATE_REASON_Y,
+        ROOM_CLIMATE_STATUS_W,&lv_font_montserrat_14);
+    centered(reason_label);tint(reason_label,MUTED);
+    lv_label_set_long_mode(reason_label,LV_LABEL_LONG_DOT);
+    lv_obj_set_height(reason_label,20);
+    away_button=button(body[0],"Away (50 F)",ROOM_CLIMATE_AWAY_X,ROOM_CLIMATE_AWAY_Y,
+        ROOM_CLIMATE_AWAY_W,ROOM_CLIMATE_AWAY_H,send_event,-10);
+    minus_button=button(body[0],"-1",ROOM_CLIMATE_MINUS_X,ROOM_CLIMATE_BUTTON_Y,
+        ROOM_CLIMATE_MINUS_W,ROOM_CLIMATE_BUTTON_H,send_event,-2);
+    apply_button=button(body[0],"Set Temperature",ROOM_CLIMATE_SET_X,ROOM_CLIMATE_BUTTON_Y,
+        ROOM_CLIMATE_SET_W,ROOM_CLIMATE_BUTTON_H,send_event,-1);
+    plus_button=button(body[0],"+1",ROOM_CLIMATE_PLUS_X,ROOM_CLIMATE_BUTTON_Y,
+        ROOM_CLIMATE_PLUS_W,ROOM_CLIMATE_BUTTON_H,send_event,-3);
+    lv_obj_set_style_bg_color(apply_button,lv_color_hex(AMBER),0);
+    tint(apply_button,INK);
     const int rows[]={0,1,2,7,9};
     const char *names[]={"Deck lights","Breezeway lights","Blinds","Kids heat","Vacuum"};
     const char *symbols[]={LV_SYMBOL_POWER,LV_SYMBOL_POWER,LV_SYMBOL_UP,LV_SYMBOL_CHARGE,LV_SYMBOL_HOME};
