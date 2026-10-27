@@ -22,6 +22,15 @@ static inline cJSON *room_mqtt_discovery(const char *id,const char *base,const c
         cJSON_AddStringToObject(j,"temperature_state_template","{{ value_json.target_f if value_json.target_f is not none else 'None' }}");
         cJSON_AddStringToObject(j,"current_temperature_topic","~/state");
         cJSON_AddStringToObject(j,"current_temperature_template","{{ value_json.temperature_f if value_json.temperature_f is not none else 'None' }}");
+        /* HA Climate preset (not HVAC off): Away keeps heat available at
+         * 50 F. HA never directly arms or controls the furnace servo. */
+        cJSON_AddStringToObject(j,"preset_mode_command_topic","~/preset/set");
+        cJSON_AddStringToObject(j,"preset_mode_state_topic","~/state");
+        cJSON_AddStringToObject(j,"preset_mode_value_template",
+            "{{ 'away' if value_json.away else 'none' }}");
+        cJSON *presets=cJSON_AddArrayToObject(j,"preset_modes");
+        cJSON_AddItemToArray(presets,cJSON_CreateString("none"));
+        cJSON_AddItemToArray(presets,cJSON_CreateString("away"));
         cJSON_AddStringToObject(j,"mode_state_topic","~/state");
         cJSON_AddStringToObject(j,"mode_state_template","{{ 'heat' if value_json.mode == 'thermostat' else 'None' }}");
         cJSON *m=cJSON_AddArrayToObject(j,"modes");cJSON_AddItemToArray(m,cJSON_CreateString("heat"));
