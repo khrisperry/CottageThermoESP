@@ -47,6 +47,23 @@ int main(void)
     /* The room can warm/cool without inventing any additional dial moves. */
     th_commit_move(&s,a,106000);
     assert(th_sample(&s,TH_ROOM,56,0,108000));expect_reason(&s,108000,"mapped_setting_reached");
+    /* Freeze Hold is 50F and does not overwrite the original comfort target.
+     * Exiting Away resumes the stored target. If dial 1 is warmer than 50F,
+     * clamp to minimum heat instead of silently disabling frost protection. */
+    s=prepared();s.away=true;
+    a=th_tick(&s,100000);
+    assert(a.move && a.level==1 && a.pulse_us==1200 && s.effective_target_f==50);
+    th_commit_move(&s,a,100000);
+    assert(s.config.target_f==70&&!s.away_clamped);
+    s.away=false;a=th_tick(&s,102000);
+    assert(a.move && a.level==4 && a.pulse_us==1600 && s.config.target_f==70);
+    th_commit_move(&s,a,102000);
+    s=prepared();s.config.map[0].temp_f=55;s.away=true;
+    a=th_tick(&s,100000);
+    assert(a.move && a.level==1 && s.away_clamped && s.effective_target_f==50);
+    s.away=false;a=th_tick(&s,100000);
+    assert(a.move && !s.away_clamped && s.effective_target_f==70);
+
     /* Heat-only feedback: initial setpoint acts immediately, but a room
      * spike or unverified warm-up cannot rewrite calibration or trim the dial.
      * Persistent >=2 F overshoot yields one small downward correction after
