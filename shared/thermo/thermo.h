@@ -10,6 +10,16 @@
 /* Minimum spacing for intentional thermostat setpoint moves. Unlike adaptive
  * corrections, a new requested setpoint must not wait five minutes. */
 #define THERMO_SETPOINT_GUARD_MS 2000U
+/* Provisional heat-only adaptive trim. Require 2 F of sustained overshoot,
+ * 10 minutes after a target is selected and 5 minutes continuously above
+ * the limit before reducing heat. Further corrections wait 15 minutes.
+ * The saved dial/temperature calibration is NEVER rewritten from one cycle. */
+#define THERMO_OVERSHOOT_THRESHOLD_F 2.0f
+#define THERMO_OVERSHOOT_CONFIRM_MS 300000ULL
+#define THERMO_HEAT_OBSERVE_MS 600000ULL
+#define THERMO_FEEDBACK_ADJUST_DWELL_MS 900000ULL
+#define THERMO_FEEDBACK_STEP 0.25f
+#define THERMO_FEEDBACK_MAX_TRIM 1.0f
 
 typedef enum { TH_HOLD, TH_MANUAL, TH_DIRECT, TH_AUTO } th_mode_t;
 typedef enum { TH_NONE, TH_ROOM, TH_SWITCHBOT } th_source_t;
@@ -36,6 +46,13 @@ typedef struct {
     float commanded_level;
     int commanded_us;
     uint64_t last_move_ms;
+    /* Ephemeral adaptive observations; never stored in controller config
+     * or interpreted as verified servo position / validated furnace physics. */
+    bool feedback_tracking, feedback_reached;
+    float feedback_target_f, feedback_peak_f, feedback_trim;
+    uint64_t feedback_target_since_ms, feedback_over_since_ms;
+    uint64_t feedback_last_adjust_ms;
+    unsigned feedback_corrections;
     th_source_t source;
     float selected_f, proposed_level;
     const char *reason;
@@ -43,7 +60,7 @@ typedef struct {
     int weekday, minute; // Monday=0, local wall-clock minute of day
     float effective_target_f;
 } th_state_t;
-typedef struct { bool move; float level; int pulse_us; } th_action_t;
+typedef struct { bool move; float level; int pulse_us; bool feedback_adjustment; } th_action_t;
 
 th_config_t th_defaults(void);
 bool th_config_valid(const th_config_t *c);
