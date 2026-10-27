@@ -116,7 +116,15 @@ int main(void)
     assert(go_active&&!state.simulated&&state.synchronized&&moves==count);assert(state.config.map_count==6);
     request("{\"action\":\"jog\",\"delta_us\":10}","Test Mode");
     request("{\"action\":\"temperatures\",\"values\":[45,52,59,66,73,80]}","Stop Go");
-    th_action_t a=th_tick(&state,clock_ms);assert(a.move&&a.level==3.25f&&a.pulse_us==1350);
+    th_action_t a=th_tick(&state,clock_ms);
+    assert(a.move && fabsf(a.level-3.8571429f)<0.001f && a.pulse_us==1471);
+    /* Explicit temperature changes remain bounded by calibrated dial 1–6,
+     * but are not broken into five-minute quarter-dial segments. */
+    th_commit_move(&state,a,clock_ms);
+    state.config.target_f=50;
+    assert(!th_tick(&state,clock_ms+1000).move && !strcmp(state.reason,"setpoint_cooldown"));
+    a=th_tick(&state,clock_ms+THERMO_SETPOINT_GUARD_MS);
+    assert(a.move && a.level==1 && a.pulse_us==900);
     request("{\"action\":\"test\",\"confirm\":\"unloaded_bench\"}",NULL);assert(!go_active&&!pwm&&state.simulated);
     clock_ms=armed_until;request("{\"action\":\"pulse\",\"us\":1300}","Test Mode");
     request("{\"action\":\"reset\",\"confirm\":\"reset_calibration\"}",NULL);assert(!setup.start_us&&!setup.temperature_mask&&!armed&&!pwm);
