@@ -28,6 +28,7 @@
 #include "thermo_radio.h"
 #include "controller_mqtt.h"
 #include "controller_encoder.h"
+#include "controller_live.h"
 #include "controller_pwm_duty.h"
 #include "controller_setup.h"
 #include "controller_integrations.h"
@@ -40,6 +41,13 @@ static const char *TAG="thermostat";
 #define CONFIG_KEY "sim_config"
 static controller_setup_t setup;
 static bool go_active;
+/* NVS-selected intent, not permission to move until all safety prerequisites
+ * pass after boot. Service always starts with servo output disabled. */
+static bool live_selected,live_fault,live_verifying;
+static uint64_t live_verify_at,live_candidate_since;
+static float live_verify_level,live_candidate_level;
+static char live_issue[120]="Service mode: automatic motion disabled";
+#define LIVE_MODE_MAGIC 0x4C495631U
 static th_state_t state;
 static SemaphoreHandle_t lock;
 static nvs_handle_t store;
@@ -117,6 +125,19 @@ static void release(void)
         if (err!=ESP_OK) ESP_LOGE(TAG,"PWM stop: %s",esp_err_to_name(err));
     }
     pwm=false; last_pulse=-1; armed=false; go_active=false; state.simulated=true; state.config.mode=TH_HOLD; th_release(&state);
+}
+static bool save_live_mode(bool enabled)
+{
+    uint32_t value=enabled?LIVE_MODE_MAGIC:0;
+    if(nvs_set_u32(store,"live_mode",value)!=ESP_OK || nvs_commit(store)!=ESP_OK)return false;
+    live_selected=enabled;
+    live_fault=false;
+    live_verifying=false;
+    live_candidate_since=0;
+    snprintf(live_issue,sizeof(live_issue),"%s",enabled?
+        "Waiting for calibrated encoder and fresh room temperature":
+        "Service mode: automatic movement disabled");
+    return true;
 }
 static esp_err_t json_send(httpd_req_t *r,cJSON *j)
 {
