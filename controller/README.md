@@ -1,3 +1,13 @@
+# Controller v0.7.0 — guarded persistent Live, Service and 50°F Freeze Hold
+
+**New persistent modes:** Service/Calibration is the safe default (PWM off on boot). After final mounted calibration, select Test, move to a saved numbered dial position, verify the AS5600, then select **Enable persistent Live**. Controller NVS remembers Live through firmware flashing and power loss, but never moves until startup validates the full dial/angle map, a stable magnetic position, and a fresh primary SHT45 report. Live has no 15-minute bench timeout; every Live movement requires AS5600 follow-up or it stops and attempts to persist Service. **Service** remains the only way to manually calibrate/test. The old 15-minute Go remains available for supervised bench use. Home Assistant cannot arm Live.
+
+**Freeze Hold / Away:** The room panel and existing Home Assistant MQTT Climate preset modes **Away / None** use the same paired transport and controller-owned NVS flag. Away targets **50°F** and preserves the normal target. Home restores the normal target. This is heat-only; no AC or off command. If dial 1 maps warmer than 50°F, Away commands dial 1 and reports the limitation; verified frost protection requires actual cottage observations and a backup warning mechanism. Touchscreen Climate now offers **−5, −1, +1, +5**, Set target, and Away / Resume Home.
+
+**Companion Waveshare:** v0.14.0. Flash **both** ESP32 boards without erasing NVS to use the new paired Away operation. Full test matrix, precautions, known limitations and commands: [Installation / production-readiness acceptance](../docs/PRODUCTION_READINESS_V070.md).
+
+## Previous v0.6.5 fix
+
 # Controller v0.6.5 — restore repeat servo movement (ESP-IDF v6.0.1)
 
 **Critical v0.6.5 fix:** v0.6.4 configured servo PWM on GPIO5 successfully on the first command, but its subsequent `ledc_set_duty_and_update()` call failed because that ESP-IDF v6.0.1 API requires the LEDC fade service even though the servo has no fade animation. The failure deliberately disarmed Test/Go, making the controller appear stuck after the first pulse. v0.6.5 routes subsequent commands through a tiny, separately host-tested non-fade `ledc_set_duty()` + `ledc_update_duty()` driver, which also re-enables the channel after `ledc_stop()`. We now regression-test repeated commands, stop/restart, and failures with the actual production implementation. The controller retains the 13 dBm Wi-Fi limit, mDNS hostname, current dial/temperature calibration, ESP-NOW pairing and 15-minute attended Go safety gates. **Flashing the new Super Mini image does not require erasing NVS or reflashing the Waveshare thermostat.** Bench-test repeated manual pulses and 50→65→70°F Go setpoint changes unloaded before mounting.
