@@ -1,3 +1,17 @@
+# Controller v0.6.4: prompt setpoint → observe heating → bounded downward correction
+
+A user/HA/schedule target change still promptly sets the calibrated Williams dial (the 2-second anti-chatter guard is **not** a five-minute dwell). We now distinguish this deliberate move from a later, cautious heat-only correction based on the **SHT45 room temperature**:
+
+1. Capture the requested target and commanded calibrated dial; start observation. A room reading already warmer than the target does not imply a proven mapping error.
+2. Require a fresh primary room sensor and no disagreement with an enabled secondary, then wait at least **10 minutes after a new target**. Record whether the target was reached, and the highest temperature observed.
+3. If the primary sensor stays at least **2°F above the target continuously for 5 minutes**, lower the commanded dial by **0.25 setting** (never below dial 1). No more than one corrective move every **15 minutes**, and at most one dial setting total temporary reduction for this target. If the reading drops below threshold before confirmation, restart the five-minute timer.
+4. A new user target resets any provisional correction. The controller does **not** rewrite saved 1–6 temperature estimates based on one cycle; the 6-hour history CSV and exported bench JSON provide observations for later manual calibration. Automatic raising to address underheating, and multi-cycle parameter learning, require actual furnace heating/cycling evidence.
+5. A stale/invalid sensor, unavailable servo or expired **15-minute attended Go** session blocks new motion. This firmware must **not be treated as safe for unattended furnace control**; the observation timing exceeds an ordinary bench session. Do not lengthen or bypass the bench safety session to evaluate heating. Verify controlled output, limit direction, and real position feedback before installing.
+
+The +2°F value is a **provisional threshold**; +5°F would tolerate noticeably more overheating. Since the furnace and cottage thermal inertia are not measured yet, do not equate a short temperature peak with a learned steady-state furnace setting.
+
+## Prior guided calibration and Test/Go instructions
+
 # Controller v0.6.3: Calibration → Estimated temperatures → Test → Go
 
 **v0.6.3 responsive setpoints:** In attended Go, changes to the thermostat target (touchscreen, Home Assistant through the panel, local target button, or enabled schedule) now select the full calibrated dial position promptly, with a short **2-second** spacing guard for rapid repeated edits, **not** five-minute intervals of 0.25 dial. Ordinary room-temperature changes alone do not cause dial moves. The conservative 0.25-level / five-minute controls remain for non-setpoint adjustments. Go is still explicitly armed for **15 minutes** per attended bench session; startup and Stop disable PWM. The controller Go status now shows commanded dial, requested dial, and the short guard countdown. The LEDC GPIO5 channel is initialized once and subsequently updated through duty commands. Encoder feedback is read-only and does not validate that a command physically reached its destination.
