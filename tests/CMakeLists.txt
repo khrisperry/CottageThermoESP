@@ -24,6 +24,15 @@ if(NOT MSVC)
 endif()
 add_test(NAME room_link_policy COMMAND test_room_link_policy)
 
+# Pure host-side checks: actual 480x480 layout geometry and light-tile
+# action policy. No LVGL or ESP-IDF environment needed.
+add_executable(test_room_home_layout test_room_home_layout.c)
+target_include_directories(test_room_home_layout PRIVATE ../touchscreen/main)
+if(NOT MSVC)
+    target_compile_options(test_room_home_layout PRIVATE -Wall -Wextra -Werror)
+endif()
+add_test(NAME room_home_layout COMMAND test_room_home_layout)
+
 add_executable(test_network test_network.c)
 if(NOT MSVC)
     target_compile_options(test_network PRIVATE -Wall -Wextra -Werror)
