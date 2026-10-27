@@ -54,7 +54,10 @@ int main(void)
     c.map[1].pulse_us=1850;assert(!th_config_valid(&c));
     c=example();c.map[1].level=1;assert(!th_config_valid(&c));
     c=example();c.map[1].temp_f=50;assert(!th_config_valid(&c));
-    c=example();c.map[0].pulse_us=1000;assert(!th_config_valid(&c));
+    c=example();c.map[0].pulse_us=499;assert(!th_config_valid(&c));
+    c=example();c.map[0].pulse_us=500;assert(th_config_valid(&c));
+    c=example();c.map[2].pulse_us=2500;assert(th_config_valid(&c));
+    c.map[2].pulse_us=2501;assert(!th_config_valid(&c));
     c=example();c.target_f=NAN;assert(!th_config_valid(&c));
     c=example();c.max_level_step=INFINITY;assert(!th_config_valid(&c));
     c=example();c.map_count=1;assert(!th_config_valid(&c));c.map_count=9;assert(!th_config_valid(&c));

@@ -1,5 +1,7 @@
 # Super Mini controller Wi-Fi recovery — v0.5.7 bench test
 
+> Historical v0.5.7 experiment: controller v0.5.9 removes the 13 dBm cap and restores the driver default maximum. The recovery behavior below remains in place. See [current Wi-Fi power and hostname checks](CONTROLLER_MDNS_AUTO_DISCOVERY.md).
+
 **Branch:** `fix/supermini-wifi-recovery-v0.5.7` (based on `feature/connectivity-climate-review`, not the older `main`).
 **Hardware:** HW-747 ESP32-S3FH4R2 (4 MB flash), servo GPIO5; AS5600 SDA6/SCL7.
 **Status:** Code staged for review and CI build; needs physical confirmation. Controller output remains SIMULATION by default; boot PWM is disabled.

@@ -24,11 +24,4 @@ menu "Cottage thermostat"
     config THERMO_WIFI_PASSWORD
         string "LAN Wi-Fi password"
         default ""
-    config THERMO_LIVE_BENCH
-        bool "Enable physical output from thermostat engine (inert bench only)"
-        default n
-        help
-            Default is simulation. Enabling still requires a fresh session arm,
-            measured map and explicit observed-position synchronization.
-            No encoder feedback exists; never restore motion on boot.
 endmenu

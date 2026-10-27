@@ -40,3 +40,23 @@ if(NOT MSVC)
     target_compile_options(test_controller_encoder PRIVATE -Wall -Wextra -Werror)
 endif()
 add_test(NAME controller_encoder COMMAND test_controller_encoder)
+
+add_executable(test_controller_setup test_controller_setup.c ../controller/main/controller_setup.c ../shared/thermo/thermo.c)
+target_include_directories(test_controller_setup PRIVATE ../controller/main ../shared/thermo)
+if(NOT MSVC)
+    target_compile_options(test_controller_setup PRIVATE -Wall -Wextra -Werror)
+    target_link_libraries(test_controller_setup PRIVATE m)
+endif()
+add_test(NAME controller_setup COMMAND test_controller_setup)
+
+# Pass -DCJSON_SOURCE_DIR=<checkout of DaveGamble/cJSON> to exercise the actual
+# controller HTTP workflow with fake hardware/NVS boundaries on a host.
+if(CJSON_SOURCE_DIR)
+    add_executable(test_controller_setup_api test_controller_setup_api.c ../controller/main/controller_setup.c ../shared/thermo/thermo.c "${CJSON_SOURCE_DIR}/cJSON.c")
+    target_include_directories(test_controller_setup_api PRIVATE ../controller/main ../shared/thermo "${CJSON_SOURCE_DIR}")
+    if(NOT MSVC)
+        target_compile_options(test_controller_setup_api PRIVATE -Wall -Wextra -Werror)
+        target_link_libraries(test_controller_setup_api PRIVATE m)
+    endif()
+    add_test(NAME controller_setup_api COMMAND test_controller_setup_api)
+endif()

@@ -30,6 +30,29 @@ jobs:
           }
           NODE
 
+  controller-workflow-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: DaveGamble/cJSON
+          ref: v1.7.19
+          path: .test-deps/cjson
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Test travel calibration and actual HTTP handler
+        run: |
+          cmake -S tests -B build-host -DCJSON_SOURCE_DIR="$PWD/.test-deps/cjson"
+          cmake --build build-host
+          ctest --test-dir build-host --output-on-failure
+      - name: Test embedded controller workflow
+        working-directory: tests
+        run: |
+          npm ci --ignore-scripts
+          npm run test:controller
+
   build-controller:
     runs-on: ubuntu-latest
     steps:
@@ -46,7 +69,7 @@ jobs:
       - name: Upload Super Mini flash files
         uses: actions/upload-artifact@v4
         with:
-          name: CottageController-v0.5.8-SuperMini
+          name: CottageController-v0.6.0-SuperMini
           retention-days: 14
           if-no-files-found: error
           path: |

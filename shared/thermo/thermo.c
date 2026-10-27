@@ -22,7 +22,7 @@ bool th_config_valid(const th_config_t *c)
         th_point_t p=c->map[i];
         if (!isfinite(p.temp_f) || !isfinite(p.level) || !isfinite(p.pulse_us) ||
             p.temp_f < 40 || p.temp_f > 90 || p.level < 1 || p.level > 6 ||
-            p.pulse_us < 1100 || p.pulse_us > 1900) return false;
+            p.pulse_us < 500 || p.pulse_us > 2500) return false;
         if (i) {
             th_point_t prev=c->map[i-1];
             if (p.temp_f <= prev.temp_f || p.level <= prev.level ||

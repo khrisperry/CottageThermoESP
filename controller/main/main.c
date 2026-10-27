@@ -1,4 +1,4 @@
-/* Controller foundation. Automatic output defaults to simulation. */
+/* Guided dial setup. Boot stopped; physical automatic movement requires Go. */
 #include <math.h>
 #include <assert.h>
 #include <stdio.h>
@@ -28,6 +28,7 @@
 #include "thermo_radio.h"
 #include "controller_mqtt.h"
 #include "controller_encoder.h"
+#include "controller_setup.h"
 #include "controller_integrations.h"
 #include <stdatomic.h>
 #include "network_profile.h"
@@ -35,11 +36,9 @@
 #include "controller_wifi_recovery.h"
 
 static const char *TAG="thermostat";
-#ifdef CONFIG_THERMO_LIVE_BENCH
-#define CONFIG_KEY "bench_config"
-#else
 #define CONFIG_KEY "sim_config"
-#endif
+static controller_setup_t setup;
+static bool go_active;
 static th_state_t state;
 static SemaphoreHandle_t lock;
 static nvs_handle_t store;
@@ -79,7 +78,7 @@ static void event(const char *text)
 }
 static esp_err_t pulse(int us)
 {
-    if (us<500 || us>2500) return ESP_ERR_INVALID_ARG;
+    if (!controller_setup_contains(&setup,us)) return ESP_ERR_INVALID_ARG;
     if (!timer_ready) {
         ledc_timer_config_t t={.speed_mode=LEDC_LOW_SPEED_MODE,.duty_resolution=LEDC_TIMER_13_BIT,
             .timer_num=LEDC_TIMER_0,.freq_hz=50,.clk_cfg=LEDC_AUTO_CLK};
@@ -99,7 +98,7 @@ static void release(void)
         esp_err_t err=ledc_stop(LEDC_LOW_SPEED_MODE,LEDC_CHANNEL_0,0);
         if (err!=ESP_OK) ESP_LOGE(TAG,"PWM stop: %s",esp_err_to_name(err));
     }
-    pwm=false; armed=false; th_release(&state);
+    pwm=false; last_pulse=-1; armed=false; go_active=false; state.simulated=true; state.config.mode=TH_HOLD; th_release(&state);
 }
 static esp_err_t json_send(httpd_req_t *r,cJSON *j)
 {
@@ -171,6 +170,8 @@ static void add_sample(cJSON *j,const char *name,th_sample_t p,uint64_t now)
     cJSON_AddBoolToObject(o,"fresh",p.valid && now>=p.at_ms && now-p.at_ms<=THERMO_TTL_MS);
     if(p.valid) {cJSON_AddNumberToObject(o,"temp_f",p.f);cJSON_AddNumberToObject(o,"age_ms",now-p.at_ms);}
 }
+#include "controller_setup_http.inc"
+
 static esp_err_t history_get(httpd_req_t *r)
 {
     history_t *snapshot=malloc(sizeof(history));
@@ -196,7 +197,8 @@ static esp_err_t get_api(httpd_req_t *r)
     if(!strcmp(r->uri,"/api/history"))return history_get(r);
     xSemaphoreTake(lock,portMAX_DELAY);
     cJSON *j=NULL;
-    if(!strcmp(r->uri,"/api/config")) j=config_json();
+    if(!strcmp(r->uri,"/api/setup")) j=setup_json();
+    else if(!strcmp(r->uri,"/api/config")) j=config_json();
     else if(!strcmp(r->uri,"/api/events")) {
         j=cJSON_CreateArray();
         unsigned begin=event_count>64 ? event_count-64:0;
@@ -206,7 +208,7 @@ static esp_err_t get_api(httpd_req_t *r)
         }
     } else {
         j=cJSON_CreateObject();
-        cJSON_AddStringToObject(j,"version","0.5.8");
+        cJSON_AddStringToObject(j,"version","0.6.0");
 #ifdef CONFIG_THERMO_SUPERMINI
         cJSON_AddStringToObject(j,"board","HW-747 Super Mini 4 MB");
 #else
@@ -214,6 +216,10 @@ static esp_err_t get_api(httpd_req_t *r)
 #endif
         cJSON_AddNumberToObject(j,"servo_gpio",CONFIG_THERMO_SERVO_GPIO);
         cJSON_AddBoolToObject(j,"simulation",state.simulated);
+        cJSON_AddStringToObject(j,"operation",go_active?"go":armed?"test":"stopped");
+        const char *setup_issue=controller_setup_ready(&setup);
+        cJSON_AddBoolToObject(j,"calibration_ready",!setup_issue);
+        cJSON_AddStringToObject(j,"setup_issue",setup_issue?setup_issue:"");
         cJSON_AddBoolToObject(j,"bench_armed",armed);
         cJSON_AddNumberToObject(j,"arm_remaining_ms",armed && armed_until>now_ms()?armed_until-now_ms():0);
         cJSON_AddBoolToObject(j,"pwm_active",pwm);
@@ -269,6 +275,7 @@ static esp_err_t get_api(httpd_req_t *r)
         cJSON_AddBoolToObject(net,"radio_ready",tl_radio_configured());
         cJSON_AddBoolToObject(net,"radio_online",tl_radio_online());
         cJSON_AddStringToObject(net,"radio_peer",profile->peer);
+        cJSON_AddNumberToObject(j,"dwell_remaining_ms",state.last_move_ms && now_ms()-state.last_move_ms<state.config.dwell_ms?state.config.dwell_ms-(now_ms()-state.last_move_ms):0);
         cJSON_AddStringToObject(j,"reason",state.reason);
         cJSON_AddStringToObject(j,"source",th_source_name(state.source));
         cJSON_AddStringToObject(j,"mode",th_mode_name(state.config.mode));
@@ -308,6 +315,7 @@ static bool update_config(cJSON *j)
     }
     v=cJSON_GetObjectItemCaseSensitive(j,"secondary_enabled");
     if(v) {if(!cJSON_IsBool(v))return false;next.secondary_enabled=cJSON_IsTrue(v);}
+    if(go_active && (cJSON_HasObjectItem(j,"mode") || cJSON_HasObjectItem(j,"map")))return false;
     bool map_changed=false;
     v=cJSON_GetObjectItemCaseSensitive(j,"map");
     if(v) {
@@ -429,7 +437,7 @@ static esp_err_t post_api(httpd_req_t *r)
     } else if(!strcmp(r->uri,"/api/stop")) {
         release();state.config.mode=TH_HOLD;event("PWM disabled; synchronization cleared; session Hold");ok=true;
     } else if(!strcmp(r->uri,"/api/arm")) {
-        if(text_is(j,"confirm","unloaded_bench") && state.config.mode!=TH_MANUAL) {
+        if(text_is(j,"confirm","unloaded_bench") && state.config.mode==TH_HOLD && !go_active) {
             armed=true;armed_until=now_ms()+900000;event("Bench output armed for 15 minutes");ok=true;
         }
     } else if(!strcmp(r->uri,"/api/sync")) {
@@ -457,7 +465,7 @@ static void control_task(void *unused)
     for(;;) {
         xSemaphoreTake(lock,portMAX_DELAY);
         uint64_t now=now_ms();
-        if(armed && now>=armed_until) {release();event("Bench arm expired; PWM disabled");}
+        if(armed && now>=armed_until) {release();state.config.mode=TH_HOLD;event("Bench session ended after 15 minutes; PWM disabled");}
         time_t wall=time(NULL);struct tm local={0};localtime_r(&wall,&local);
         th_clock(&state,wall>=1767225600,(local.tm_wday+6)%7,local.tm_hour*60+local.tm_min);
         th_action_t a=th_tick(&state,now);
@@ -524,6 +532,8 @@ static void wifi_event(void *arg,esp_event_base_t base,int32_t id,void *data)
     if(base==IP_EVENT && id==IP_EVENT_STA_GOT_IP) {
         station_up=true;station_connecting=false;station_failures=0;setup_recovery=false;
         ip_event_got_ip_t *e=data;ESP_LOGI(TAG,"Controller LAN address: " IPSTR,IP2STR(&e->ip_info.ip));
+        ESP_LOGI(TAG,"Controller LAN URLs: http://" IPSTR "/ and http://CottageThermoController.local/ (mDNS registered=%s)",
+            IP2STR(&e->ip_info.ip),mdns_ready?"yes":"no");
     }
 }
 static void reconnect_task(void *arg)
@@ -601,11 +611,10 @@ static void network_start(void)
     if(mdns_ready)ESP_LOGI(TAG,"Controller mDNS advertised: http://CottageThermoController.local (_http._tcp and _cottagethermo._tcp)");
     else ESP_LOGW(TAG,"Controller mDNS unavailable: %s; IP address and ESP-NOW remain usable",esp_err_to_name(mdns_err));
 #ifdef CONFIG_THERMO_SUPERMINI
-    /* Bench A/B test: cap shared AP/STA/ESP-NOW radio at 13 dBm.
-     * Lower TX power may help stability but reduces maximum range. */
-    ESP_ERROR_CHECK(esp_wifi_set_max_tx_power(52));
+    /* Restore the driver's normal maximum: the experimental 13 dBm cap
+     * reduced range. Keep PHY calibration and country limits in control. */
     int8_t tx_power=0;ESP_ERROR_CHECK(esp_wifi_get_max_tx_power(&tx_power));
-    ESP_LOGI(TAG,"Super Mini Wi-Fi max TX power: %.2f dBm",tx_power/4.0);
+    ESP_LOGI(TAG,"Super Mini Wi-Fi max TX power (driver default): %.2f dBm",tx_power/4.0);
 #endif
     uint8_t mac[6];ESP_ERROR_CHECK(esp_wifi_get_mac(WIFI_IF_STA,mac));
     snprintf(station_mac,sizeof(station_mac),"%02X:%02X:%02X:%02X:%02X:%02X",mac[0],mac[1],mac[2],mac[3],mac[4],mac[5]);
@@ -618,11 +627,12 @@ static void network_start(void)
     setup_discovery_until=reconnect_at;
     ESP_LOGI(TAG,"Setup AP discovery window 15 s; station SSID configured=%s",station?"yes":"no");
     ESP_ERROR_CHECK(xTaskCreate(reconnect_task,"wifi_retry",3072,NULL,3,NULL)==pdPASS?ESP_OK:ESP_ERR_NO_MEM);
-    httpd_config_t c=HTTPD_DEFAULT_CONFIG();c.max_uri_handlers=18;c.stack_size=8192;
+    httpd_config_t c=HTTPD_DEFAULT_CONFIG();c.max_uri_handlers=22;c.stack_size=8192;
     httpd_handle_t h;ESP_ERROR_CHECK(httpd_start(&h,&c));
     httpd_uri_t root={.uri="/",.method=HTTP_GET,.handler=root_get};ESP_ERROR_CHECK(httpd_register_uri_handler(h,&root));
-    const char *gets[]={"/api/status","/api/config","/api/events","/api/history"};
-    for(unsigned i=0;i<4;++i) {httpd_uri_t u={.uri=gets[i],.method=HTTP_GET,.handler=get_api};ESP_ERROR_CHECK(httpd_register_uri_handler(h,&u));}
+    const char *gets[]={"/api/status","/api/config","/api/events","/api/history","/api/setup"};
+    for(unsigned i=0;i<5;++i) {httpd_uri_t u={.uri=gets[i],.method=HTTP_GET,.handler=get_api};ESP_ERROR_CHECK(httpd_register_uri_handler(h,&u));}
+    httpd_uri_t setup_uri={.uri="/api/setup",.method=HTTP_POST,.handler=setup_post};ESP_ERROR_CHECK(httpd_register_uri_handler(h,&setup_uri));
     httpd_uri_t link={.uri="/api/link",.method=HTTP_POST,.handler=link_post};ESP_ERROR_CHECK(httpd_register_uri_handler(h,&link));
     httpd_uri_t net={.uri="/api/network",.method=HTTP_POST,.handler=network_post};ESP_ERROR_CHECK(httpd_register_uri_handler(h,&net));
     httpd_uri_t integrations={.uri="/api/integrations",.method=HTTP_POST,.handler=integrations_post};ESP_ERROR_CHECK(httpd_register_uri_handler(h,&integrations));
@@ -639,14 +649,14 @@ void app_main(void)
     th_config_t c=th_defaults();size_t size=sizeof(c);
     th_config_t saved;
     if(nvs_get_blob(store,CONFIG_KEY,&saved,&size)==ESP_OK && size==sizeof(saved) && th_config_valid(&saved))c=saved;
-    bool simulated=true;
-#ifdef CONFIG_THERMO_LIVE_BENCH
-    simulated=false;
-#endif
+    /* All builds start stopped. Live operation is an explicit local Go action. */
+    bool simulated=true;c.mode=TH_HOLD;
+    setup=controller_setup_defaults();controller_setup_t saved_setup;size=sizeof(saved_setup);
+    if(nvs_get_blob(store,"dial_setup_v1",&saved_setup,&size)==ESP_OK && size==sizeof(saved_setup) && controller_setup_valid(&saved_setup))setup=saved_setup;
     th_init(&state,&c,simulated);state.selected_f=NAN;state.proposed_level=NAN;
     lock=xSemaphoreCreateMutex();assert(lock);
     event("Boot: PWM disabled; position unknown; no restoration or homing");
-    ESP_LOGW(TAG,"Attended bench firmware. Automatic output: %s",simulated?"SIMULATION":"LIVE BENCH");
+    ESP_LOGW(TAG,"Attended bench firmware. Movement STOPPED; use Test for calibration, then explicit Go for automatic movement");
     setenv("TZ","EST5EDT,M3.2.0/2,M11.1.0/2",1);tzset();
     controller_boot=((uint64_t)esp_random()<<32)|esp_random();if(!controller_boot)controller_boot=1;
     network.magic=NETWORK_PROFILE_MAGIC;

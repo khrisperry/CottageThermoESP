@@ -1,4 +1,7 @@
-# Controller v0.5.8 — thermostat development and servo bench
+# Controller v0.6.0 — guided dial setup and bench control
+
+Use [the v0.6.0 workflow](../docs/CONTROLLER_WORKFLOW_V060.md) for the current webpage, calibration, Test and physical Go controls. The instructions below describe the earlier v0.5.x interface and are retained as hardware/API history; the old compile-time live-bench switch is retired.
+
 
 ESP-IDF **6.0.1**, ESP32-S3, M5Stack AtomS3 Lite (8 MB flash), servo signal **G38/GPIO38**. Build defaults simulate automatic thermostat movement. No measurements or placeholder calibration map are installed.
 
@@ -6,7 +9,7 @@ v0.4.1 keeps thermostat/servo decisions on this standalone controller and remove
 
 Paired radio configuration from the display webpage and the 2 MiB app partition remain. Configuration changes restart in Hold with bench output released. Controller firmware updates still use USB. Bench output interlocks, simulation default and explicit arming/synchronization are retained.
 
-The Super Mini v0.5.8 build advertises **CottageThermoController.local** using mDNS, and exposes live hostname/LAN/ESP-NOW diagnostics plus a browser-only TEST capture/export. See [mDNS auto-discovery and bench test](../docs/CONTROLLER_MDNS_AUTO_DISCOVERY.md).
+The Super Mini v0.5.9 build advertises **CottageThermoController.local** using mDNS, and exposes live hostname/LAN/ESP-NOW diagnostics plus a browser-only TEST capture/export. See [mDNS auto-discovery and bench test](../docs/CONTROLLER_MDNS_AUTO_DISCOVERY.md).
 
 See [controller Wi-Fi setup and Omada/ESP-NOW testing](../docs/CONTROLLER_LINK_TESTING.md) for the current connection workflow. Wi-Fi credentials can now be saved on the controller webpage; menuconfig values are the initial defaults.
 
