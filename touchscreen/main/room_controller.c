@@ -170,6 +170,7 @@ static cJSON *status_json(const tl_packet_t *r)
     if(r->flags&TL_HAS_TEMP)cJSON_AddNumberToObject(j,"temperature_f",r->temperature);
     if(r->flags&TL_HAS_TARGET)cJSON_AddNumberToObject(j,"target_f",r->target);
     cJSON_AddBoolToObject(j,"simulation",(r->flags&TL_SIMULATION)!=0);
+    cJSON_AddBoolToObject(j,"away",(r->flags&TL_AWAY_ACTIVE)!=0);
     const char *modes[]={"hold","manual","direct","thermostat"};
     cJSON_AddStringToObject(j,"mode",r->mode<4?modes[r->mode]:"unknown");
     cJSON_AddStringToObject(j,"reason",r->reason);return j;
@@ -220,6 +221,13 @@ static bool mutation(uint8_t operation,float value,int *code)
 cJSON *room_controller_target(float target,int *code)
 {
     if(!mutation(TL_TARGET,target,code))return NULL;
+    cJSON *j=cJSON_CreateObject();cJSON_AddBoolToObject(j,"ok",true);return j;
+}
+cJSON *room_controller_away(bool enabled,int *code)
+{
+    /* Same protected link lease and single-transport mutation as setpoints.
+     * Controller NVS owns the hold across panel/MQTT/Wi-Fi restarts. */
+    if(!mutation(TL_AWAY,enabled?1.0f:0.0f,code))return NULL;
     cJSON *j=cJSON_CreateObject();cJSON_AddBoolToObject(j,"ok",true);return j;
 }
 bool room_controller_sample(float temperature)
