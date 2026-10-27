@@ -35,6 +35,7 @@
 #include "room_ota.h"
 #include "room_mqtt.h"
 #include "room_layout.h"
+#include "room_home_policy.h"
 #include <stdatomic.h>
 
 #define COUNT 11
@@ -376,10 +377,12 @@ static void light_tile_event(lv_event_t *e)
     copy_model(&snapshot);
     last_touch=esp_timer_get_time();
     if(snapshot.pending&(1U<<key))return;
-    /* On and Off are the only known toggle states. Unknown/unavailable
-     * state intentionally does nothing; the next refresh will restore it. */
-    int action=!strcmp(snapshot.items[key].state,"on")?1:
-               !strcmp(snapshot.items[key].state,"off")?0:-1;
+    /* The shared policy forbids toggling an unknown, unavailable,
+     * unsupported or in-flight light. Uses the existing HA command queue. */
+    int action=room_home_light_toggle_action(snapshot.items[key].state,
+        snapshot.items[key].actions,
+        current(snapshot.ha_at)&&snapshot.items[key].available,
+        (snapshot.pending&(1U<<key))!=0);
     if(action>=0)queue_ha_action(key,action,&snapshot);
 }
 static void send_event(lv_event_t *e)
@@ -846,11 +849,8 @@ static void refresh(lv_timer_t *timer)
             if(k<2){
                 /* The whole tile is the light switch: no separate On/Off
                  * controls, no click accepted for stale or unknown states. */
-                enabled(tile[k],available&&!pending &&
-                    (!strcmp(m.items[k].state,"on")?
-                        (m.items[k].actions&(1U<<1)):
-                     !strcmp(m.items[k].state,"off")?
-                        (m.items[k].actions&(1U<<0)):false));
+                enabled(tile[k],room_home_light_toggle_action(
+                    m.items[k].state,m.items[k].actions,available,pending)>=0);
             }
         }
         if(bulb_head[k]){
