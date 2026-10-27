@@ -19,6 +19,10 @@ window.fetch=async(path,opts={})=>{
    else if(data.action==='jog')state.last_command_us+=data.delta_us;
    else if(data.action==='go'){Object.assign(state,{operation:'go',simulation:false});if(delayGo)await delayGo;}
    else if(data.action==='temperatures')data.values.forEach((t,i)=>profile.positions[i+1].temp_f=t);
+   else if(data.action==='edit_limit'){
+     if(data.kind==='start')profile.start_us=0;else profile.end_us=0;
+     Object.assign(state,{operation:'stopped',simulation:true,pwm_active:false,bench_armed:false,last_command_us:-1});
+   }
   }
   return {ok:true,json:async()=>({ok:true})};
  }
@@ -49,5 +53,19 @@ let finishGo;delayGo=new Promise(resolve=>{finishGo=resolve;});id('goButton').cl
 const stopsBefore=posts.filter(p=>p.path==='/api/stop').length;
 id('stopButton').click();await settle();assert.equal(state.operation,'stopped');finishGo();await settle();
 assert(posts.filter(p=>p.path==='/api/stop').length>=stopsBefore+2,'Stop is repeated after the in-flight action finishes');assert.equal(state.operation,'stopped');
+/* A mistakenly captured end must be independently reopenable and must not
+ * clear reference dial positions or estimated temperatures. */
+const savedPositions=structuredClone(profile.positions);
+id('tab-calibration').click();assert(!id('editEnd').disabled);
+id('editEnd').click();await settle();
+assert.equal(posts.at(-1).data.action,'edit_limit');
+assert.equal(posts.at(-1).data.kind,'end');
+assert.equal(posts.at(-1).data.confirm,'recalibrate_limit');
+assert.equal(profile.end_us,0);assert.equal(profile.start_us,600);
+assert.deepEqual(profile.positions,savedPositions);
+assert.equal(state.operation,'stopped');
+assert(id('travelNotice').textContent.includes('Travel limits incomplete'));
+assert(id('goButton').disabled,'Go must remain unavailable while end limit is open');
+assert(!id('editStart').disabled&&id('editEnd').disabled);
 offline=true;await intervals.at(-1)();assert(id('testButton').disabled&&id('sendPulse').disabled&&id('goButton').disabled);assert.equal(id('encoderAngle').textContent,'—');assert.deepEqual(errors,[]);
-window.happyDOM.abort();console.log('PASS: actual page script: no motion on load, unique IDs, manual/Go workflow, jog, known start, target, Stop, invalid temperatures and offline controls');
+window.happyDOM.abort();console.log('PASS: controller page: safe travel-limit correction, preservation, no auto movement, Test/Go/Stop, invalid temperatures and offline controls');
