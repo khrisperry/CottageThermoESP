@@ -16,6 +16,14 @@ if(NOT MSVC)
 endif()
 add_test(NAME transport_protocol COMMAND test_link)
 
+add_executable(test_room_link_policy test_room_link_policy.c)
+target_include_directories(test_room_link_policy PRIVATE
+    ../touchscreen/main ../shared/thermo_link)
+if(NOT MSVC)
+    target_compile_options(test_room_link_policy PRIVATE -Wall -Wextra -Werror)
+endif()
+add_test(NAME room_link_policy COMMAND test_room_link_policy)
+
 add_executable(test_network test_network.c)
 if(NOT MSVC)
     target_compile_options(test_network PRIVATE -Wall -Wextra -Werror)
