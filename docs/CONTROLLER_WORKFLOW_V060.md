@@ -1,7 +1,7 @@
 # Controller v0.6.0: Calibration → Estimated temperatures → Test → Go
 
 This replaces the controller's JSON-map/simulation/manual-controls page. Use the
-Super Mini local build script as before. The 13 dBm experimental cap is removed.
+Super Mini local build script as before. v0.6.0 removed the 13 dBm cap; v0.6.1 restores it for a controlled Wi-Fi comparison after authentication timeouts at the 20 dBm default. See [Wi-Fi notes](CONTROLLER_WIFI_V061.md).
 The touchscreen does not require a firmware update for this controller workflow.
 
 ## 1. Calibration

@@ -208,7 +208,7 @@ static esp_err_t get_api(httpd_req_t *r)
         }
     } else {
         j=cJSON_CreateObject();
-        cJSON_AddStringToObject(j,"version","0.6.0");
+        cJSON_AddStringToObject(j,"version","0.6.1");
 #ifdef CONFIG_THERMO_SUPERMINI
         cJSON_AddStringToObject(j,"board","HW-747 Super Mini 4 MB");
 #else
@@ -611,10 +611,12 @@ static void network_start(void)
     if(mdns_ready)ESP_LOGI(TAG,"Controller mDNS advertised: http://CottageThermoController.local (_http._tcp and _cottagethermo._tcp)");
     else ESP_LOGW(TAG,"Controller mDNS unavailable: %s; IP address and ESP-NOW remain usable",esp_err_to_name(mdns_err));
 #ifdef CONFIG_THERMO_SUPERMINI
-    /* Restore the driver's normal maximum: the experimental 13 dBm cap
-     * reduced range. Keep PHY calibration and country limits in control. */
+    /* Restore the earlier bench limit for an A/B comparison: the 20 dBm
+     * default build repeatedly timed out during authentication. This is a
+     * stability workaround, not a confirmed hardware/root-cause diagnosis. */
+    ESP_ERROR_CHECK(esp_wifi_set_max_tx_power(52)); /* quarter-dBm units: 13 dBm */
     int8_t tx_power=0;ESP_ERROR_CHECK(esp_wifi_get_max_tx_power(&tx_power));
-    ESP_LOGI(TAG,"Super Mini Wi-Fi max TX power (driver default): %.2f dBm",tx_power/4.0);
+    ESP_LOGI(TAG,"Super Mini Wi-Fi max TX power (bench limit): %.2f dBm",tx_power/4.0);
 #endif
     uint8_t mac[6];ESP_ERROR_CHECK(esp_wifi_get_mac(WIFI_IF_STA,mac));
     snprintf(station_mac,sizeof(station_mac),"%02X:%02X:%02X:%02X:%02X:%02X",mac[0],mac[1],mac[2],mac[3],mac[4],mac[5]);

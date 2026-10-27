@@ -1,4 +1,6 @@
-# Controller v0.6.0 — guided dial setup and bench control
+# Controller v0.6.1 — guided dial setup and bench control
+
+v0.6.1 restores the Super Mini 13 dBm TX limit after authentication timeouts at the 20 dBm default. Calibration/Test/Go are unchanged. See [Wi-Fi comparison notes](../docs/CONTROLLER_WIFI_V061.md).
 
 Use [the v0.6.0 workflow](../docs/CONTROLLER_WORKFLOW_V060.md) for the current webpage, calibration, Test and physical Go controls. The instructions below describe the earlier v0.5.x interface and are retained as hardware/API history; the old compile-time live-bench switch is retired.
 

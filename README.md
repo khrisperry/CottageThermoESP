@@ -2,7 +2,9 @@
 
 ESP-IDF smart thermostat / mechanical knob actuator project for a **Williams model 1773512 direct-vent cottage furnace**.
 
-> **Review: controller v0.6.0; native 4B room panel v0.13.8.** Controller and room client are separate ESP-IDF 6.0.1 projects. Restart starts stopped; physical automatic output requires explicit Go after calibration and a known bench starting position. Mechanical travel/torque, encoder feedback and appliance integration remain unverified.
+> **Review: controller v0.6.1; native 4B room panel v0.13.8.** Controller and room client are separate ESP-IDF 6.0.1 projects. Restart starts stopped; physical automatic output requires explicit Go after calibration and a known bench starting position. Mechanical travel/torque, encoder feedback and appliance integration remain unverified.
+
+Controller v0.6.1 restores the Super Mini 13 dBm TX limit for a controlled Wi-Fi comparison after authentication timeouts at the 20 dBm driver default. See [the Wi-Fi comparison notes](docs/CONTROLLER_WIFI_V061.md).
 
 Controller setup now follows **Calibration → Estimated temperatures → Test → Go**. See [the v0.6.0 workflow](docs/CONTROLLER_WORKFLOW_V060.md) and [self-contained page preview](docs/controller-workflow-preview.html).
 
