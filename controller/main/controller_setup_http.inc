@@ -26,8 +26,9 @@ static bool save_setup(const controller_setup_t *next)
     if(nvs_set_blob(store,"dial_setup_v1",next,sizeof(*next))!=ESP_OK || nvs_commit(store)!=ESP_OK)return false;
     setup=*next;th_release(&state);event("Dial calibration saved; automatic control remains stopped");return true;
 }
-/* One local workflow: stopped -> Test -> explicit Go. No remote target update
- * can arm PWM, calibrate, synchronize, or leave Test/Stopped mode. */
+/* One local workflow: persistent Service -> attended Test -> optional 15m
+ * bench Go OR explicitly selected persistent Live. Remote room/MQTT targets
+ * cannot arm, calibrate, synchronize or change the selected operating mode. */
 static esp_err_t setup_post(httpd_req_t *r)
 {
     cJSON *j=body(r);
@@ -36,8 +37,46 @@ static esp_err_t setup_post(httpd_req_t *r)
     xSemaphoreTake(lock,portMAX_DELAY);
     uint64_t now=now_ms();
     bool testing=!go_active && state.config.mode==TH_HOLD && armed && now<armed_until;
-    if(text_is(j,"action","test")) {
-        if(!text_is(j,"confirm","unloaded_bench"))error="Confirm that this is an attended bench test.";
+    if(text_is(j,"action","service")) {
+        /* A Service transition always stops PWM before changing NVS. */
+        release();
+        if(!save_live_mode(false))error="Motor stopped but could not save Service mode; do not restart unattended.";
+        else event("Persistent Service/Calibration selected; PWM off; calibration retained");
+    } else if(text_is(j,"action","live")) {
+        error=controller_setup_ready(&setup);
+        if(!error && !text_is(j,"confirm","enable_live"))error="Confirm that final calibration and mechanical mounting are complete.";
+        if(!error && (!number(j,"position",&value)||floor(value)!=value||value<1||value>6))
+            error="Select the measured physical dial number 1 through 6.";
+        if(!error && (!testing || !pwm || last_pulse!=setup.pulse_us[(int)value]))
+            error="From Service Test Mode, move to the selected saved dial number before enabling Live.";
+        float angle=0;
+        if(!error && (!live_encoder(&angle) ||
+                       !controller_live_matches(&setup,(float)value,angle)))
+            error="AS5600 angle does not match the selected saved dial position. Recalibrate encoder references.";
+        if(!error && !live_room_fresh(now))
+            error="Wait for a fresh primary room temperature report.";
+        th_state_t next=state;
+        if(!error) {
+            next.config.mode=TH_AUTO;next.config.schedule_enabled=false;
+            next.simulated=false;
+            if(!controller_setup_map(&setup,&next.config)||!th_sync(&next,(float)value))
+                error="Final mechanical calibration or dial map invalid.";
+        }
+        if(!error) {
+            th_action_t a=th_tick(&next,now);
+            if(!a.move && strcmp(next.reason,"mapped_setting_reached"))
+                error="Cannot enter Live until the primary sensor and target map are ready.";
+        }
+        if(!error && !save_live_mode(true))
+            error="Could not persist Live mode in NVS. Still in Service.";
+        if(!error) {
+            state=next;go_active=true;armed=false;live_verifying=false;
+            snprintf(live_issue,sizeof(live_issue),"Live active: physical start position confirmed");
+            event("Persistent Live enabled; encoder checked; no 15-minute bench timeout");
+        }
+    } else if(text_is(j,"action","test")) {
+        if(live_selected)error="Enter Service/Calibration mode before using Test.";
+        else if(!text_is(j,"confirm","unloaded_bench"))error="Confirm that this is an attended bench test.";
         else {release();state.config.mode=TH_HOLD;armed=true;armed_until=now+900000;event("Test mode: automatic control stopped; manual movement enabled for 15 minutes");}
     } else if(text_is(j,"action","pulse") || text_is(j,"action","jog")) {
         int us=0;
@@ -54,17 +93,18 @@ static esp_err_t setup_post(httpd_req_t *r)
             else {th_release(&state);event("Manual bench movement; automatic control remains stopped");}
         }
     } else if(text_is(j,"action","edit_limit")) {
+        if(live_selected)error="Switch to Service before changing travel limits.";
         /* An incorrectly captured endpoint can otherwise trap the servo
          * inside its old boundary. Explicitly reopen one endpoint only,
          * retain the other endpoint and all numbered dial/temperature data.
          * Always stop PWM and disarm before the travel restriction changes. */
         bool start=text_is(j,"kind","start"),end=text_is(j,"kind","end");
-        if(!start && !end)error="Choose Start or End to re-measure.";
-        else if(!text_is(j,"confirm","recalibrate_limit"))
+        if(!error && !start && !end)error="Choose Start or End to re-measure.";
+        else if(!error && !text_is(j,"confirm","recalibrate_limit"))
             error="Confirm that the unloaded fixture is attended before reopening a travel limit.";
-        else if(!(start?setup.start_us:setup.end_us))
+        else if(!error && !(start?setup.start_us:setup.end_us))
             error="That travel limit is already open. Move and capture it in Test Mode.";
-        else {
+        else if(!error) {
             release();state.config.mode=TH_HOLD;
             controller_setup_t next=setup;
             if(start)next.start_us=0;else next.end_us=0;
@@ -99,7 +139,8 @@ static esp_err_t setup_post(httpd_req_t *r)
             if(!error && !save_setup(&next))error="Could not save calibration. No new calibration was applied.";
         }
     } else if(text_is(j,"action","temperatures")) {
-        if(go_active)error="Stop Go mode before changing estimated temperatures.";
+        if(live_selected)error="Switch to Service before changing estimated temperatures.";
+        else if(go_active)error="Stop Go mode before changing estimated temperatures.";
         else {
             cJSON *temps=cJSON_GetObjectItemCaseSensitive(j,"values");controller_setup_t next=setup;
             if(!cJSON_IsArray(temps) || cJSON_GetArraySize(temps)!=6)error="Enter all six estimated temperatures.";
@@ -112,7 +153,8 @@ static esp_err_t setup_post(httpd_req_t *r)
             if(!error){next.temperature_mask=63;if(!save_setup(&next))error="Could not save estimated temperatures.";}
         }
     } else if(text_is(j,"action","reset")) {
-        if(!text_is(j,"confirm","reset_calibration"))error="Confirm the calibration reset.";
+        if(live_selected)error="Switch to Service before resetting calibration.";
+        else if(!text_is(j,"confirm","reset_calibration"))error="Confirm the calibration reset.";
         else {
             release();state.config.mode=TH_HOLD;
             controller_setup_t next=controller_setup_defaults();
@@ -120,7 +162,8 @@ static esp_err_t setup_post(httpd_req_t *r)
             else event("Calibration reset; Test Mode must be entered again");
         }
     } else if(text_is(j,"action","go")) {
-        error=controller_setup_ready(&setup);
+        if(live_selected)error="Already in persistent Live. Switch to Service for bench Go.";
+        else error=controller_setup_ready(&setup);
         if(!error && !text_is(j,"confirm","start_bench"))error="Confirm physical automatic bench movement.";
         if(!error && (!number(j,"position",&value) || value<1 || value>6 || floor(value)!=value))error="Select the current dial number, 1 through 6.";
         if(!error && (!testing || !pwm || last_pulse!=setup.pulse_us[(int)value]))error="In Test Mode, move to the saved starting dial number before pressing Go.";
