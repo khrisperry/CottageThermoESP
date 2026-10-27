@@ -75,7 +75,7 @@ jobs:
       - name: Upload Super Mini flash files
         uses: actions/upload-artifact@v4
         with:
-          name: CottageController-v0.7.0-SuperMini
+          name: CottageController-v0.7.1-SuperMini
           retention-days: 14
           if-no-files-found: error
           path: |
@@ -103,7 +103,7 @@ jobs:
       - name: Upload 4B app image for OTA
         uses: actions/upload-artifact@v4
         with:
-          name: CottageRoomPanel-v0.14.0-4B-application
+          name: CottageRoomPanel-v0.14.1-4B-application
           retention-days: 14
           if-no-files-found: error
           path: |
