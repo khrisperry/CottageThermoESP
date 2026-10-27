@@ -1,4 +1,14 @@
-# Cottage Thermostat — v0.7.1 Controller / v0.14.1 Waveshare 4B acceptance
+# Cottage Thermostat — v0.7.1 Controller / v0.14.3 Waveshare 4B acceptance
+
+## v0.14.3 final 4B layout for local hardware testing
+
+- Climate: the temperature ring is **252px**, centered and inset from the header to prevent the thumb clipping at the top; **-1 / Set Temperature / +1** occupy one bottom row, with **Away (50 F)** separate. Dragging the ring changes the proposed temperature without sending a command until Set.
+- Home: five **224px square-ish tiles** in a two-column grid. **Deck Lights** and **Breezeway Lights** use a full-tile touch-to-toggle and illuminated bulb icon. **Blinds** has independent Open / Stop / Close buttons, **Vacuum** has Start / Stop, and **Kids Heat** has On / Off and the HA temperature reading. The bottom-right **sixth tile is intentionally unused** for a future control.
+- Existing HA entity mapping, pending-command locks, known-state gating, ESP-NOW/servo separation, calibration and NVS storage are unaffected. One unavailable or stale light cannot be toggled blindly.
+- Build on the user's Windows ESP-IDF 6.0.1 machine. **Do not trigger GitHub Actions**. Run `.\tools\build-room-4b.ps1 -Flash -Monitor -Port COM21` from the repo root after pulling. The controller **v0.7.1** is unchanged and does not need flashing.
+- Host-only layout / light-toggle regression test: `test_room_home_layout` (pure C, no ESP-IDF). Check actual 4B touch responsiveness and element rendering after a local flash; CI/host tests cannot certify pixel rendering or the physical furnace.
+
+
 
 **Release scope:** Persistent locally selected Service/Calibration vs Live controller operation; full-room SHT45 and AS5600 startup guards; quick temperature buttons; controller-owned 50°F Away / Freeze Hold on Waveshare and HA MQTT Climate preset. The servo controller continues accepting temperature and Away commands over the SAME leased/replay-protected Wi-Fi HTTP and encrypted ESP-NOW channels. Home Assistant never directly drives the servo or changes controller operating modes.
 
