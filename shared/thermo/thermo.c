@@ -86,6 +86,12 @@ bool th_sync(th_state_t *s, float known_level)
     s->commanded_level=known_level;
     s->commanded_us=pulse;
     s->last_move_ms=0;
+    s->feedback_tracking=false;
+    s->feedback_reached=false;
+    s->feedback_trim=0;
+    s->feedback_over_since_ms=0;
+    s->feedback_last_adjust_ms=0;
+    s->feedback_corrections=0;
     return true;
 }
 
@@ -93,6 +99,12 @@ void th_release(th_state_t *s)
 {
     s->synchronized=false;
     s->has_command=false;
+    s->feedback_tracking=false;
+    s->feedback_reached=false;
+    s->feedback_trim=0;
+    s->feedback_over_since_ms=0;
+    s->feedback_last_adjust_ms=0;
+    s->feedback_corrections=0;
 }
 
 void th_clock(th_state_t *s,bool valid,int weekday,int minute)
@@ -135,10 +147,15 @@ th_action_t th_tick(th_state_t *s,uint64_t now)
     if (s->config.map_count < 2) { s->reason="calibration_required"; return a; }
     if (!s->synchronized) { s->reason="position_unsynchronized"; return a; }
     float desired=s->config.direct_level;
+    bool feedback_adjustment=false;
     if (s->config.mode == TH_AUTO) {
-        if (s->source == TH_NONE) { s->reason="temperature_stale"; return a; }
+        if (s->source == TH_NONE) {
+            s->feedback_over_since_ms=0;
+            s->reason="temperature_stale";return a;
+        }
         if (room && secondary && fabsf(s->room.f-s->secondary.f) > 5) {
-            s->reason="sensor_disagreement"; return a;
+            s->feedback_over_since_ms=0;
+            s->reason="sensor_disagreement";return a;
         }
         float target=s->config.target_f;
         if(s->config.schedule_enabled) {
@@ -147,7 +164,22 @@ th_action_t th_tick(th_state_t *s,uint64_t now)
             }
         }
         s->effective_target_f=target;
+        if (!s->feedback_tracking || fabsf(target-s->feedback_target_f)>0.01f) {
+            /* A deliberate target or schedule transition immediately uses
+             * the untrimmed calibration. Old feedback must never override a
+             * newly requested temperature or survive a new Go session. */
+            s->feedback_tracking=true;
+            s->feedback_target_f=target;
+            s->feedback_target_since_ms=now;
+            s->feedback_over_since_ms=0;
+            s->feedback_last_adjust_ms=0;
+            s->feedback_reached=false;
+            s->feedback_peak_f=NAN;
+            s->feedback_trim=0;
+            s->feedback_corrections=0;
+        }
         if (target < s->config.map[0].temp_f || target > s->config.map[s->config.map_count-1].temp_f) {
+            s->feedback_over_since_ms=0;
             s->reason="target_outside_measured_map"; return a;
         }
         // Set Williams' own thermostat to empirical steady-state level.
@@ -158,6 +190,36 @@ th_action_t th_tick(th_state_t *s,uint64_t now)
                 desired=x.level+(y.level-x.level)*(target-x.temp_f)/(y.temp_f-x.temp_f);
                 break;
             }
+        }
+        /* Heat-only observation: a brief spike or an immediate reading above
+         * the new setpoint is not proof of a furnace mapping error. Require
+         * fresh primary sensor data, 2 F sustained overshoot, an initial
+         * observation interval and a separate 15-minute trim dwell.
+         * Only lower the dial, one quarter-setting at a time. We do not
+         * extrapolate beyond dial 1 or modify the user's saved estimates. */
+        if (room && isfinite(s->room.f)) {
+            if (!isfinite(s->feedback_peak_f) || s->room.f>s->feedback_peak_f)
+                s->feedback_peak_f=s->room.f;
+            if (s->room.f>=target-0.5f)s->feedback_reached=true;
+            if (s->room.f>=target+THERMO_OVERSHOOT_THRESHOLD_F) {
+                if(!s->feedback_over_since_ms)s->feedback_over_since_ms=now;
+            } else s->feedback_over_since_ms=0;
+        } else s->feedback_over_since_ms=0;
+        float base=desired;
+        desired=fmaxf(s->config.map[0].level,base-s->feedback_trim);
+        bool confirmed=s->feedback_over_since_ms &&
+            now>=s->feedback_over_since_ms &&
+            now-s->feedback_over_since_ms>=THERMO_OVERSHOOT_CONFIRM_MS;
+        bool observed=now>=s->feedback_target_since_ms &&
+            now-s->feedback_target_since_ms>=THERMO_HEAT_OBSERVE_MS;
+        bool slow_enough=!s->feedback_last_adjust_ms ||
+            (now>=s->feedback_last_adjust_ms &&
+             now-s->feedback_last_adjust_ms>=THERMO_FEEDBACK_ADJUST_DWELL_MS);
+        if(confirmed && observed && slow_enough && s->feedback_reached &&
+           s->feedback_trim<THERMO_FEEDBACK_MAX_TRIM &&
+           desired>s->config.map[0].level+0.001f) {
+            desired=fmaxf(s->config.map[0].level,desired-THERMO_FEEDBACK_STEP);
+            feedback_adjustment=true;
         }
     }
     int pulse;
@@ -190,8 +252,10 @@ th_action_t th_tick(th_state_t *s,uint64_t now)
             s->reason="invalid_move"; return a;
         }
     }
-    s->reason=s->simulated ? "simulated_move" : "bench_move";
-    return (th_action_t){.move=true,.level=desired,.pulse_us=pulse};
+    s->reason=feedback_adjustment ? "overshoot_trim" :
+        s->simulated ? "simulated_move" : "bench_move";
+    return (th_action_t){.move=true,.level=desired,.pulse_us=pulse,
+        .feedback_adjustment=feedback_adjustment};
 }
 
 void th_commit_move(th_state_t *s,th_action_t a,uint64_t now)
@@ -201,6 +265,15 @@ void th_commit_move(th_state_t *s,th_action_t a,uint64_t now)
     s->commanded_level=a.level;
     s->commanded_us=a.pulse_us;
     s->last_move_ms=now;
+    if(a.feedback_adjustment) {
+        /* Commit a thermal correction only after output successfully applies.
+         * Failed PWM never advances the learned trim. */
+        s->feedback_trim=fminf(THERMO_FEEDBACK_MAX_TRIM,
+                               s->feedback_trim+THERMO_FEEDBACK_STEP);
+        s->feedback_last_adjust_ms=now;
+        s->feedback_over_since_ms=0;
+        s->feedback_corrections++;
+    }
 }
 
 const char *th_mode_name(th_mode_t m)
