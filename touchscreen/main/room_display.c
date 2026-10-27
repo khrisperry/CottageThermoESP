@@ -57,7 +57,7 @@ static model_t model;
 static SemaphoreHandle_t mutex;
 static QueueHandle_t commands;
 static lv_obj_t *body[5],*nav[5],*connection,*notice,*temp_label,*target_label,*mode_label,*reason_label;
-static lv_obj_t *states[COUNT],*control[COUNT][6],*minus_button,*plus_button,*minus_five_button,*plus_five_button,*away_button,*apply_button,*camera_image,*camera_note,*settings_button;
+static lv_obj_t *states[COUNT],*control[COUNT][6],*minus_button,*plus_button,*away_button,*apply_button,*camera_image,*camera_note,*settings_button;
 static lv_obj_t *settings_modal,*settings_volume,*settings_volume_label,*settings_camera_button,*settings_close_button;
 static lv_obj_t *temperature_ring,*camera_frame,*camera_status,*tile[COUNT],*icon_badge[COUNT];
 static lv_obj_t *bulb_head[COUNT],*bulb_stem[COUNT],*bulb_base[COUNT],*activity_ring[COUNT];
@@ -166,8 +166,16 @@ static void execute(command_t c)
         else snprintf(payload,sizeof(payload),"{\"key\":\"%s\",\"action\":\"%s\",\"request_id\":\"esp-%08" PRIx32 "-%08" PRIx32 "-%" PRId64 "\"}",keys[c.item],actions[c.action],esp_random(),esp_random(),c.at);
         cJSON *j=json_request(c.item>=0,c.item<0?"/api/config":"/api/ha/command",payload,&code);
         if(code>=400&&c.item>=0){xSemaphoreTake(mutex,portMAX_DELAY);model.optimistic[c.item].active=false;xSemaphoreGive(mutex);}
-        if(!j)message(code>=400?"Request rejected; check state before retrying":"Connection lost; outcome unknown. Check device state");
-        else if(c.item>=0&&!yes(j,"accepted"))message("Outcome unknown; check device state before retrying");
+        if(code>=400){
+            /* Show the controller's explicit refusal, not an unhelpful
+             * generic toast. We do not re-send ambiguous mutations. */
+            const char *detail=j?str(j,"error"):"";
+            message(*detail?detail:code==503?
+                "Controller is busy or offline. Check its status.":
+                "Controller refused this command. Check its mode.");
+        }
+        else if(!j)message("Connection lost. Verify the target before trying again.");
+        else if(c.item>=0&&!yes(j,"accepted"))message("No confirmation. Check current state.");
         else if(c.item==-2)message(c.action?"Away / Freeze Hold 50 F saved":"Home comfort mode restored");
         else if(c.item==-1)message("Target saved");
         cJSON_Delete(j);
@@ -335,10 +343,10 @@ static void send_event(lv_event_t *e)
 {
     intptr_t id=(intptr_t)lv_event_get_user_data(e);static model_t m;copy_model(&m);last_touch=esp_timer_get_time();
     if(id==-10){if(room_display_request_away(!m.away))editing=false;return;}
-    if(id==-2||id==-3||id==-4||id==-5){
+    if(id==-2||id==-3){
         if(!(m.pending&CLIMATE_PENDING)&&m.climate_ok&&m.has_target&&!m.away&&current(m.climate_at)){
-            float delta=id==-2?-1.0f:id==-3?1.0f:id==-4?-5.0f:5.0f;
-            draft=fmaxf(45,fminf(80,draft+delta));editing=true;
+            draft=fmaxf(45,fminf(80,draft+(id==-2?-1.0f:1.0f)));
+            editing=true;
         }
         return;
     }
@@ -353,6 +361,39 @@ static void send_event(lv_event_t *e)
     xSemaphoreGive(mutex);
     if(xQueueSend(commands,&c,0)!=pdTRUE){xSemaphoreTake(mutex,portMAX_DELAY);model.pending&=~pending_bit;if(c.item>=0)model.optimistic[c.item].active=false;xSemaphoreGive(mutex);message("Busy; request not queued");}
     editing=false;
+}
+/* The existing arc now controls a DRAFT target instead of pretending the
+ * ambient room temperature is the adjustable setting. Finger movement only
+ * updates the local preview; one explicit Set Temperature commits once. */
+static void target_ring_event(lv_event_t *e)
+{
+    (void)e;
+    model_t snapshot;copy_model(&snapshot);
+    last_touch=esp_timer_get_time();
+    if(!snapshot.climate_ok || !snapshot.has_target || snapshot.away ||
+       !current(snapshot.climate_at) || (snapshot.pending&CLIMATE_PENDING))
+        return;
+    const int selected=(int)lv_arc_get_value(temperature_ring);
+    draft=fmaxf(45.0f,fminf(80.0f,(float)selected));
+    editing=true;
+}
+static const char *climate_reason_label(const char *reason)
+{
+    if(!reason || !*reason)return "Waiting for furnace status";
+    if(!strcmp(reason,"mapped_setting_reached"))return "Dial at requested setting";
+    if(!strcmp(reason,"bench_move"))return "Adjusting furnace dial";
+    if(!strcmp(reason,"overshoot_trim"))return "Reducing heat after overshoot";
+    if(!strcmp(reason,"setpoint_cooldown"))return "Waiting briefly before adjustment";
+    if(!strcmp(reason,"movement_dwell"))return "Waiting between adjustments";
+    if(!strcmp(reason,"temperature_stale"))return "Waiting for fresh room temperature";
+    if(!strcmp(reason,"calibration_required"))return "Furnace calibration required";
+    if(!strcmp(reason,"sensor_disagreement"))return "Temperature sensors disagree";
+    if(!strcmp(reason,"target_outside_measured_map"))return "Setpoint outside calibrated range";
+    if(!strcmp(reason,"position_unsynchronized"))return "Furnace position not synchronized";
+    if(!strcmp(reason,"verifying_encoder"))return "Verifying dial position";
+    if(!strcmp(reason,"hold"))return "Automatic heating control paused";
+    if(!strcmp(reason,"pwm_error"))return "Servo output fault - Service required";
+    return "Controller status available in diagnostics";
 }
 /* Native styling uses LVGL primitives, so no browser or bitmap UI is required. */
 #define INK 0x0b111b
@@ -682,17 +723,27 @@ static void refresh(lv_timer_t *timer)
         lv_label_set_text(target_label,text);
     }
     else lv_label_set_text(target_label,"Target unavailable");
-    lv_arc_set_value(temperature_ring,room_temp?(int)fmaxf(45,fminf(80,room_f)):45);
-    lv_obj_set_style_arc_color(temperature_ring,lv_color_hex(room_temp?AMBER:EDGE),LV_PART_INDICATOR);
-    lv_label_set_text_fmt(mode_label,"%s%s",climate?(m.away?"Away / Freeze Hold":m.live_active?"Live heating":m.mode):"Controller offline",
-        climate?(m.live_active?" - Active":m.simulation?" - Service":" - Bench Go"):"");
-    lv_label_set_text(reason_label,climate?m.reason:"Home controls are available on the Home page");
-    bool can_adjust=climate&&m.has_target&&!m.away&&!(m.pending&CLIMATE_PENDING);
+    /* Slider is for the proposed TARGET, not the actual room temperature.
+     * No network/servo command is issued until the user presses Set. */
+    const int shown_target=(int)lroundf(m.away?50.0f:editing?draft:m.target);
+    lv_arc_set_value(temperature_ring,climate&&m.has_target?shown_target:45);
+    lv_obj_set_style_arc_color(temperature_ring,lv_color_hex(m.away?MUTED:AMBER),LV_PART_INDICATOR);
+    const bool bench=climate&&!m.simulation&&!m.live_active&&!strcmp(m.mode,"thermostat");
+    if(!climate)lv_label_set_text(mode_label,"Controller Offline");
+    else if(m.away)lv_label_set_text(mode_label,m.live_active?"Away - Live Heating":
+        bench?"Away - Bench Control":"Away - Service");
+    else if(m.live_active)lv_label_set_text(mode_label,"Live Heating - Active");
+    else if(bench)lv_label_set_text(mode_label,"Bench Control - Active");
+    else lv_label_set_text(mode_label,"Service - Standby");
+    lv_label_set_text(reason_label,climate?climate_reason_label(m.reason):
+        "Climate control waiting for connection");
+    const bool can_adjust=climate&&m.has_target&&!m.away&&!(m.pending&CLIMATE_PENDING);
     enabled(minus_button,can_adjust);enabled(plus_button,can_adjust);
-    enabled(minus_five_button,can_adjust);enabled(plus_five_button,can_adjust);
-    enabled(apply_button,can_adjust);
+    enabled(apply_button,can_adjust&&editing);
     enabled(away_button,climate&&m.has_target&&!(m.pending&CLIMATE_PENDING));
-    lv_label_set_text(lv_obj_get_child(away_button,0),m.away?"Resume Home":"Away / 50 F");
+    if(can_adjust)lv_obj_remove_state(temperature_ring,LV_STATE_DISABLED);
+    else lv_obj_add_state(temperature_ring,LV_STATE_DISABLED);
+    lv_label_set_text(lv_obj_get_child(away_button,0),m.away?"Resume Home":"Away (50 F)");
     lv_obj_set_style_bg_color(away_button,lv_color_hex(m.away?MINT:EDGE),0);
     for(int k=0;k<COUNT;++k){
         bool available=ha&&m.items[k].available;
@@ -789,24 +840,31 @@ static void build_ui(void)
     lv_obj_set_style_bg_color(notice,lv_color_hex(CARD),0);lv_obj_set_style_bg_opa(notice,LV_OPA_COVER,0);
     lv_obj_set_style_pad_all(notice,8,0);lv_obj_set_style_radius(notice,10,0);
     lv_label_set_long_mode(notice,LV_LABEL_LONG_DOT);lv_obj_set_height(notice,42);lv_obj_add_flag(notice,LV_OBJ_FLAG_HIDDEN);
-    /* A real, non-interactive dial: target changes still require the Set button. */
-    temperature_ring=lv_arc_create(body[0]);lv_obj_set_size(temperature_ring,218,218);lv_obj_set_pos(temperature_ring,119,0);
-    lv_arc_set_range(temperature_ring,45,80);lv_arc_set_bg_angles(temperature_ring,135,405);
-    lv_obj_remove_style(temperature_ring,NULL,LV_PART_KNOB);lv_obj_remove_flag(temperature_ring,LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_add_flag(temperature_ring,LV_OBJ_FLAG_GESTURE_BUBBLE);
-    lv_obj_set_style_arc_width(temperature_ring,10,LV_PART_MAIN);lv_obj_set_style_arc_width(temperature_ring,10,LV_PART_INDICATOR);
+    /* Drag the visible knob to preview 45..80 F in 1 F increments. */
+    temperature_ring=lv_arc_create(body[0]);lv_obj_set_size(temperature_ring,232,232);lv_obj_set_pos(temperature_ring,112,0);
+    lv_arc_set_range(temperature_ring,45,80);lv_arc_set_rotation(temperature_ring,135);
+    lv_arc_set_bg_angles(temperature_ring,0,270);
+    lv_arc_set_mode(temperature_ring,LV_ARC_MODE_NORMAL);
+    lv_obj_set_style_arc_width(temperature_ring,13,LV_PART_MAIN);
+    lv_obj_set_style_arc_width(temperature_ring,13,LV_PART_INDICATOR);
     lv_obj_set_style_arc_color(temperature_ring,lv_color_hex(EDGE),LV_PART_MAIN);
-    lv_obj_t *room_caption=label(body[0],"ROOM TEMPERATURE",0,47,456,&lv_font_montserrat_14);centered(room_caption);tint(room_caption,MUTED);
-    temp_label=label(body[0],"-- F",0,77,456,&lv_font_montserrat_48);centered(temp_label);
-    target_label=label(body[0],"Target unavailable",0,137,456,&lv_font_montserrat_20);centered(target_label);tint(target_label,AMBER);
-    mode_label=label(body[0],"Controller offline",0,203,456,&lv_font_montserrat_16);centered(mode_label);tint(mode_label,AMBER);
-    reason_label=label(body[0],"Waiting for status",12,231,432,&lv_font_montserrat_14);centered(reason_label);tint(reason_label,MUTED);lv_label_set_long_mode(reason_label,LV_LABEL_LONG_DOT);lv_obj_set_height(reason_label,24);
-    minus_five_button=button(body[0],"-5",0,271,108,43,send_event,-4);
-    minus_button=button(body[0],"-1",116,271,108,43,send_event,-2);
-    plus_button=button(body[0],"+1",232,271,108,43,send_event,-3);
-    plus_five_button=button(body[0],"+5",348,271,108,43,send_event,-5);
-    apply_button=button(body[0],"Set target",0,321,268,42,send_event,-1);
-    away_button=button(body[0],"Away / 50 F",280,321,176,42,send_event,-10);
+    lv_obj_set_style_bg_color(temperature_ring,lv_color_hex(AMBER),LV_PART_KNOB);
+    lv_obj_set_style_pad_all(temperature_ring,7,LV_PART_KNOB);
+    lv_obj_set_style_radius(temperature_ring,LV_RADIUS_CIRCLE,LV_PART_KNOB);
+    lv_obj_add_flag(temperature_ring,LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_remove_flag(temperature_ring,LV_OBJ_FLAG_GESTURE_BUBBLE);
+    lv_obj_add_event_cb(temperature_ring,target_ring_event,LV_EVENT_VALUE_CHANGED,NULL);
+    lv_obj_t *room_caption=label(body[0],"ROOM TEMPERATURE",0,48,456,&lv_font_montserrat_14);centered(room_caption);tint(room_caption,MUTED);
+    temp_label=label(body[0],"-- F",0,78,456,&lv_font_montserrat_48);centered(temp_label);
+    target_label=label(body[0],"Target unavailable",0,144,456,&lv_font_montserrat_20);centered(target_label);tint(target_label,AMBER);
+    mode_label=label(body[0],"Controller Offline",0,208,456,&lv_font_montserrat_16);centered(mode_label);tint(mode_label,AMBER);
+    reason_label=label(body[0],"Waiting for status",12,237,432,&lv_font_montserrat_14);centered(reason_label);tint(reason_label,MUTED);lv_label_set_long_mode(reason_label,LV_LABEL_LONG_DOT);lv_obj_set_height(reason_label,24);
+    minus_button=button(body[0],"-1",0,271,100,42,send_event,-2);
+    lv_obj_t *hint=label(body[0],"DRAG THE RING TO SET",106,281,244,&lv_font_montserrat_14);
+    centered(hint);tint(hint,MUTED);
+    plus_button=button(body[0],"+1",356,271,100,42,send_event,-3);
+    apply_button=button(body[0],"Set Temperature",0,319,278,44,send_event,-1);
+    away_button=button(body[0],"Away (50 F)",290,319,166,44,send_event,-10);
     lv_obj_set_style_bg_color(apply_button,lv_color_hex(AMBER),0);tint(apply_button,INK);
     const int rows[]={0,1,2,7,9};
     const char *names[]={"Deck lights","Breezeway lights","Blinds","Kids heat","Vacuum"};
