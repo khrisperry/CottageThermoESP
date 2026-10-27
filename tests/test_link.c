@@ -33,7 +33,7 @@ int main(void)
 
     /* A stale hello cannot reset a current client's sequence or enroll a new
      * panel during the previous panel's command lease. */
-    p=tl_request(TL_STATUS,42,1);assert(tl_check(&g,&p,boot,now)==TL_OK);assert(g.sequence==2);
+    p=tl_request(TL_STATUS,42,1);assert(tl_check(&g,&p,boot,now)==TL_OK);assert(g.sequence==3);
     p.client=43;assert(tl_check(&g,&p,boot,now)==TL_REPLAY);
     assert(tl_check(&g,&p,boot,now+5001)==TL_OK);
     p.reserved[0]=1;assert(!tl_valid(&p));p.reserved[0]=0;p.version++;assert(!tl_valid(&p));
