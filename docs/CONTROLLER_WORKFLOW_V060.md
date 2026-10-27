@@ -1,4 +1,8 @@
-# Controller v0.6.0: Calibration → Estimated temperatures → Test → Go
+# Controller v0.6.3: Calibration → Estimated temperatures → Test → Go
+
+**v0.6.3 responsive setpoints:** In attended Go, changes to the thermostat target (touchscreen, Home Assistant through the panel, local target button, or enabled schedule) now select the full calibrated dial position promptly, with a short **2-second** spacing guard for rapid repeated edits, **not** five-minute intervals of 0.25 dial. Ordinary room-temperature changes alone do not cause dial moves. The conservative 0.25-level / five-minute controls remain for non-setpoint adjustments. Go is still explicitly armed for **15 minutes** per attended bench session; startup and Stop disable PWM. The controller Go status now shows commanded dial, requested dial, and the short guard countdown. The LEDC GPIO5 channel is initialized once and subsequently updated through duty commands. Encoder feedback is read-only and does not validate that a command physically reached its destination.
+
+
 
 This replaces the controller's JSON-map/simulation/manual-controls page. Use the
 Super Mini local build script as before. v0.6.0 removed the 13 dBm cap; v0.6.1 restores it for a controlled Wi-Fi comparison after authentication timeouts at the 20 dBm default. See [Wi-Fi notes](CONTROLLER_WIFI_V061.md).
