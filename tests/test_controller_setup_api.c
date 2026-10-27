@@ -89,13 +89,20 @@ int main(void)
     assert(setup.temperature_f[4]==73 && !armed && !pwm && controller_setup_ready(&setup));
     request("{\"action\":\"go\",\"position\":3,\"confirm\":\"start_bench\"}","Capture both travel limits");
     request("{\"action\":\"test\",\"confirm\":\"unloaded_bench\"}",NULL);
-    request("{\"action\":\"pulse\",\"us\":550}",NULL);
+    /* Narrower start initially conflicts with saved Off=700. Re-capture
+     * just that dial mark while the start limit remains open. */
+    request("{\"action\":\"pulse\",\"us\":800}",NULL);
+    request("{\"action\":\"capture\",\"kind\":\"start\"}","contain saved dial points");
+    assert(setup.start_us==0 && setup.pulse_us[0]==700);
+    request("{\"action\":\"capture\",\"kind\":\"position\",\"index\":0}",NULL);
+    assert(setup.pulse_us[0]==800 && setup.temperature_mask==63);
+    request("{\"action\":\"pulse\",\"us\":750}",NULL);
     request("{\"action\":\"capture\",\"kind\":\"start\"}",NULL);
-    assert(setup.start_us==550 && setup.end_us==2450 && !controller_setup_ready(&setup));
+    assert(setup.start_us==750 && setup.end_us==2450 && !controller_setup_ready(&setup));
     /* Failed NVS writes must leave prior calibration intact and movement off. */
     fail_save=true;
     request("{\"action\":\"edit_limit\",\"kind\":\"start\",\"confirm\":\"recalibrate_limit\"}","Could not reopen");
-    assert(setup.start_us==550 && persisted.start_us==550 && !armed && !pwm);
+    assert(setup.start_us==750 && persisted.start_us==750 && !armed && !pwm);
     fail_save=false;
     request("{\"action\":\"test\",\"confirm\":\"unloaded_bench\"}",NULL);
     cJSON *saved=setup_json();assert(cJSON_IsTrue(cJSON_GetObjectItem(saved,"ready")));cJSON_Delete(saved);
@@ -113,5 +120,5 @@ int main(void)
     request("{\"action\":\"test\",\"confirm\":\"unloaded_bench\"}",NULL);assert(!go_active&&!pwm&&state.simulated);
     clock_ms=armed_until;request("{\"action\":\"pulse\",\"us\":1300}","Test Mode");
     request("{\"action\":\"reset\",\"confirm\":\"reset_calibration\"}",NULL);assert(!setup.start_us&&!setup.temperature_mask&&!armed&&!pwm);
-    puts("PASS: setup HTTP: selective limit edits, saved-position/temperature preservation, disarm, NVS failure, travel enforcement, Go and timeout");
+    puts("PASS: setup HTTP: selective limit edits, narrow-travel recapture, saved temperature preservation, disarm, NVS failure, travel enforcement, Go and timeout");
 }
