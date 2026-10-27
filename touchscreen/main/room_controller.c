@@ -35,21 +35,26 @@ static bool controller_is_auto(void)
     const char *saved=room_settings_controller_url();
     return !*saved||!strcmp(saved,"auto");
 }
+static bool controller_can_use_mdns(void)
+{
+    /* Never silently downgrade an explicit HTTPS controller origin to HTTP. */
+    return strncmp(room_settings_controller_url(),"https://",8)!=0;
+}
 static bool controller_is_local_name(void)
 {
     const char *saved=room_settings_controller_url();
-    return strstr(saved,"CottageThermoController.local")!=NULL;
+    return controller_can_use_mdns()&&strstr(saved,"CottageThermoController.local")!=NULL;
 }
 static const char *controller_origin(void)
 {
-    if(*discovered_origin&&(controller_is_auto()||controller_is_local_name()||manual_failures>=2))
+    if(*discovered_origin&&controller_can_use_mdns()&&(controller_is_auto()||controller_is_local_name()||manual_failures>=2))
         return discovered_origin;
     return controller_is_auto()?"":room_settings_controller_url();
 }
 static void discover_controller(void)
 {
     if(!room_wifi_connected())return;
-    bool needed=controller_is_auto()||controller_is_local_name()||manual_failures>=2;
+    bool needed=controller_can_use_mdns()&&(controller_is_auto()||controller_is_local_name()||manual_failures>=2);
     if(!needed||*discovered_origin)return;
     uint32_t now=(uint32_t)(esp_timer_get_time()/1000);
     if((int32_t)(now-next_discovery_ms)<0)return;
@@ -146,6 +151,9 @@ static bool exchange(tl_packet_t p,tl_packet_t *r,bool probe)
     int64_t start=esp_timer_get_time();bool ok=false,via_radio=fallback;
     if(probe){
         discover_controller();
+        /* Discovery may block on multicast; the link lease starts at the
+         * actual controller exchange, not the discovery lookup. */
+        start=esp_timer_get_time();
         if(http(&p,r)&&matching(&p,r)&&r->result==TL_OK){via_radio=false;ok=true;}
         else {
             start=esp_timer_get_time();
