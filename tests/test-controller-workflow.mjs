@@ -15,7 +15,11 @@ window.fetch=async(path,opts={})=>{
   else if(path==='/api/config')state.target_f=data.target_f;
   else if(path==='/api/setup'){
    if(data.action==='test')Object.assign(state,{operation:'test',simulation:true,pwm_active:false,bench_armed:true,arm_remaining_ms:900000,last_command_us:-1});
-   else if(data.action==='pulse')Object.assign(state,{pwm_active:true,last_command_us:data.us});
+   else if(data.action==='pulse'){
+     Object.assign(state,{pwm_active:true,last_command_us:data.us});
+     const match=profile.positions.find(p=>p.pulse_us===data.us);
+     if(match)state.encoder.angle_deg=match.angle_deg;
+   }
    else if(data.action==='jog')state.last_command_us+=data.delta_us;
    else if(data.action==='go'){Object.assign(state,{operation:'go',simulation:false});if(delayGo)await delayGo;}
    else if(data.action==='live')Object.assign(state,{operation:'go',operating_mode:'live',live_active:true,simulation:false,bench_armed:false,pwm_active:true});
