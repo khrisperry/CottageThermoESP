@@ -34,6 +34,7 @@
 #include "room_ships.h"
 #include "room_ota.h"
 #include "room_mqtt.h"
+#include "room_layout.h"
 #include <stdatomic.h>
 
 #define COUNT 11
@@ -60,7 +61,7 @@ static lv_obj_t *body[5],*nav[5],*connection,*notice,*temp_label,*target_label,*
 static lv_obj_t *states[COUNT],*control[COUNT][6],*minus_button,*plus_button,*away_button,*apply_button,*camera_image,*camera_note,*settings_button;
 static lv_obj_t *settings_modal,*settings_volume,*settings_volume_label,*settings_camera_button,*settings_close_button;
 static lv_obj_t *temperature_ring,*camera_frame,*camera_status,*tile[COUNT],*icon_badge[COUNT];
-static lv_obj_t *bulb_head[COUNT],*bulb_stem[COUNT],*bulb_base[COUNT],*activity_ring[COUNT];
+static lv_obj_t *bulb_head[COUNT],*bulb_stem[COUNT],*bulb_base[COUNT],*bulb_glow[COUNT],*activity_ring[COUNT];
 static lv_obj_t *notify_button[4],*probe_test_label;
 static lv_obj_t *health_button,*health_dot,*diagnostic_modal,*diagnostic_close_button;
 static lv_obj_t *diagnostic_cells[7],*diagnostic_badges[7],*diagnostic_dots[7];
@@ -814,7 +815,18 @@ static void refresh(lv_timer_t *timer)
             for(unsigned n=0;n<4;++n)lv_obj_set_style_bg_color(heater_fins[n],lv_color_hex(available&&active?AMBER:0x647386),0);
             for(unsigned n=0;n<3;++n){if(available&&active)lv_obj_remove_flag(heater_rays[n],LV_OBJ_FLAG_HIDDEN);else lv_obj_add_flag(heater_rays[n],LV_OBJ_FLAG_HIDDEN);}
         }
-        if(states[k]){lv_label_set_text(states[k],(pending&&!predicted)?"Sending...":available?m.items[k].state:k==8?"--":"Unavailable");tint(states[k],pending?AMBER:color);}
+        if(states[k]){
+            const char *shown=(pending&&!predicted)?"Updating...":
+                !available?(k==8?"--":"Unavailable"):
+                !strcmp(m.items[k].state,"on")?"On":
+                !strcmp(m.items[k].state,"off")?"Off":
+                !strcmp(m.items[k].state,"closed")?"Closed":
+                !strcmp(m.items[k].state,"open")?"Open":
+                !strcmp(m.items[k].state,"docked")?"Docked":
+                m.items[k].state;
+            lv_label_set_text(states[k],shown);
+            tint(states[k],pending?AMBER:color);
+        }
         if(icon_badge[k]){
             const char *symbol=k==2?((!strcmp(m.items[k].state,"closed")||!strcmp(m.items[k].state,"closing"))?LV_SYMBOL_DOWN:LV_SYMBOL_UP):
                 k==9?(!strcmp(m.items[k].state,"docked")?LV_SYMBOL_HOME:LV_SYMBOL_REFRESH):LV_SYMBOL_CHARGE;
@@ -823,17 +835,36 @@ static void refresh(lv_timer_t *timer)
             lv_label_set_text(icon_badge[k],symbol);tint(icon_badge[k],color);
         }
         if(tile[k]){
-            uint32_t background=active?(laundry?(k<5?0x142d45:0x392c1c):(k<2?0x332d1a:0x16342f)):
-                visual==ROOM_VIS_DONE?0x16342f:visual==ROOM_VIS_ERROR?0x3e2028:CARD;
+            uint32_t background=active?(laundry?(k<5?0x142d45:0x392c1c):
+                (k<2?0x312a1b:0x16342f)):
+                visual==ROOM_VIS_DONE?0x16342f:
+                visual==ROOM_VIS_ERROR?0x3e2028:CARD;
             lv_obj_set_style_bg_color(tile[k],lv_color_hex(background),0);
-            lv_obj_set_style_border_color(tile[k],lv_color_hex(pending?AMBER:(active||visual==ROOM_VIS_DONE||visual==ROOM_VIS_ERROR)?color:EDGE),0);
+            lv_obj_set_style_border_color(tile[k],
+                lv_color_hex(pending?AMBER:
+                    (active||visual==ROOM_VIS_DONE||visual==ROOM_VIS_ERROR)?color:EDGE),0);
+            if(k<2){
+                /* The whole tile is the light switch: no separate On/Off
+                 * controls, no click accepted for stale or unknown states. */
+                enabled(tile[k],available&&!pending &&
+                    (!strcmp(m.items[k].state,"on")?
+                        (m.items[k].actions&(1U<<1)):
+                     !strcmp(m.items[k].state,"off")?
+                        (m.items[k].actions&(1U<<0)):false));
+            }
         }
         if(bulb_head[k]){
-            uint32_t fill=available&&active?0xffd54a:0x303b49;
+            const bool glowing=available&&active;
+            uint32_t fill=glowing?0xffd54a:0x45546a;
+            if(bulb_glow[k])
+                lv_obj_set_style_bg_color(bulb_glow[k],
+                    lv_color_hex(glowing?0x786020:0x223248),0);
             lv_obj_set_style_bg_color(bulb_head[k],lv_color_hex(fill),0);
-            lv_obj_set_style_border_color(bulb_head[k],lv_color_hex(available&&active?0xffe68c:0x647386),0);
+            lv_obj_set_style_border_color(bulb_head[k],
+                lv_color_hex(glowing?0xffedaa:0x60748b),0);
             lv_obj_set_style_bg_color(bulb_stem[k],lv_color_hex(fill),0);
-            lv_obj_set_style_bg_color(bulb_base[k],lv_color_hex(available&&active?0xffd54a:0x647386),0);
+            lv_obj_set_style_bg_color(bulb_base[k],
+                lv_color_hex(glowing?0xffe487:0x60748b),0);
         }
         if(activity_ring[k]){
             lv_obj_set_style_arc_color(activity_ring[k],lv_color_hex(color),LV_PART_INDICATOR);
