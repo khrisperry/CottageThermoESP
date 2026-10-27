@@ -9,6 +9,12 @@ on:
       - feature/connectivity-climate-review
   workflow_dispatch:
 
+# This feature branch receives coordinated multi-file changes. Keep only
+# the most recent build; avoid dozens of obsolete queued firmware jobs.
+concurrency:
+  group: cottage-thermo-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 
