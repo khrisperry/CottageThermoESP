@@ -975,7 +975,7 @@ static void build_ui(void)
             ROOM_HOME_TILE_W,ROOM_HOME_TILE_H,CARD,15);
         lv_obj_add_flag(p,LV_OBJ_FLAG_CLICKABLE);
         lv_obj_set_style_bg_color(p,lv_color_hex(0x394761),LV_STATE_PRESSED);
-        lv_obj_set_style_bg_opa(p,LV_OPA_55,LV_STATE_DISABLED);
+        lv_obj_set_style_bg_opa(p,LV_OPA_50,LV_STATE_DISABLED);
         lv_obj_add_event_cb(p,light_tile_event,LV_EVENT_CLICKED,(void*)(intptr_t)key);
         bulb_glow[key]=panel(p,82,6,60,53,0x223248,28);
         lv_obj_set_style_border_width(bulb_glow[key],0,0);
@@ -1012,7 +1012,7 @@ static void build_ui(void)
         }
         label(p,home_names[idx],52,10,ROOM_HOME_TILE_W-58,&lv_font_montserrat_16);
         states[key]=label(p,"Unavailable",52,37,
-                          key==7?72:ROOM_HOME_TILE_W-58,&lv_font_montserrat_14);
+                          key==7?60:ROOM_HOME_TILE_W-58,&lv_font_montserrat_14);
         lv_label_set_long_mode(states[key],LV_LABEL_LONG_DOT);
         lv_obj_set_height(states[key],21);
         if(key==2){
@@ -1031,7 +1031,7 @@ static void build_ui(void)
         if(key==7){
             /* Keep Kids radiator temperature visible without widening
              * the tile or colliding with the On/Off row. */
-            states[8]=label(p,"--",132,33,82,&lv_font_montserrat_20);
+            states[8]=label(p,"--",116,35,98,&lv_font_montserrat_16);
             tint(states[8],TEXT);
             lv_label_set_long_mode(states[8],LV_LABEL_LONG_DOT);
             lv_obj_set_height(states[8],30);
