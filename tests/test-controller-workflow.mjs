@@ -67,5 +67,14 @@ assert.equal(state.operation,'stopped');
 assert(id('travelNotice').textContent.includes('Travel limits incomplete'));
 assert(id('goButton').disabled,'Go must remain unavailable while end limit is open');
 assert(!id('editStart').disabled&&id('editEnd').disabled);
+/* Reopening a boundary must not trap already saved dial marks: while
+ * testing, affected points can be recaptured before the new end is saved. */
+id('testButton').click();await settle();
+id('startingPulse').value='2100';id('sendPulse').click();await settle();
+const marker=id('positions').querySelector('[data-position="7"]');
+assert(!marker.disabled,'captured dial marks are editable while one limit is open');
+marker.click();await settle();
+assert.equal(posts.at(-1).data.action,'capture');
+assert.equal(posts.at(-1).data.index,7);
 offline=true;await intervals.at(-1)();assert(id('testButton').disabled&&id('sendPulse').disabled&&id('goButton').disabled);assert.equal(id('encoderAngle').textContent,'—');assert.deepEqual(errors,[]);
 window.happyDOM.abort();console.log('PASS: controller page: safe travel-limit correction, preservation, no auto movement, Test/Go/Stop, invalid temperatures and offline controls');
