@@ -53,6 +53,26 @@ static esp_err_t setup_post(httpd_req_t *r)
             if(pulse(us)!=ESP_OK){release();state.config.mode=TH_HOLD;error="Servo output failed. Enter Test Mode again.";}
             else {th_release(&state);event("Manual bench movement; automatic control remains stopped");}
         }
+    } else if(text_is(j,"action","edit_limit")) {
+        /* An incorrectly captured endpoint can otherwise trap the servo
+         * inside its old boundary. Explicitly reopen one endpoint only,
+         * retain the other endpoint and all numbered dial/temperature data.
+         * Always stop PWM and disarm before the travel restriction changes. */
+        bool start=text_is(j,"kind","start"),end=text_is(j,"kind","end");
+        if(!start && !end)error="Choose Start or End to re-measure.";
+        else if(!text_is(j,"confirm","recalibrate_limit"))
+            error="Confirm that the unloaded fixture is attended before reopening a travel limit.";
+        else if(!(start?setup.start_us:setup.end_us))
+            error="That travel limit is already open. Move and capture it in Test Mode.";
+        else {
+            release();state.config.mode=TH_HOLD;
+            controller_setup_t next=setup;
+            if(start)next.start_us=0;else next.end_us=0;
+            if(!save_setup(&next))
+                error="Could not reopen the travel limit; previous calibration remains saved and movement is stopped.";
+            else event(start?"Start limit reopened; retained dial settings; enter Test Mode to re-measure":
+                             "End limit reopened; retained dial settings; enter Test Mode to re-measure");
+        }
     } else if(text_is(j,"action","capture")) {
         if(!testing || !pwm || last_pulse<500)error="In Test Mode, move to the desired position before capturing it.";
         else {
