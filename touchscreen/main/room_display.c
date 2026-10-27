@@ -58,7 +58,7 @@ typedef struct { int item,action; float target; int64_t at; } command_t;
 static model_t model;
 static SemaphoreHandle_t mutex;
 static QueueHandle_t commands;
-static lv_obj_t *body[5],*nav[5],*connection,*notice,*temp_label,*target_label,*mode_label,*reason_label;
+static lv_obj_t *body[5],*nav[5],*nav_marker[5],*connection,*notice,*temp_label,*target_label,*mode_label,*reason_label;
 static lv_obj_t *states[COUNT],*control[COUNT][6],*minus_button,*plus_button,*away_button,*apply_button,*camera_image,*camera_note,*settings_button;
 static lv_obj_t *settings_modal,*settings_volume,*settings_volume_label,*settings_camera_button,*settings_close_button;
 static lv_obj_t *temperature_ring,*camera_frame,*camera_status,*tile[COUNT],*icon_badge[COUNT];
@@ -289,7 +289,13 @@ static void select_page(unsigned p)
     if(settings_modal)lv_obj_add_flag(settings_modal,LV_OBJ_FLAG_HIDDEN);
     if(diagnostic_modal)lv_obj_add_flag(diagnostic_modal,LV_OBJ_FLAG_HIDDEN);
     for(unsigned n=0;n<5;++n){if(n==p)lv_obj_remove_flag(body[n],LV_OBJ_FLAG_HIDDEN);else lv_obj_add_flag(body[n],LV_OBJ_FLAG_HIDDEN);
-        lv_obj_set_style_bg_color(nav[n],lv_color_hex(n==p?0x64dfc4:0x151f2d),0);lv_obj_set_style_text_color(nav[n],lv_color_hex(n==p?0x0b111b:0x92a3b8),0);}
+        lv_obj_set_style_bg_color(nav[n],lv_color_hex(n==p?LIFT:SURFACE),0);
+        lv_obj_set_style_text_color(nav[n],lv_color_hex(n==p?TEXT:MUTED),0);
+        lv_obj_set_style_border_color(nav[n],lv_color_hex(n==p?BLUE:EDGE),0);
+        if(nav_marker[n]){
+            if(n==p)lv_obj_remove_flag(nav_marker[n],LV_OBJ_FLAG_HIDDEN);
+            else lv_obj_add_flag(nav_marker[n],LV_OBJ_FLAG_HIDDEN);
+        }}
     xSemaphoreTake(mutex,portMAX_DELAY);model.page=p;model.settings_open=false;++model.generation;xSemaphoreGive(mutex);
     lv_obj_add_flag(camera_image,LV_OBJ_FLAG_HIDDEN);
     lv_label_set_text(camera_note,"Loading camera...");
@@ -445,14 +451,19 @@ static const char *climate_reason_label(const char *reason)
     return "Controller status available in diagnostics";
 }
 /* Native styling uses LVGL primitives, so no browser or bitmap UI is required. */
-#define INK 0x0b111b
-#define CARD 0x151f2d
-#define EDGE 0x263449
-#define MUTED 0x92a3b8
-#define TEXT 0xf1f5fa
-#define MINT 0x64dfc4
-#define AMBER 0xf5b65d
-#define BLUE 0x7eb5ff
+/* Design #3: uniform midnight-blue palette, strong contrast, vivid accent.
+ * Simple fills/borders keep rendering inexpensive on ESP32-S3 / LVGL. */
+#define INK 0x071321
+#define CARD 0x10253a
+#define EDGE 0x294560
+#define MUTED 0x9ab1c9
+#define TEXT 0xf4f8ff
+#define MINT 0x44e6c4
+#define AMBER 0xffc566
+#define BLUE 0x62bfff
+#define SURFACE 0x0c1b2d
+#define LIFT 0x1b3853
+#define LIGHT_ACTIVE 0x26362f
 static lv_obj_t *label(lv_obj_t *parent,const char *text,int x,int y,int width,const lv_font_t *font)
 {
     lv_obj_t *o=lv_label_create(parent);lv_obj_set_pos(o,x,y);lv_obj_set_width(o,width);
@@ -472,10 +483,11 @@ static void tint(lv_obj_t *o,uint32_t color){lv_obj_set_style_text_color(o,lv_co
 static lv_obj_t *button(lv_obj_t *parent,const char *text,int x,int y,int width,int height,lv_event_cb_t cb,intptr_t id)
 {
     lv_obj_t *o=lv_button_create(parent);lv_obj_remove_style_all(o);lv_obj_set_style_bg_opa(o,LV_OPA_COVER,0);lv_obj_set_pos(o,x,y);lv_obj_set_size(o,width,height);
-    lv_obj_set_style_bg_color(o,lv_color_hex(EDGE),0);tint(o,TEXT);
-    lv_obj_set_style_radius(o,12,0);lv_obj_set_style_shadow_width(o,0,0);
-    lv_obj_set_style_border_width(o,0,0);lv_obj_set_style_pad_all(o,0,0);
-    lv_obj_set_style_bg_color(o,lv_color_hex(0x334861),LV_STATE_PRESSED);
+    lv_obj_set_style_bg_color(o,lv_color_hex(LIFT),0);tint(o,TEXT);
+    lv_obj_set_style_radius(o,13,0);lv_obj_set_style_shadow_width(o,0,0);
+    lv_obj_set_style_border_color(o,lv_color_hex(EDGE),0);
+    lv_obj_set_style_border_width(o,1,0);lv_obj_set_style_pad_all(o,0,0);
+    lv_obj_set_style_bg_color(o,lv_color_hex(0x284a68),LV_STATE_PRESSED);
     lv_obj_set_style_bg_opa(o,LV_OPA_40,LV_STATE_DISABLED);lv_obj_set_style_text_opa(o,LV_OPA_40,LV_STATE_DISABLED);
     lv_obj_add_flag(o,LV_OBJ_FLAG_GESTURE_BUBBLE);lv_obj_add_event_cb(o,cb,LV_EVENT_CLICKED,(void*)id);
     lv_obj_t *l=lv_label_create(o);lv_label_set_text(l,text);lv_obj_center(l);return o;
