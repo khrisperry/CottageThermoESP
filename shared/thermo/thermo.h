@@ -7,6 +7,9 @@
 #define THERMO_SCHEMA 2
 #define THERMO_SCHEDULE_MAX 14
 #define THERMO_TTL_MS 90000
+/* Minimum spacing for intentional thermostat setpoint moves. Unlike adaptive
+ * corrections, a new requested setpoint must not wait five minutes. */
+#define THERMO_SETPOINT_GUARD_MS 2000U
 
 typedef enum { TH_HOLD, TH_MANUAL, TH_DIRECT, TH_AUTO } th_mode_t;
 typedef enum { TH_NONE, TH_ROOM, TH_SWITCHBOT } th_source_t;
