@@ -1,5 +1,25 @@
 # Cottage room panel — Waveshare ESP32-S3-Touch-LCD-4B
 
+## v0.14.3 — compact Home tiles and larger, unclipped Climate dial
+
+The native Waveshare 480×480 Climate page now uses a larger 252px interactive dial, safely inset from the header so the knob is not clipped. **-1 / Set Temperature / +1** share a single wide bottom control row. **Away (50 F)** remains separate and the ring continues to change a draft only: no servo or network request is sent until **Set Temperature** is pressed.
+
+The Home page is a compact **two-column grid** of 224px tiles:
+
+- Row 1: **Deck Lights** and **Breezeway Lights**, each a whole-tile On/Off toggle with an illuminated gold bulb when On; unknown/stale states and in-flight commands cannot be tapped
+- Row 2: **Blinds** with Open / Stop / Close icon buttons, and **Vacuum** with Start / Stop and dock status
+- Row 3: **Kids Heat** with On / Off and current bedroom temperature, leaving the right-hand sixth tile position unused for future features
+
+The tiles retain their existing Home Assistant entity mappings, queue, pending-command checks and state/availability behavior. No controller-side changes are required. The production layout constants and static bounds assertions live in `main/room_layout.h`, and `test_room_home_layout.c` checks grid geometry and known-state-only light toggling. **All flash/build work stays local** rather than using GitHub Actions. To update the 4B only:
+
+```powershell
+cd C:\Users\kperry\Documents\GitHub\CottageThermoESP
+git pull --ff-only
+.\tools\build-room-4b.ps1 -Flash -Monitor -Port COM21
+```
+
+Leave the Super Mini controller on v0.7.1. This is a layout/UI release and does not require an NVS erase, recalibration, MQTT reconnection or new pairing.
+
 ## v0.14.2 — local-build Climate polish and reliable controller commands
 
 The Climate page uses a **draggable target-temperature ring** with a visible handle (45–80°F, one-degree steps). The large center number remains the **current room temperature**, while the amber target indicator and ring show the *proposed setpoint*. Sliding the ring or tapping the small **−1 / +1** buttons only edits a draft; tap **Set Temperature** once to send it to the controller. **Away (50 F)** and **Resume Home** remain a prominent independent button. Raw firmware states such as `mapped_setting_reached` are translated to user-facing status labels, with consistent capitalization and no unsupported special-font separators.
