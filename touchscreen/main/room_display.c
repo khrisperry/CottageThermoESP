@@ -891,8 +891,12 @@ static void refresh(lv_timer_t *timer)
         lv_label_set_text(camera_status,LV_SYMBOL_VIDEO "  OFFLINE");
     }
 }
-static void control_button(lv_obj_t *p,const char *text,int key,int action,int x,int y,int w)
-{control[key][action]=button(p,text,x,y,w,42,send_event,key*6+action);enabled(control[key][action],false);}
+static void control_button(lv_obj_t *p,const char *text,int key,int action,
+                           int x,int y,int w,int h)
+{
+    control[key][action]=button(p,text,x,y,w,h,send_event,key*6+action);
+    enabled(control[key][action],false);
+}
 static void build_ui(void)
 {
     lv_display_add_event_cb(lv_display_get_default(),frame_event,LV_EVENT_REFR_START,NULL);
@@ -962,13 +966,13 @@ static void build_ui(void)
         ROOM_CLIMATE_PLUS_W,ROOM_CLIMATE_BUTTON_H,send_event,-3);
     lv_obj_set_style_bg_color(apply_button,lv_color_hex(AMBER),0);
     tint(apply_button,INK);
-    /* Compact Home Assistant-style light tiles: touch anywhere on a tile
-     * to toggle it, and the bulb glows only for a known/optimistic On state.
-     * Blinds, Kids Heat, Vacuum keep explicit actions below in full rows. */
+    /* Home Assistant-style compact 2-column grid, 5 usable tiles:
+     * Deck / Breezeway, Blinds / Vacuum, Kids Heat / reserved empty slot.
+     * Only light tiles toggle on touch; other controls stay explicit. */
     for(int key=0;key<2;++key){
-        const int x=key==0?0:ROOM_HOME_LIGHT_W+ROOM_HOME_LIGHT_GAP;
+        const int x=key==0?0:ROOM_HOME_TILE_W+ROOM_HOME_TILE_GAP;
         lv_obj_t *p=tile[key]=panel(body[1],x,0,
-            ROOM_HOME_LIGHT_W,ROOM_HOME_LIGHT_H,CARD,15);
+            ROOM_HOME_TILE_W,ROOM_HOME_TILE_H,CARD,15);
         lv_obj_add_flag(p,LV_OBJ_FLAG_CLICKABLE);
         lv_obj_set_style_bg_color(p,lv_color_hex(0x394761),LV_STATE_PRESSED);
         lv_obj_set_style_bg_opa(p,LV_OPA_55,LV_STATE_DISABLED);
@@ -984,48 +988,53 @@ static void build_ui(void)
         bulb_base[key]=panel(bulb,11,39,18,4,0x60748b,2);
         lv_obj_set_style_border_width(bulb_base[key],0,0);
         lv_obj_t *name=label(p,key==0?"Deck Lights":"Breezeway Lights",
-            4,60,ROOM_HOME_LIGHT_W-8,&lv_font_montserrat_16);
+            4,60,ROOM_HOME_TILE_W-8,&lv_font_montserrat_16);
         centered(name);
         states[key]=label(p,"Unavailable",4,83,
-            ROOM_HOME_LIGHT_W-8,&lv_font_montserrat_14);
+            ROOM_HOME_TILE_W-8,&lv_font_montserrat_14);
         centered(states[key]);
         lv_label_set_long_mode(states[key],LV_LABEL_LONG_DOT);
         lv_obj_set_height(states[key],19);
     }
-    const int rows[]={2,7,9};
-    const char *names[]={"Blinds","Kids Heat","Vacuum"};
-    const char *symbols[]={LV_SYMBOL_UP,LV_SYMBOL_CHARGE,LV_SYMBOL_HOME};
-    const int y[]={ROOM_HOME_BLINDS_Y,ROOM_HOME_KIDS_Y,ROOM_HOME_VACUUM_Y};
-    const int height[]={ROOM_HOME_BLINDS_H,ROOM_HOME_KIDS_H,ROOM_HOME_VACUUM_H};
-    for(int row=0;row<3;++row){
-        int key=rows[row];
-        lv_obj_t *p=tile[key]=panel(body[1],0,y[row],ROOM_PAGE_W,height[row],CARD,13);
+    const int home_keys[]={2,9,7};
+    const char *home_names[]={"Blinds","Vacuum","Kids Heat"};
+    const int home_x[]={0,ROOM_HOME_TILE_W+ROOM_HOME_TILE_GAP,0};
+    const int home_y[]={ROOM_HOME_ROW2_Y,ROOM_HOME_ROW2_Y,ROOM_HOME_ROW3_Y};
+    for(int idx=0;idx<3;++idx){
+        const int key=home_keys[idx];
+        lv_obj_t *p=tile[key]=panel(body[1],home_x[idx],home_y[idx],
+                                   ROOM_HOME_TILE_W,ROOM_HOME_TILE_H,CARD,13);
         if(key==2)blinds_icon(p);
         else if(key==7)heater_icon(p);
         else{
-            icon_badge[key]=label(p,symbols[row],13,21,28,&lv_font_montserrat_24);
+            icon_badge[key]=label(p,LV_SYMBOL_HOME,13,17,30,&lv_font_montserrat_24);
             tint(icon_badge[key],BLUE);
         }
-        label(p,names[row],52,8,186,&lv_font_montserrat_16);
-        states[key]=label(p,"Unavailable",52,33,key==7?66:184,&lv_font_montserrat_14);
+        label(p,home_names[idx],52,10,ROOM_HOME_TILE_W-58,&lv_font_montserrat_16);
+        states[key]=label(p,"Unavailable",52,37,
+                          key==7?72:ROOM_HOME_TILE_W-58,&lv_font_montserrat_14);
         lv_label_set_long_mode(states[key],LV_LABEL_LONG_DOT);
-        lv_obj_set_height(states[key],22);
+        lv_obj_set_height(states[key],21);
         if(key==2){
-            control_button(p,"Open",key,2,240,16,66);
-            control_button(p,"Stop",key,3,312,16,66);
-            control_button(p,"Close",key,4,384,16,66);
-        } else if(key==9){
-            control_button(p,LV_SYMBOL_PLAY " Start",key,5,246,19,96);
-            control_button(p,LV_SYMBOL_STOP " Stop",key,3,350,19,96);
-        } else{
-            control_button(p,"On",key,0,266,17,86);
-            control_button(p,"Off",key,1,360,17,86);
+            /* Same Open / Stop / Close semantics as the HA cover card,
+             * but sized for three usable 32px buttons in a 224px tile. */
+            control_button(p,LV_SYMBOL_UP,key,2,10,ROOM_HOME_ACTION_Y,62,ROOM_HOME_ACTION_H);
+            control_button(p,LV_SYMBOL_STOP,key,3,81,ROOM_HOME_ACTION_Y,62,ROOM_HOME_ACTION_H);
+            control_button(p,LV_SYMBOL_DOWN,key,4,152,ROOM_HOME_ACTION_Y,62,ROOM_HOME_ACTION_H);
+        }else if(key==9){
+            control_button(p,LV_SYMBOL_PLAY " Start",key,5,10,ROOM_HOME_ACTION_Y,100,ROOM_HOME_ACTION_H);
+            control_button(p,LV_SYMBOL_STOP " Stop",key,3,114,ROOM_HOME_ACTION_Y,100,ROOM_HOME_ACTION_H);
+        }else{
+            control_button(p,"On",key,0,10,ROOM_HOME_ACTION_Y,100,ROOM_HOME_ACTION_H);
+            control_button(p,"Off",key,1,114,ROOM_HOME_ACTION_Y,100,ROOM_HOME_ACTION_H);
         }
         if(key==7){
-            states[8]=label(p,"--",119,29,137,&lv_font_montserrat_28);
+            /* Keep Kids radiator temperature visible without widening
+             * the tile or colliding with the On/Off row. */
+            states[8]=label(p,"--",132,33,82,&lv_font_montserrat_20);
             tint(states[8],TEXT);
             lv_label_set_long_mode(states[8],LV_LABEL_LONG_DOT);
-            lv_obj_set_height(states[8],34);
+            lv_obj_set_height(states[8],30);
             lv_obj_set_style_text_align(states[8],LV_TEXT_ALIGN_RIGHT,0);
         }
     }
