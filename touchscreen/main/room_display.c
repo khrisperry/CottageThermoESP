@@ -339,28 +339,71 @@ bool room_display_request_away(bool enabled)
     }
     xSemaphoreGive(mutex);return ready;
 }
+/* The Home Assistant action queue is shared by conventional controls and
+ * the compact tap-to-toggle light tiles. Never queue a guessed action when
+ * HA state is stale, a command is pending, or an action is unavailable. */
+static void queue_ha_action(int key,int action,const model_t *snapshot)
+{
+    if(key<0||key>=COUNT||action<0||action>=6)return;
+    const unsigned bit=1U<<key;
+    if((snapshot->pending&bit)||!room_wifi_connected()||
+       !current(snapshot->ha_at)||!snapshot->items[key].available||
+       !(snapshot->items[key].actions&(1U<<action)))return;
+    command_t c={.item=key,.action=action,.at=esp_timer_get_time()};
+    xSemaphoreTake(mutex,portMAX_DELAY);
+    if(model.pending&bit){
+        xSemaphoreGive(mutex);
+        return;
+    }
+    model.pending|=bit;
+    if((key==0||key==1||key==7)&&(action==0||action==1))
+        room_optimistic_begin(&model.optimistic[key],action==0,c.at);
+    xSemaphoreGive(mutex);
+    if(xQueueSend(commands,&c,0)!=pdTRUE){
+        xSemaphoreTake(mutex,portMAX_DELAY);
+        model.pending&=~bit;
+        model.optimistic[key].active=false;
+        xSemaphoreGive(mutex);
+        message("Controller busy. Light command was not queued.");
+    }
+}
+static void light_tile_event(lv_event_t *e)
+{
+    const int key=(int)(intptr_t)lv_event_get_user_data(e);
+    if(key!=0&&key!=1)return;
+    static model_t snapshot;
+    copy_model(&snapshot);
+    last_touch=esp_timer_get_time();
+    if(snapshot.pending&(1U<<key))return;
+    /* On and Off are the only known toggle states. Unknown/unavailable
+     * state intentionally does nothing; the next refresh will restore it. */
+    int action=!strcmp(snapshot.items[key].state,"on")?1:
+               !strcmp(snapshot.items[key].state,"off")?0:-1;
+    if(action>=0)queue_ha_action(key,action,&snapshot);
+}
 static void send_event(lv_event_t *e)
 {
-    intptr_t id=(intptr_t)lv_event_get_user_data(e);static model_t m;copy_model(&m);last_touch=esp_timer_get_time();
-    if(id==-10){if(room_display_request_away(!m.away))editing=false;return;}
+    intptr_t id=(intptr_t)lv_event_get_user_data(e);
+    static model_t snapshot;
+    copy_model(&snapshot);
+    last_touch=esp_timer_get_time();
+    if(id==-10){
+        if(room_display_request_away(!snapshot.away))editing=false;
+        return;
+    }
     if(id==-2||id==-3){
-        if(!(m.pending&CLIMATE_PENDING)&&m.climate_ok&&m.has_target&&!m.away&&current(m.climate_at)){
+        if(!(snapshot.pending&CLIMATE_PENDING)&&snapshot.climate_ok&&
+           snapshot.has_target&&!snapshot.away&&current(snapshot.climate_at)){
             draft=fmaxf(45,fminf(80,draft+(id==-2?-1.0f:1.0f)));
             editing=true;
         }
         return;
     }
-    if(id<0){if(room_display_request_target(draft))editing=false;return;}
-    command_t c={.item=id<0?-1:id/6,.action=id<0?0:id%6,.target=draft,.at=esp_timer_get_time()};
-    unsigned pending_bit=c.item<0?CLIMATE_PENDING:1U<<c.item;
-    if(m.pending&pending_bit)return;
-    if(c.item<0){if(!m.climate_ok||!m.has_target||!current(m.climate_at))return;}
-    else if(!room_wifi_connected()||!current(m.ha_at)||!m.items[c.item].available||!(m.items[c.item].actions&(1U<<c.action)))return;
-    xSemaphoreTake(mutex,portMAX_DELAY);model.pending|=pending_bit;
-    if((c.item==0||c.item==1||c.item==7)&&(c.action==0||c.action==1))room_optimistic_begin(&model.optimistic[c.item],c.action==0,c.at);
-    xSemaphoreGive(mutex);
-    if(xQueueSend(commands,&c,0)!=pdTRUE){xSemaphoreTake(mutex,portMAX_DELAY);model.pending&=~pending_bit;if(c.item>=0)model.optimistic[c.item].active=false;xSemaphoreGive(mutex);message("Busy; request not queued");}
-    editing=false;
+    if(id<0){
+        if(room_display_request_target(draft))editing=false;
+        return;
+    }
+    queue_ha_action((int)id/6,(int)id%6,&snapshot);
 }
 /* The existing arc now controls a DRAFT target instead of pretending the
  * ambient room temperature is the adjustable setting. Finger movement only
