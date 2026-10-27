@@ -17,7 +17,7 @@ menu "Cottage room thermostat"
         default ""
     config ROOM_CONTROLLER_URL
         string "Controller base URL (no trailing slash)"
-        default "http://192.168.4.1"
+        default "auto"
     config ROOM_SENSOR
         int "Probe: 0=disabled, 1=SHT31 (0x44), 2=SHT4x (0x44), 3=BMP/BME280 test"
         range 0 3
