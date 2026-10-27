@@ -133,7 +133,8 @@ static bool fresh(th_sample_t p,uint64_t now)
 th_action_t th_tick(th_state_t *s,uint64_t now)
 {
     th_action_t a={0};
-    s->effective_target_f=s->config.target_f;
+    s->effective_target_f=s->away?50.0f:s->config.target_f;
+    s->away_clamped=false;
     s->source=TH_NONE;
     s->selected_f=NAN;
     s->proposed_level=NAN;
@@ -157,8 +158,8 @@ th_action_t th_tick(th_state_t *s,uint64_t now)
             s->feedback_over_since_ms=0;
             s->reason="sensor_disagreement";return a;
         }
-        float target=s->config.target_f;
-        if(s->config.schedule_enabled) {
+        float target=s->away?50.0f:s->config.target_f;
+        if(!s->away && s->config.schedule_enabled) {
             if(!s->clock_valid || !th_scheduled_target(&s->config,s->weekday,s->minute,&target)) {
                 s->reason="schedule_clock_unavailable";return a;
             }
@@ -178,13 +179,18 @@ th_action_t th_tick(th_state_t *s,uint64_t now)
             s->feedback_trim=0;
             s->feedback_corrections=0;
         }
-        if (target < s->config.map[0].temp_f || target > s->config.map[s->config.map_count-1].temp_f) {
+        if (target > s->config.map[s->config.map_count-1].temp_f ||
+            (target < s->config.map[0].temp_f && !s->away)) {
             s->feedback_over_since_ms=0;
             s->reason="target_outside_measured_map"; return a;
         }
-        // Set Williams' own thermostat to empirical steady-state level.
-        // Do not treat the servo as a room-temperature on/off relay or integrate error.
-        for (size_t i=1;i<s->config.map_count;++i) {
+        // Heat-only mechanical dial. Freeze Hold always requests 50F and
+        // never disables the furnace. If dial 1 is calibrated above 50F,
+        // command dial 1, disclose the limitation and require real testing.
+        if(s->away && target<s->config.map[0].temp_f){
+            desired=s->config.map[0].level;
+            s->away_clamped=true;
+        }else for (size_t i=1;i<s->config.map_count;++i) {
             th_point_t x=s->config.map[i-1],y=s->config.map[i];
             if (target <= y.temp_f) {
                 desired=x.level+(y.level-x.level)*(target-x.temp_f)/(y.temp_f-x.temp_f);
