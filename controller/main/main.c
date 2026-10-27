@@ -41,6 +41,7 @@ static const char *TAG="thermostat";
 #define CONFIG_KEY "sim_config"
 static controller_setup_t setup;
 static bool go_active;
+static bool away_active;
 /* NVS-selected intent, not permission to move until all safety prerequisites
  * pass after boot. Service always starts with servo output disabled. */
 static bool live_selected,live_fault,live_verifying;
@@ -125,6 +126,16 @@ static void release(void)
         if (err!=ESP_OK) ESP_LOGE(TAG,"PWM stop: %s",esp_err_to_name(err));
     }
     pwm=false; last_pulse=-1; armed=false; go_active=false; state.simulated=true; state.config.mode=TH_HOLD; th_release(&state);
+}
+static bool save_away(bool enabled)
+{
+    if(nvs_set_u32(store,"freeze_away",enabled?1:0)!=ESP_OK || nvs_commit(store)!=ESP_OK)return false;
+    away_active=enabled;
+    state.away=enabled;
+    state.feedback_tracking=false;state.feedback_trim=0;
+    event(enabled?"Freeze Hold enabled: fixed 50 F; comfort target retained":
+                  "Freeze Hold disabled: comfort target restored");
+    return true;
 }
 static bool save_live_mode(bool enabled)
 {
@@ -318,7 +329,7 @@ static esp_err_t get_api(httpd_req_t *r)
         }
     } else {
         j=cJSON_CreateObject();
-        cJSON_AddStringToObject(j,"version","0.6.5");
+        cJSON_AddStringToObject(j,"version","0.7.0");
 #ifdef CONFIG_THERMO_SUPERMINI
         cJSON_AddStringToObject(j,"board","HW-747 Super Mini 4 MB");
 #else
@@ -326,12 +337,20 @@ static esp_err_t get_api(httpd_req_t *r)
 #endif
         cJSON_AddNumberToObject(j,"servo_gpio",CONFIG_THERMO_SERVO_GPIO);
         cJSON_AddBoolToObject(j,"simulation",state.simulated);
+        cJSON_AddStringToObject(j,"operating_mode",live_selected?"live":"service");
+        cJSON_AddBoolToObject(j,"live_active",live_selected&&go_active&&!live_fault);
+        cJSON_AddBoolToObject(j,"live_fault",live_fault);
+        cJSON_AddBoolToObject(j,"live_verifying",live_verifying);
+        cJSON_AddStringToObject(j,"live_issue",live_issue);
+        cJSON_AddBoolToObject(j,"away",away_active);
+        cJSON_AddNumberToObject(j,"comfort_target_f",state.config.target_f);
+        cJSON_AddBoolToObject(j,"freeze_below_calibrated_range",state.away_clamped);
         cJSON_AddStringToObject(j,"operation",go_active?"go":armed?"test":"stopped");
         const char *setup_issue=controller_setup_ready(&setup);
         cJSON_AddBoolToObject(j,"calibration_ready",!setup_issue);
         cJSON_AddStringToObject(j,"setup_issue",setup_issue?setup_issue:"");
         cJSON_AddBoolToObject(j,"bench_armed",armed);
-        cJSON_AddNumberToObject(j,"arm_remaining_ms",armed && armed_until>now_ms()?armed_until-now_ms():0);
+        cJSON_AddNumberToObject(j,"arm_remaining_ms",!live_selected&&armed && armed_until>now_ms()?armed_until-now_ms():0);
         cJSON_AddBoolToObject(j,"pwm_active",pwm);
         cJSON_AddNumberToObject(j,"last_command_us",last_pulse);
         cJSON_AddBoolToObject(j,"position_synchronized",state.synchronized);
@@ -418,7 +437,7 @@ static esp_err_t get_api(httpd_req_t *r)
         cJSON_AddStringToObject(j,"reason",state.reason);
         cJSON_AddStringToObject(j,"source",th_source_name(state.source));
         cJSON_AddStringToObject(j,"mode",th_mode_name(state.config.mode));
-        cJSON_AddNumberToObject(j,"target_f",state.effective_target_f);
+        cJSON_AddNumberToObject(j,"target_f",away_active?50.0f:state.effective_target_f);
         cJSON_AddBoolToObject(j,"clock_valid",state.clock_valid);
         cJSON_AddBoolToObject(j,"schedule_enabled",state.config.schedule_enabled);
         if(state.source!=TH_NONE) cJSON_AddNumberToObject(j,"temperature_f",state.selected_f);
@@ -455,6 +474,8 @@ static bool update_config(cJSON *j)
     v=cJSON_GetObjectItemCaseSensitive(j,"secondary_enabled");
     if(v) {if(!cJSON_IsBool(v))return false;next.secondary_enabled=cJSON_IsTrue(v);}
     if(go_active && (cJSON_HasObjectItem(j,"mode") || cJSON_HasObjectItem(j,"map")))return false;
+    if(live_selected&&cJSON_HasObjectItem(j,"mode"))return false;
+    if(away_active&&cJSON_HasObjectItem(j,"target_f"))return false;
     bool map_changed=false;
     v=cJSON_GetObjectItemCaseSensitive(j,"map");
     if(v) {
@@ -496,16 +517,21 @@ static void link_handle(const tl_packet_t *p,tl_packet_t *reply)
     if(result==TL_OK&&p->operation!=TL_STATUS){
         room_guard.sequence=p->sequence; /* Failed operations also consume IDs. */
         if(p->operation==TL_TARGET){
-            cJSON *j=cJSON_CreateObject();cJSON_AddNumberToObject(j,"target_f",p->value);
-            result=update_config(j)?TL_OK:TL_SAVE_FAILED;cJSON_Delete(j);
+            if(away_active) result=TL_INVALID; /* Freeze Hold must be explicitly exited. */
+            else {
+                cJSON *j=cJSON_CreateObject();cJSON_AddNumberToObject(j,"target_f",p->value);
+                result=update_config(j)?TL_OK:TL_SAVE_FAILED;cJSON_Delete(j);
+            }
+        }else if(p->operation==TL_AWAY){
+            result=save_away(p->value==1)?TL_OK:TL_SAVE_FAILED;
         }else if(p->operation==TL_SAMPLE){
             result=th_sample(&state,TH_ROOM,p->value,p->age_ms,now)?TL_OK:TL_INVALID;
         }
     }
     *reply=tl_request(TL_REPLY,p->client,p->sequence);reply->result=result;
     reply->controller_boot=controller_boot;reply->deadline_ms=now;
-    reply->target=state.config.schedule_enabled?state.effective_target_f:state.config.target_f;
-    reply->flags=TL_HAS_TARGET|(state.simulated?TL_SIMULATION:0)|(controller_mqtt_configured()?TL_MQTT_CONFIGURED:0)|(controller_mqtt_online()?TL_MQTT_ONLINE:0);reply->mode=state.config.mode;
+    reply->target=away_active?50.0f:state.config.schedule_enabled?state.effective_target_f:state.config.target_f;
+    reply->flags=TL_HAS_TARGET|(state.simulated?TL_SIMULATION:0)|(controller_mqtt_configured()?TL_MQTT_CONFIGURED:0)|(controller_mqtt_online()?TL_MQTT_ONLINE:0)|(away_active?TL_AWAY_ACTIVE:0);reply->mode=state.config.mode;
     th_sample_t sample=state.source==TH_ROOM?state.room:state.secondary;
     if(state.source!=TH_NONE&&sample.valid&&now>=sample.at_ms&&now-sample.at_ms<=THERMO_TTL_MS){
         reply->flags|=TL_HAS_TEMP;reply->temperature=sample.f;
@@ -574,21 +600,22 @@ static esp_err_t post_api(httpd_req_t *r)
             if(ok)event("Local clock synchronized by paired client");
         }
     } else if(!strcmp(r->uri,"/api/stop")) {
-        release();state.config.mode=TH_HOLD;event("PWM disabled; synchronization cleared; session Hold");ok=true;
+        release();state.config.mode=TH_HOLD;ok=save_live_mode(false);
+        event(ok?"PWM disabled; Service mode selected":"PWM disabled; could not persist Service mode");
     } else if(!strcmp(r->uri,"/api/arm")) {
-        if(text_is(j,"confirm","unloaded_bench") && state.config.mode==TH_HOLD && !go_active) {
+        if(!live_selected && text_is(j,"confirm","unloaded_bench") && state.config.mode==TH_HOLD && !go_active) {
             armed=true;armed_until=now_ms()+900000;event("Bench output armed for 15 minutes");ok=true;
         }
     } else if(!strcmp(r->uri,"/api/sync")) {
         double l;
-        if((state.simulated || (armed && now_ms()<armed_until)) && number(j,"level",&l) &&
+        if(!live_selected && (state.simulated || (armed && now_ms()<armed_until)) && number(j,"level",&l) &&
            text_is(j,"confirm",state.simulated?"simulation":"observed_bench_position")) {
             ok=th_sync(&state,l);
             if(ok) event(state.simulated?"Simulation synchronized":"Manual bench synchronization; NOT encoder verified");
         }
     } else if(!strcmp(r->uri,"/api/pulse")) {
         double u;
-        if(armed && now_ms()<armed_until && state.config.mode==TH_HOLD && number(j,"us",&u) && floor(u)==u && u>=500 && u<=2500) {
+        if(!live_selected && armed && now_ms()<armed_until && state.config.mode==TH_HOLD && number(j,"us",&u) && floor(u)==u && u>=500 && u<=2500) {
             ok=pulse((int)u)==ESP_OK;
             th_release(&state);
             if(ok)event("Explicit raw bench PWM command; thermostat synchronization cleared");
