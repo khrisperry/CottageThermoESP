@@ -69,4 +69,17 @@ if(CJSON_SOURCE_DIR)
         target_link_libraries(test_controller_setup_api PRIVATE m)
     endif()
     add_test(NAME controller_setup_api COMMAND test_controller_setup_api)
+
+    # A previously healthy ESP-NOW link could never return to HTTP after
+    # a temporary Wi-Fi isolation: /api/status grew beyond an 1800-byte
+    # stack buffer, so discovery logged ESP_FAIL with HTTP 200. Compile
+    # the ACTUAL probe with mocked HTTP and verify recovery without reboot.
+    add_executable(test_room_discovery_probe test_room_discovery_probe.c
+        ../touchscreen/main/room_discovery_probe.c "${CJSON_SOURCE_DIR}/cJSON.c")
+    target_include_directories(test_room_discovery_probe PRIVATE
+        discovery_stubs ../touchscreen/main "${CJSON_SOURCE_DIR}")
+    if(NOT MSVC)
+        target_compile_options(test_room_discovery_probe PRIVATE -Wall -Wextra -Werror)
+    endif()
+    add_test(NAME room_discovery_probe COMMAND test_room_discovery_probe)
 endif()
