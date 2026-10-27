@@ -203,36 +203,103 @@ cJSON *room_controller_test(void)
     cJSON_AddStringToObject(j,"message",message);
     xSemaphoreGive(io);return j;
 }
-static bool mutation(uint8_t operation,float value,int *code)
+/* Only read-only status requests are safe to repeat. For a user command,
+ * obtain a fresh lease before sending it once; never blindly retry an
+ * ambiguous setpoint / Away write across Wi-Fi and ESP-NOW transports. */
+static bool mutation(uint8_t operation,float value,int *code,
+                     char *detail,size_t detail_size)
 {
-    *code=503;if(xSemaphoreTake(io,pdMS_TO_TICKS(100))!=pdTRUE)return false;
-    bool ok=false;int64_t sampled=esp_timer_get_time();
-    if(!fresh()){tl_packet_t p=tl_request(TL_STATUS,client,++sequence),r;exchange(p,&r,true);}
-    if(fresh()){
+    if(detail&&detail_size)detail[0]=0;
+    *code=503;
+    const bool requested=operation==TL_TARGET||operation==TL_AWAY;
+    const uint32_t lock_timeout=requested?2000:100;
+    if(xSemaphoreTake(io,pdMS_TO_TICKS(lock_timeout))!=pdTRUE){
+        if(detail&&detail_size)snprintf(detail,detail_size,
+            "Controller is busy. Nothing was sent; please try again.");
+        return false;
+    }
+    bool ok=false;
+    int64_t sampled=esp_timer_get_time();
+    /* Ordinary sensor samples may use a valid cached lease. Intentional
+     * writes always refresh the 5-second controller lease first: previously
+     * a UI command could borrow a ~4-second-old poll and receive TL_EXPIRED. */
+    if(requested||!fresh()){
+        tl_packet_t hello=tl_request(TL_STATUS,client,++sequence),answer;
+        if(!exchange(hello,&answer,true)||answer.result!=TL_OK){
+            if(detail&&detail_size)snprintf(detail,detail_size,
+                "Controller link not ready. Nothing was changed.");
+            ESP_LOGW("controller_link",
+                "Read-only preflight failed for op=%u; no mutation sent",
+                (unsigned)operation);
+            goto done;
+        }
+    }
+    if(!fresh()){
+        if(detail&&detail_size)snprintf(detail,detail_size,
+            "Controller response expired. Nothing was sent.");
+        goto done;
+    }
+    {
         tl_packet_t p=tl_request(operation,client,++sequence),r;
         p.controller_boot=latest.controller_boot;
-        /* Lease is in controller monotonic time, with a conservative 1 s
-         * transit budget. Older leases fail at the server; no wall clock. */
+        /* The controller's monotonic time and 1-second transit allowance
+         * are validated on receipt. A fresh status maximizes this window. */
         p.deadline_ms=latest.deadline_ms+TL_LEASE_MS-1000;
-        p.value=value;p.age_ms=operation==TL_SAMPLE?(uint32_t)((esp_timer_get_time()-sampled)/1000)+1000:0;
-        bool delivered=exchange(p,&r,false);ok=delivered&&r.result==TL_OK;*code=ok?200:delivered?409:503;
+        p.value=value;
+        p.age_ms=operation==TL_SAMPLE?
+            (uint32_t)((esp_timer_get_time()-sampled)/1000)+1000:0;
+        const bool delivered=exchange(p,&r,false);
+        ok=delivered&&r.result==TL_OK;
+        *code=ok?200:delivered?409:503;
+        if(!ok){
+            const char *why=!delivered?
+                "Controller reply unavailable; check current target before retrying.":
+                r.result==TL_EXPIRED?
+                "Controller session expired. Nothing changed; please try again.":
+                r.result==TL_REPLAY?
+                "Controller session changed. Check current state before trying again.":
+                r.result==TL_SAVE_FAILED?
+                "Controller could not save the setting. Check its status.":
+                r.result==TL_INVALID?
+                (operation==TL_TARGET?
+                    "Target rejected. Exit Away before editing temperature; otherwise check range.":
+                    "Controller rejected that setting. Check current mode."):
+                "Controller refused the command. Check its status.";
+            if(detail&&detail_size)snprintf(detail,detail_size,"%s",why);
+            ESP_LOGW("controller_link",
+                "Command op=%u result=%d delivered=%d (not replayed)",
+                (unsigned)operation,delivered?(int)r.result:-1,(int)delivered);
+        }
     }
-    xSemaphoreGive(io);return ok;
+done:
+    xSemaphoreGive(io);
+    return ok;
+}
+static cJSON *mutation_reply(bool ok,const char *error)
+{
+    cJSON *j=cJSON_CreateObject();
+    if(!j)return NULL;
+    cJSON_AddBoolToObject(j,"ok",ok);
+    if(!ok)cJSON_AddStringToObject(j,"error",
+        error&&*error?error:"Controller not ready; check its current status.");
+    return j;
 }
 cJSON *room_controller_target(float target,int *code)
 {
-    if(!mutation(TL_TARGET,target,code))return NULL;
-    cJSON *j=cJSON_CreateObject();cJSON_AddBoolToObject(j,"ok",true);return j;
+    char detail[144];
+    bool ok=mutation(TL_TARGET,target,code,detail,sizeof(detail));
+    return mutation_reply(ok,detail);
 }
 cJSON *room_controller_away(bool enabled,int *code)
 {
-    /* Same protected link lease and single-transport mutation as setpoints.
-     * Controller NVS owns the hold across panel/MQTT/Wi-Fi restarts. */
-    if(!mutation(TL_AWAY,enabled?1.0f:0.0f,code))return NULL;
-    cJSON *j=cJSON_CreateObject();cJSON_AddBoolToObject(j,"ok",true);return j;
+    /* Same protected lease and exactly one transport as target changes.
+     * Controller NVS retains 50 F Away independently of Wi-Fi and MQTT. */
+    char detail[144];
+    bool ok=mutation(TL_AWAY,enabled?1.0f:0.0f,code,detail,sizeof(detail));
+    return mutation_reply(ok,detail);
 }
 bool room_controller_sample(float temperature)
-{int code;return mutation(TL_SAMPLE,temperature,&code);}
+{int code;return mutation(TL_SAMPLE,temperature,&code,NULL,0);}
 
 const char *room_controller_sync_state(void){return sync_state==2?"Applied":sync_state==1?"Pending controller":"Not managed";}
 static void sync_task(void *arg)
