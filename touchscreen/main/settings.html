@@ -41,9 +41,12 @@ function render(){
   const row=actions(form,'mqtt',()=>({enabled:$('enabled').checked,broker:($('tls').checked?'mqtts://':'mqtt://')+$('brokerHost').value.trim()+':'+$('port').value,username:$('username').value,password:$('password').value,clear_password:$('clearPassword').checked,prefix:$('prefix').value.trim(),name:$('name').value.trim()}));
   const state=el('p',lastStatus?.mqtt?.status||'Waiting for MQTT status');state.id='mqttDetail';state.className='full';grid.append(state);const test=el('button','Republish HA discovery');test.type='button';test.id='mqttReannounce';test.disabled=!lastStatus?.mqtt?.connected;test.onclick=async()=>{try{await request({section:'mqtt_test'});message('HA Climate discovery queued.');}catch(e){message(e.message)}};row.append(test);
  }else if(page==='Controller'){
-  field(grid,'Thermostat controller IP, name or URL','controller',config.controller);
-  actions(form,'controller',()=>({controller:$('controller').value.trim()}));
-  linkTest(c);
+  c.insertBefore(el('p','Recommended: automatic discovery. The display uses mDNS to find CottageThermoController.local, verifies identity and tracks IP changes. You can still enter a manual hostname/IP when multicast discovery is unavailable.'),form);
+  field(grid,'Controller address (auto, hostname or URL)','controller',config.controller||'auto');
+  const discovered=el('p','Checking controller discovery...','full');discovered.id='controllerDiscovery';grid.append(discovered);
+  const row=actions(form,'controller',()=>({controller:$('controller').value.trim()||'auto'}));
+  const automatic=el('button','Use automatic discovery');automatic.type='button';automatic.onclick=async()=>{automatic.disabled=true;try{await request({section:'controller',controller:'auto'});reconnecting=true;reconnectBoot=lastStatus?.firmware?.boot_id;config=null;message('Automatic controller discovery saved. Display restarting...');}catch(e){message(e.message)}finally{automatic.disabled=false}};
+  row.append(automatic);linkTest(c);renderControllerDiscovery();
  }else if(page==='ESP-NOW'){
   c.insertBefore(el('p','Wi-Fi stays preferred. Pair both devices with the same private key. The peer below is the controller station MAC. The display station MAC is sent to the controller automatically. Applying changes restarts the controller when reachable.'),form);
   check(grid,'Enable paired fallback','enabled',config.radio.enabled);field(grid,'Controller station MAC','peer',config.radio.peer,'text','AA:BB:CC:DD:EE:FF').maxLength=17;field(grid,'Shared key (32 hex digits)','key','','password',config.radio.key_configured?keep:'Private shared key').maxLength=32;
@@ -79,12 +82,21 @@ function renderMetrics(){const m=$('metrics');if(!m||!lastStatus)return;m.replac
  metric(m,'Frame last / peak',(p.frame_ms||0).toFixed(1)+' / '+(p.max_frame_ms||0).toFixed(1)+' ms');metric(m,'LVGL stack minimum free',Math.round((p.lvgl_stack_min_free||0)/1024)+' KiB');metric(m,'Free internal RAM',Math.round((p.free_internal||0)/1024)+' KiB');metric(m,'Largest internal block',Math.round((p.largest_internal||0)/1024)+' KiB');metric(m,'Free PSRAM',((p.free_psram||0)/1048576).toFixed(1)+' MiB');
  metric(m,'Ships shown / nearby',(lastStatus.ships?.count||0)+' / '+(lastStatus.ships?.nearby||0));metric(m,'Ship request',(lastStatus.ships?.request_ms||0)+' ms / '+(lastStatus.ships?.bytes||0)+' B');metric(m,'Ship service / AIS',!lastStatus.ships?.service_online?'Service offline':lastStatus.ships?.feed_online?'Online / online':'Online / AIS offline');metric(m,'Last ship refresh',lastStatus.ships?.last_error||'OK');metric(m,'MQTT',lastStatus.mqtt?.status||'Not configured');metric(m,'Radio pairing sync',lastStatus.integration_sync||'Not managed');
 }
+function renderControllerDiscovery(){
+ const n=$('controllerDiscovery');if(!n)return;const d=lastStatus?.controller_discovery;
+ n.textContent=!d?'Waiting for mDNS lookup...':d.status==='busy'?'Controller lookup busy':
+   'Hostname: '+d.hostname+' | Mode: '+(d.automatic?'Auto':'Manual / fallback')+
+   ' | Link URL: '+(d.active_url||'Searching...')+
+   ' | Resolved IP: '+(d.resolved_ip||'Not found yet')+
+   ' | Source: '+d.source+
+   ' | Identity verified: '+(d.verified?'yes':'not yet');
+}
 function renderFirmware(){const n=$('firmwareInfo');if(!n||!lastStatus)return;const f=lastStatus.firmware||{};n.textContent='Version '+(f.version||'?')+' • '+(f.board||'Waveshare 4B')+' • Slot '+(f.running_slot||'?')+' • OTA '+(f.slot_bytes?Math.round(f.slot_bytes/1048576)+' MiB':'not available');}
 async function loadConfig(){const r=await fetch('/api/settings',{cache:'no-store'});const j=await r.json();if(!r.ok)throw Error(j.message||'Settings unavailable');config=j;render();}
 async function poll(){if(uploading)return;try{const r=await fetch('/api/device/status',{cache:'no-store'});if(!r.ok)throw Error('Status unavailable');const j=await r.json();lastStatus=j;
  $('services').replaceChildren();(j.services||[]).forEach(s=>{const row=el('div',undefined,'status-row');row.append(el('span',s.name),badge(s.state,s.kind));$('services').append(row)});
  const summary=j.summary_kind||'standby';$('summary').replaceWith(Object.assign(badge(j.summary,summary),{id:'summary'}));
- $('statusAge').textContent='Live status • updated '+new Date().toLocaleTimeString();renderMetrics();renderFirmware();if($('mqttDetail'))$('mqttDetail').textContent=j.mqtt?.status||'Not configured';if($('mqttReannounce'))$('mqttReannounce').disabled=!j.mqtt?.connected;
+ $('statusAge').textContent='Live status • updated '+new Date().toLocaleTimeString();renderMetrics();renderFirmware();renderControllerDiscovery();if($('mqttDetail'))$('mqttDetail').textContent=j.mqtt?.status||'Not configured';if($('mqttReannounce'))$('mqttReannounce').disabled=!j.mqtt?.connected;
  if(reconnecting&&j.firmware?.boot_id!==reconnectBoot){reconnecting=false;message('Device is back online. Running firmware '+(j.firmware?.version||'?')+'.');try{await loadConfig()}catch{config=null}}
  if(!config&&!reconnecting)await loadConfig();
  }catch(e){$('statusAge').textContent=reconnecting?'Device restarting; reconnecting...':'Device unreachable; retrying...';$('summary').replaceWith(Object.assign(badge('Offline','offline'),{id:'summary'}));}
