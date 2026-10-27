@@ -17,6 +17,7 @@
 #include "esp_random.h"
 #include "esp_timer.h"
 #include "esp_wifi.h"
+#include "mdns.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "freertos/task.h"
@@ -48,6 +49,7 @@ static atomic_bool station_up,station_connecting,setup_recovery;
 static atomic_uint station_failures;
 static network_profile_t network;
 static esp_netif_t *station_netif;
+static bool mdns_ready;
 static char station_mac[18];
 static unsigned http_link_count;
 static uint64_t last_http_link;
@@ -204,7 +206,7 @@ static esp_err_t get_api(httpd_req_t *r)
         }
     } else {
         j=cJSON_CreateObject();
-        cJSON_AddStringToObject(j,"version","0.5.7");
+        cJSON_AddStringToObject(j,"version","0.5.8");
 #ifdef CONFIG_THERMO_SUPERMINI
         cJSON_AddStringToObject(j,"board","HW-747 Super Mini 4 MB");
 #else
@@ -240,6 +242,9 @@ static esp_err_t get_api(httpd_req_t *r)
         }
         cJSON *net=cJSON_AddObjectToObject(j,"network");
         cJSON_AddStringToObject(net,"hostname","CottageThermoController");
+        cJSON_AddStringToObject(net,"mdns_hostname","CottageThermoController.local");
+        cJSON_AddStringToObject(net,"mdns_url","http://CottageThermoController.local");
+        cJSON_AddBoolToObject(net,"mdns_ready",mdns_ready);
         cJSON_AddStringToObject(net,"station_mac",station_mac);
         cJSON_AddStringToObject(net,"ssid",network.ssid);
         cJSON_AddBoolToObject(net,"connected",station_up);
@@ -585,6 +590,16 @@ static void network_start(void)
         ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA,&sta));
     }
     ESP_ERROR_CHECK(esp_wifi_start());ESP_ERROR_CHECK(esp_wifi_set_ps(WIFI_PS_NONE));
+    /* mDNS works only while the phone/panel can reach the controller's
+     * multicast-enabled network. DHCP hostname alone is not .local mDNS. */
+    esp_err_t mdns_err=mdns_init();
+    if(mdns_err==ESP_OK)mdns_err=mdns_hostname_set("CottageThermoController");
+    if(mdns_err==ESP_OK)mdns_err=mdns_instance_name_set("Cottage Thermostat Controller");
+    if(mdns_err==ESP_OK)mdns_err=mdns_service_add(NULL,"_http","_tcp",80,NULL,0);
+    if(mdns_err==ESP_OK)mdns_err=mdns_service_add(NULL,"_cottagethermo","_tcp",80,NULL,0);
+    mdns_ready=mdns_err==ESP_OK;
+    if(mdns_ready)ESP_LOGI(TAG,"Controller mDNS advertised: http://CottageThermoController.local (_http._tcp and _cottagethermo._tcp)");
+    else ESP_LOGW(TAG,"Controller mDNS unavailable: %s; IP address and ESP-NOW remain usable",esp_err_to_name(mdns_err));
 #ifdef CONFIG_THERMO_SUPERMINI
     /* Bench A/B test: cap shared AP/STA/ESP-NOW radio at 13 dBm.
      * Lower TX power may help stability but reduces maximum range. */
