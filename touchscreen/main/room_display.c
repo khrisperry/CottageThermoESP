@@ -767,7 +767,7 @@ static void refresh(lv_timer_t *timer)
     if(room_temp){snprintf(text,sizeof(text),"%.1f F",room_f);lv_label_set_text(temp_label,text);}
     else lv_label_set_text(temp_label,"-- F");
     if(climate&&m.has_target){
-        if(m.away)snprintf(text,sizeof(text),"AWAY / FREEZE  %.1f F",m.target);
+        if(m.away)snprintf(text,sizeof(text),"Away");
         else snprintf(text,sizeof(text),"%s %.1f F",editing?"Set to":"Target",draft);
         lv_label_set_text(target_label,text);
     }
@@ -794,8 +794,9 @@ static void refresh(lv_timer_t *timer)
     enabled(away_button,climate&&m.has_target&&!(m.pending&CLIMATE_PENDING));
     if(can_adjust)lv_obj_remove_state(temperature_ring,LV_STATE_DISABLED);
     else lv_obj_add_state(temperature_ring,LV_STATE_DISABLED);
-    lv_label_set_text(lv_obj_get_child(away_button,0),m.away?"Resume Home":"Away (50 F)");
+    lv_label_set_text(lv_obj_get_child(away_button,0),m.away?"Home":"Away");
     lv_obj_set_style_bg_color(away_button,lv_color_hex(m.away?MINT:EDGE),0);
+    tint(away_button,m.away?INK:TEXT);
     for(int k=0;k<COUNT;++k){
         bool available=ha&&m.items[k].available;
         bool predicted=available&&room_optimistic_update(&m.optimistic[k],m.items[k].state,m.items[k].sampled,now);
@@ -922,9 +923,8 @@ static void build_ui(void)
     lv_obj_set_style_bg_color(notice,lv_color_hex(CARD),0);lv_obj_set_style_bg_opa(notice,LV_OPA_COVER,0);
     lv_obj_set_style_pad_all(notice,8,0);lv_obj_set_style_radius(notice,10,0);
     lv_label_set_long_mode(notice,LV_LABEL_LONG_DOT);lv_obj_set_height(notice,42);lv_obj_add_flag(notice,LV_OBJ_FLAG_HIDDEN);
-    /* Make the dial dominant and leave clearance above for the large knob.
-     * The previous y=0 arc clipped the knob against the page's top edge.
-     * One bottom row has -1 / Set Temperature / +1; Away stays separate. */
+    /* Keep the enlarged, unclipped dial. All four controls now share
+     * one bottom row: -1 | Set Temp | +1 | Away/Home. */
     temperature_ring=lv_arc_create(body[0]);
     lv_obj_set_size(temperature_ring,ROOM_CLIMATE_RING_SIZE,ROOM_CLIMATE_RING_SIZE);
     lv_obj_set_pos(temperature_ring,ROOM_CLIMATE_RING_X,ROOM_CLIMATE_RING_Y);
@@ -946,8 +946,11 @@ static void build_ui(void)
     centered(temp_label);
     target_label=label(body[0],"Target unavailable",0,165,ROOM_PAGE_W,&lv_font_montserrat_20);
     centered(target_label);tint(target_label,AMBER);
-    lv_obj_t *hint=label(body[0],"DRAG RING TO ADJUST",0,206,ROOM_PAGE_W,&lv_font_montserrat_14);
+    /* A narrow, two-line hint sits completely inside the ring instead
+     * of crossing the colored arc as the single long label did. */
+    lv_obj_t *hint=label(body[0],"DRAG RING\nTO ADJUST",138,195,180,&lv_font_montserrat_14);
     centered(hint);tint(hint,MUTED);
+    lv_obj_set_style_text_line_space(hint,3,0);
     mode_label=label(body[0],"Controller Offline",0,ROOM_CLIMATE_MODE_Y,
         ROOM_CLIMATE_STATUS_W,&lv_font_montserrat_16);
     centered(mode_label);tint(mode_label,AMBER);
@@ -956,14 +959,14 @@ static void build_ui(void)
     centered(reason_label);tint(reason_label,MUTED);
     lv_label_set_long_mode(reason_label,LV_LABEL_LONG_DOT);
     lv_obj_set_height(reason_label,20);
-    away_button=button(body[0],"Away (50 F)",ROOM_CLIMATE_AWAY_X,ROOM_CLIMATE_AWAY_Y,
-        ROOM_CLIMATE_AWAY_W,ROOM_CLIMATE_AWAY_H,send_event,-10);
     minus_button=button(body[0],"-1",ROOM_CLIMATE_MINUS_X,ROOM_CLIMATE_BUTTON_Y,
         ROOM_CLIMATE_MINUS_W,ROOM_CLIMATE_BUTTON_H,send_event,-2);
-    apply_button=button(body[0],"Set Temperature",ROOM_CLIMATE_SET_X,ROOM_CLIMATE_BUTTON_Y,
+    apply_button=button(body[0],"Set Temp",ROOM_CLIMATE_SET_X,ROOM_CLIMATE_BUTTON_Y,
         ROOM_CLIMATE_SET_W,ROOM_CLIMATE_BUTTON_H,send_event,-1);
     plus_button=button(body[0],"+1",ROOM_CLIMATE_PLUS_X,ROOM_CLIMATE_BUTTON_Y,
         ROOM_CLIMATE_PLUS_W,ROOM_CLIMATE_BUTTON_H,send_event,-3);
+    away_button=button(body[0],"Away",ROOM_CLIMATE_AWAY_X,ROOM_CLIMATE_BUTTON_Y,
+        ROOM_CLIMATE_AWAY_W,ROOM_CLIMATE_BUTTON_H,send_event,-10);
     lv_obj_set_style_bg_color(apply_button,lv_color_hex(AMBER),0);
     tint(apply_button,INK);
     /* Home Assistant-style compact 2-column grid, 5 usable tiles:
