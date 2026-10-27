@@ -47,6 +47,61 @@ int main(void)
     /* The room can warm/cool without inventing any additional dial moves. */
     th_commit_move(&s,a,106000);
     assert(th_sample(&s,TH_ROOM,56,0,108000));expect_reason(&s,108000,"mapped_setting_reached");
+    /* Heat-only feedback: initial setpoint acts immediately, but a room
+     * spike or unverified warm-up cannot rewrite calibration or trim the dial.
+     * Persistent >=2 F overshoot yields one small downward correction after
+     * 10 minutes observing and 5 minutes continuously above target. */
+    s=prepared();
+    a=th_tick(&s,100000);assert(a.move&&!a.feedback_adjustment);
+    th_commit_move(&s,a,100000);
+    assert(s.feedback_tracking && s.feedback_corrections==0 && s.feedback_trim==0);
+    assert(th_sample(&s,TH_ROOM,72.5f,0,400000));
+    expect_reason(&s,400000,"mapped_setting_reached");
+    assert(s.feedback_reached && s.feedback_over_since_ms==400000);
+    assert(th_sample(&s,TH_ROOM,72.5f,0,699999));
+    expect_reason(&s,699999,"mapped_setting_reached"); /* 1ms early */
+    assert(th_sample(&s,TH_ROOM,72.5f,0,700000));
+    a=th_tick(&s,700000);
+    assert(a.move && a.feedback_adjustment && fabsf(a.level-3.75f)<0.001f);
+    assert(s.feedback_trim==0 && s.feedback_corrections==0);
+    th_commit_move(&s,a,700000);
+    assert(fabsf(s.feedback_trim-0.25f)<0.001f && s.feedback_corrections==1);
+    assert(s.feedback_over_since_ms==0 && s.feedback_last_adjust_ms==700000);
+    assert(th_sample(&s,TH_ROOM,72.6f,0,701000));
+    expect_reason(&s,701000,"mapped_setting_reached");
+    assert(th_sample(&s,TH_ROOM,72.6f,0,1001000));
+    expect_reason(&s,1001000,"mapped_setting_reached"); /* Trim interval 15m */
+    assert(th_sample(&s,TH_ROOM,72.6f,0,1600000));
+    a=th_tick(&s,1600000);
+    assert(a.move && a.feedback_adjustment && fabsf(a.level-3.5f)<0.001f);
+    th_commit_move(&s,a,1600000);
+    assert(s.feedback_corrections==2 && fabsf(s.feedback_trim-0.5f)<0.001f);
+    /* A new requested target clears the transient trim and responds promptly
+     * even while the room is still hot. No previous overshoot overrides it. */
+    s.config.target_f=65;
+    a=th_tick(&s,1602000);
+    assert(a.move && !a.feedback_adjustment && a.level==3);
+    assert(s.feedback_corrections==0 && s.feedback_trim==0);
+    th_commit_move(&s,a,1602000);
+    /* Short excursion: no trim even after the observation window. */
+    s=prepared();
+    a=th_tick(&s,100000);th_commit_move(&s,a,100000);
+    assert(th_sample(&s,TH_ROOM,74,0,800000));
+    expect_reason(&s,800000,"mapped_setting_reached");
+    assert(th_sample(&s,TH_ROOM,70,0,802000));
+    expect_reason(&s,802000,"mapped_setting_reached");
+    assert(s.feedback_over_since_ms==0 && s.feedback_corrections==0);
+    assert(th_sample(&s,TH_ROOM,72,0,1300000));
+    expect_reason(&s,1300000,"mapped_setting_reached"); /* fresh spike not confirmed */
+    assert(s.feedback_corrections==0);
+    /* Losing primary data cannot trigger a correction, even if SwitchBot
+     * remains available; no fresh thermal evidence means no learning. */
+    assert(th_sample(&s,TH_SWITCHBOT,75,0,2000000));
+    s.config.secondary_enabled=true;
+    expect_reason(&s,2000000,"mapped_setting_reached");
+    assert(s.feedback_over_since_ms==0 && s.feedback_corrections==0);
+    th_release(&s);
+    assert(!s.feedback_tracking && s.feedback_trim==0 && s.feedback_corrections==0);
     s=prepared();expect_reason(&s,190001,"temperature_stale");
     assert(th_sample(&s,TH_SWITCHBOT,62,0,190001));expect_reason(&s,190001,"temperature_stale");
     s.config.secondary_enabled=true;assert(th_tick(&s,190001).move&&s.source==TH_SWITCHBOT);
