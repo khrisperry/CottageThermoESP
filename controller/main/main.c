@@ -28,6 +28,7 @@
 #include "thermo_radio.h"
 #include "controller_mqtt.h"
 #include "controller_encoder.h"
+#include "controller_pwm_duty.h"
 #include "controller_setup.h"
 #include "controller_integrations.h"
 #include <stdatomic.h>
