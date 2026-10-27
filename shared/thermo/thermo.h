@@ -42,7 +42,7 @@ typedef struct { float f; uint64_t at_ms; bool valid; } th_sample_t;
 typedef struct {
     th_config_t config;
     th_sample_t room, secondary;
-    bool simulated, synchronized, has_command;
+    bool simulated, synchronized, has_command, away, away_clamped;
     float commanded_level;
     int commanded_us;
     uint64_t last_move_ms;
