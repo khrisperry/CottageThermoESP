@@ -1,5 +1,51 @@
 # Controller mDNS + touchscreen auto-discovery — bench test
 
+## Waveshare 4B v0.13.9: Wi-Fi rejoin after temporary network isolation
+
+The controller firmware **v0.6.5** correctly continues serving HTTP and
+paired encrypted ESP-NOW during a temporary thermostat Wi-Fi block. Previous
+touchscreen **v0.13.8** repeatedly logged
+`mDNS returned 192.168.60.85 but status check failed: err=-1 HTTP=200`.
+The controller is not refusing the connection: `room_controller.c` used an
+**1800-byte stack buffer** for the controller's growing `/api/status` reply.
+When truncated, `room_http()` rejects the incomplete response even with
+HTTP 200. Failed discovery never promotes an otherwise healthy recovered Wi-Fi
+link, so ESP-NOW remains in use. Multicast discovery can also temporarily
+return `ESP_ERR_NOT_FOUND` during retries without indicating a broken Wi-Fi
+association.
+
+**Fix:** the thermostat now fetches complete controller diagnostics into a
+bounded **8 KiB heap buffer** outside the controller task's stack, validates
+the exact controller hostname and (when configured) paired station MAC, and
+retries discovery after network recovery. The paired encrypted ESP-NOW
+fallback is unaffected. If the reply remains incomplete, the transport logs
+its received/body-capacity/content-length values to separate HTTP truncation
+from connectivity problems. The new regression test compiles the actual
+discovery probe and simulates HTTP responses larger than 1800 bytes,
+temporary isolation, restoration without reboot, malicious MAC/name mismatch,
+malformed and oversized replies.
+
+**Flash only the 4B thermostat firmware v0.13.9**, keeping the local SHT45
+sensor settings and secrets. Do not erase either device's NVS or reflash the
+already working v0.6.5 controller.
+
+After updating, use the touchscreen's own `/settings` Controller section in
+`auto` mode and the read-only Controller Test. During a supervised bench test,
+temporarily block **only the thermostat's Wi-Fi station**, verify ESP-NOW
+continues acknowledging samples and setpoints, then unblock it. Expect the
+touchscreen to regain `192.168.60.x`, log
+`Verified CottageThermoController.local at ...` and
+`Wi-Fi controller link restored`, without a restart. Confirm that both
+read-only Wi-Fi and ESP-NOW tests succeed. Controller physical position
+safety/Go mode remains exactly as before.
+
+If mDNS multicast is unreliable even after the fix, the known LAN IP
+`http://192.168.60.85` may be configured explicitly in the thermostat's
+Controller settings for diagnostics, but that IP is DHCP dependent and
+should not be the permanent production strategy. The control protocol
+continues validating reply identity/leases and sends mutations through
+exactly one transport; it does not retransmit uncertain setpoint writes.
+
 Controller v0.5.9 (ESP32-S3 Super Mini 4 MB) advertises the mDNS host CottageThermoController.local, with _http._tcp and _cottagethermo._tcp on port 80. It retains the DHCP hostname CottageThermoController.
 
 Controller v0.5.9 removes the experimental Super Mini 13 dBm TX cap and uses the normal driver/PHY/country-limited maximum. Startup logs the actual maximum; the controller website reports it in `network.wifi_max_tx_dbm`. No touchscreen update is needed for this power change.
