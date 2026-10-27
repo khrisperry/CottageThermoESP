@@ -760,7 +760,9 @@ static void refresh(lv_timer_t *timer)
     if(status.other_faults)lv_label_set_text_fmt(connection,"%s +%u",status.text,status.other_faults);
     else lv_label_set_text(connection,status.text);
     tint(connection,status.color);lv_obj_set_style_bg_color(health_dot,lv_color_hex(status.color),0);
-    lv_obj_set_style_bg_color(lv_screen_active(),lv_color_hex(!ha&&!climate?0x281218:INK),0);
+    /* Keep the visual theme stable even when a service is offline.
+     * Offline/busy state is conveyed by the existing health indicator. */
+    lv_obj_set_style_bg_color(lv_screen_active(),lv_color_hex(INK),0);
     bool heat_configured=room_controller_radio_ready()||(*room_settings_controller_url()!=0);
     if(diagnostic_cells[0]&&!lv_obj_has_flag(diagnostic_modal,LV_OBJ_FLAG_HIDDEN)){
         const char *words[7]={wifi?"Connected":"Disconnected",
@@ -852,6 +854,14 @@ static void refresh(lv_timer_t *timer)
                 !strcmp(m.items[k].state,"closed")?"Closed":
                 !strcmp(m.items[k].state,"open")?"Open":
                 !strcmp(m.items[k].state,"docked")?"Docked":
+                !strcmp(m.items[k].state,"idle")?"Idle":
+                !strcmp(m.items[k].state,"running")?"Running":
+                !strcmp(m.items[k].state,"washing")?"Washing":
+                !strcmp(m.items[k].state,"drying")?"Drying":
+                !strcmp(m.items[k].state,"paused")?"Paused":
+                !strcmp(m.items[k].state,"complete")?"Complete":
+                !strcmp(m.items[k].state,"completed")?"Completed":
+                !strcmp(m.items[k].state,"charging")?"Charging":
                 m.items[k].state;
             lv_label_set_text(states[k],shown);
             tint(states[k],pending?AMBER:color);
