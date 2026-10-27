@@ -531,7 +531,7 @@ static void link_handle(const tl_packet_t *p,tl_packet_t *reply)
     *reply=tl_request(TL_REPLY,p->client,p->sequence);reply->result=result;
     reply->controller_boot=controller_boot;reply->deadline_ms=now;
     reply->target=away_active?50.0f:state.config.schedule_enabled?state.effective_target_f:state.config.target_f;
-    reply->flags=TL_HAS_TARGET|(state.simulated?TL_SIMULATION:0)|(controller_mqtt_configured()?TL_MQTT_CONFIGURED:0)|(controller_mqtt_online()?TL_MQTT_ONLINE:0)|(away_active?TL_AWAY_ACTIVE:0);reply->mode=state.config.mode;
+    reply->flags=TL_HAS_TARGET|(state.simulated?TL_SIMULATION:0)|(controller_mqtt_configured()?TL_MQTT_CONFIGURED:0)|(controller_mqtt_online()?TL_MQTT_ONLINE:0)|(away_active?TL_AWAY_ACTIVE:0)|(live_selected&&go_active&&!live_fault?TL_LIVE_ACTIVE:0);reply->mode=state.config.mode;
     th_sample_t sample=state.source==TH_ROOM?state.room:state.secondary;
     if(state.source!=TH_NONE&&sample.valid&&now>=sample.at_ms&&now-sample.at_ms<=THERMO_TTL_MS){
         reply->flags|=TL_HAS_TEMP;reply->temperature=sample.f;
