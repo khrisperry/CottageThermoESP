@@ -69,7 +69,7 @@ jobs:
       - name: Upload Super Mini flash files
         uses: actions/upload-artifact@v4
         with:
-          name: CottageController-v0.6.1-SuperMini
+          name: CottageController-v0.6.2-SuperMini
           retention-days: 14
           if-no-files-found: error
           path: |
