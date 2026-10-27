@@ -139,6 +139,77 @@ static bool save_live_mode(bool enabled)
         "Service mode: automatic movement disabled");
     return true;
 }
+/* Encoder validation is mandatory before Live starts and after every command.
+ * A missing, implausible or stale magnet is NEVER treated as a known position. */
+static bool live_encoder(float *angle)
+{
+    controller_encoder_sample_t e=controller_encoder_snapshot();
+    uint64_t now=now_ms();
+    if(!e.online || now<e.at_ms || now-e.at_ms>2000 ||
+       !e.magnet_detected || e.too_weak || e.too_strong)return false;
+    *angle=e.raw_angle*360.0f/4096.0f;
+    return true;
+}
+static bool live_room_fresh(uint64_t now)
+{
+    return state.room.valid && now>=state.room.at_ms &&
+           now-state.room.at_ms<=THERMO_TTL_MS;
+}
+static void live_fault_stop(const char *reason)
+{
+    /* Persist Service before any future reset can attempt Live again. */
+    release();
+    bool saved=save_live_mode(false);
+    live_fault=true;
+    snprintf(live_issue,sizeof(live_issue),"%s%s",reason,
+             saved?"":"; NVS FAILED: do not rely on automatic recovery");
+    event(live_issue);
+}
+static void live_try_resume(uint64_t now)
+{
+    if(!live_selected || live_fault || go_active)return;
+    const char *setup_error=controller_setup_ready(&setup);
+    if(setup_error){
+        snprintf(live_issue,sizeof(live_issue),"Live waiting: %s",setup_error);
+        return;
+    }
+    if(!live_room_fresh(now)){
+        snprintf(live_issue,sizeof(live_issue),"Live waiting: fresh primary thermostat reading");
+        live_candidate_since=0;
+        return;
+    }
+    float angle,level=0;
+    if(!live_encoder(&angle) || !controller_live_recover(&setup,angle,&level)){
+        snprintf(live_issue,sizeof(live_issue),
+                 "Live blocked: encoder angle or saved 1-6 calibration invalid; enter Service to correct");
+        live_candidate_since=0;
+        return;
+    }
+    /* Stable position across repeated encoder samples before startup movement. */
+    if(!live_candidate_since ||
+       fabsf(level-live_candidate_level)>0.12f){
+        live_candidate_since=now;
+        live_candidate_level=level;
+        snprintf(live_issue,sizeof(live_issue),"Live: confirming stable encoder position");
+        return;
+    }
+    if(now-live_candidate_since<2500)return;
+    th_state_t next=state;
+    next.config.mode=TH_AUTO;next.config.schedule_enabled=false;
+    next.simulated=false;
+    if(!controller_setup_map(&setup,&next.config) || !th_sync(&next,level)){
+        snprintf(live_issue,sizeof(live_issue),"Live blocked: invalid temperature/servo mapping");
+        return;
+    }
+    th_action_t action=th_tick(&next,now);
+    if(!action.move && strcmp(next.reason,"mapped_setting_reached")){
+        snprintf(live_issue,sizeof(live_issue),"Live waiting: %s",next.reason);
+        return;
+    }
+    state=next;go_active=true;armed=false;live_verifying=false;
+    snprintf(live_issue,sizeof(live_issue),"Live active: encoder position recovered");
+    event("Live restored after validated calibration, stable AS5600 and fresh thermostat sensor");
+}
 static esp_err_t json_send(httpd_req_t *r,cJSON *j)
 {
     if (!j) return httpd_resp_send_err(r,HTTPD_500_INTERNAL_SERVER_ERROR,"Out of memory");
