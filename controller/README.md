@@ -1,4 +1,7 @@
-# Controller v0.6.1 — guided dial setup and bench control
+# Controller v0.6.2 — editable travel limits, guided dial setup and bench control
+
+**v0.6.2 endpoint correction:** On the controller webpage, Calibration → **Re-measure start limit…** or **Re-measure end limit…** stops PWM, exits Go/Test, clears only the selected limit and retains the other limit, all eight dial positions/recorded angles and all six estimated temperatures. Re-enter attended Test Mode, move carefully using a starting pulse and small jogs, then **Capture current start/end** to save the corrected boundary. With either bound missing, manual PWM is restricted only to the 500–2500 µs firmware limits and **Go is blocked**. Do not perform this on the mounted furnace; use an unloaded supervised bench. Correct any captured dial position outside a revised narrower range before completing travel limits. Calibration stays in NVS; never erase flash/NVS to correct an endpoint.
+
 
 v0.6.1 restores the Super Mini 13 dBm TX limit after authentication timeouts at the 20 dBm default. Calibration/Test/Go are unchanged. See [Wi-Fi comparison notes](../docs/CONTROLLER_WIFI_V061.md).
 
