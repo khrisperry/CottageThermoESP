@@ -53,7 +53,7 @@ static char station_mac[18];
 static unsigned http_link_count;
 static uint64_t last_http_link;
 static atomic_uint reconnect_at,connect_at,setup_discovery_until;
-static bool pwm, timer_ready, armed;
+static bool pwm, timer_ready, pwm_channel_ready, armed;
 static uint64_t armed_until;
 static int last_pulse=-1;
 static char last_reason[64];
@@ -86,10 +86,27 @@ static esp_err_t pulse(int us)
         if (err!=ESP_OK) return err;
         timer_ready=true;
     }
-    ledc_channel_config_t c={.gpio_num=CONFIG_THERMO_SERVO_GPIO,.speed_mode=LEDC_LOW_SPEED_MODE,
-        .channel=LEDC_CHANNEL_0,.timer_sel=LEDC_TIMER_0,.duty=(uint32_t)((uint64_t)us*8192/20000)};
-    esp_err_t err=ledc_channel_config(&c);
+    uint32_t duty=(uint32_t)((uint64_t)us*8192/20000);
+    esp_err_t err;
+    if (!pwm_channel_ready) {
+        /* GPIO5 is reserved when first configured as LEDC. Configuring the
+         * same channel again for every move generates ESP-IDF GPIO conflict
+         * warnings, even when it returns ESP_OK. Configure exactly once;
+         * ledc_stop() below disables output without dropping the channel. */
+        ledc_channel_config_t c={.gpio_num=CONFIG_THERMO_SERVO_GPIO,.speed_mode=LEDC_LOW_SPEED_MODE,
+            .channel=LEDC_CHANNEL_0,.timer_sel=LEDC_TIMER_0,.duty=duty};
+        err=ledc_channel_config(&c);
+        if (err==ESP_OK) {
+            pwm_channel_ready=true;
+            ESP_LOGI(TAG,"Servo PWM channel initialized once on GPIO %d",CONFIG_THERMO_SERVO_GPIO);
+        }
+    } else {
+        /* Updating duty resumes the stopped channel on the next PWM period;
+         * do not re-reserve GPIO or change the electrical travel bounds. */
+        err=ledc_set_duty_and_update(LEDC_LOW_SPEED_MODE,LEDC_CHANNEL_0,duty,0);
+    }
     if (err==ESP_OK) { pwm=true; last_pulse=us; }
+    else ESP_LOGE(TAG,"Servo PWM command failed: %s",esp_err_to_name(err));
     return err;
 }
 static void release(void)
@@ -208,7 +225,7 @@ static esp_err_t get_api(httpd_req_t *r)
         }
     } else {
         j=cJSON_CreateObject();
-        cJSON_AddStringToObject(j,"version","0.6.2");
+        cJSON_AddStringToObject(j,"version","0.6.3");
 #ifdef CONFIG_THERMO_SUPERMINI
         cJSON_AddStringToObject(j,"board","HW-747 Super Mini 4 MB");
 #else
@@ -275,7 +292,15 @@ static esp_err_t get_api(httpd_req_t *r)
         cJSON_AddBoolToObject(net,"radio_ready",tl_radio_configured());
         cJSON_AddBoolToObject(net,"radio_online",tl_radio_online());
         cJSON_AddStringToObject(net,"radio_peer",profile->peer);
-        cJSON_AddNumberToObject(j,"dwell_remaining_ms",state.last_move_ms && now_ms()-state.last_move_ms<state.config.dwell_ms?state.config.dwell_ms-(now_ms()-state.last_move_ms):0);
+        /* Only non-setpoint / future adaptive moves use the five-minute
+         * dwell. A changed thermostat target uses the short guard instead. */
+        uint64_t since_move=state.last_move_ms && now_ms()>=state.last_move_ms ?
+            now_ms()-state.last_move_ms : UINT64_MAX;
+        uint64_t next_delay=state.config.mode==TH_AUTO ? THERMO_SETPOINT_GUARD_MS : state.config.dwell_ms;
+        uint64_t remaining=since_move<next_delay ? next_delay-since_move : 0;
+        cJSON_AddNumberToObject(j,"dwell_remaining_ms",remaining);
+        cJSON_AddNumberToObject(j,"setpoint_guard_ms",THERMO_SETPOINT_GUARD_MS);
+        cJSON_AddStringToObject(j,"dial_move_policy",state.config.mode==TH_AUTO?"prompt_setpoint":"conservative");
         cJSON_AddStringToObject(j,"reason",state.reason);
         cJSON_AddStringToObject(j,"source",th_source_name(state.source));
         cJSON_AddStringToObject(j,"mode",th_mode_name(state.config.mode));
