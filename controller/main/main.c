@@ -31,6 +31,7 @@
 #include <stdatomic.h>
 #include "network_profile.h"
 #include "controller_wifi_retry.h"
+#include "controller_wifi_recovery.h"
 
 static const char *TAG="thermostat";
 #ifdef CONFIG_THERMO_LIVE_BENCH
@@ -43,7 +44,8 @@ static SemaphoreHandle_t lock;
 static nvs_handle_t store;
 static uint64_t controller_boot;
 static tl_guard_t room_guard;
-static atomic_bool station_up,station_connecting;
+static atomic_bool station_up,station_connecting,setup_recovery;
+static atomic_uint station_failures;
 static network_profile_t network;
 static esp_netif_t *station_netif;
 static char station_mac[18];
@@ -202,7 +204,7 @@ static esp_err_t get_api(httpd_req_t *r)
         }
     } else {
         j=cJSON_CreateObject();
-        cJSON_AddStringToObject(j,"version","0.5.6");
+        cJSON_AddStringToObject(j,"version","0.5.7");
 #ifdef CONFIG_THERMO_SUPERMINI
         cJSON_AddStringToObject(j,"board","HW-747 Super Mini 4 MB");
 #else
@@ -249,6 +251,13 @@ static esp_err_t get_api(httpd_req_t *r)
         uint8_t channel=0;wifi_second_chan_t secondary;
         esp_wifi_get_channel(&channel,&secondary);
         cJSON_AddNumberToObject(net,"channel",channel);
+        cJSON_AddStringToObject(net,"setup_ssid",CONFIG_THERMO_AP_SSID);
+        cJSON_AddBoolToObject(net,"setup_recovery",setup_recovery);
+        cJSON_AddNumberToObject(net,"failed_connects",station_failures);
+        wifi_sta_list_t ap_clients={0};
+        if(esp_wifi_ap_get_sta_list(&ap_clients)==ESP_OK)cJSON_AddNumberToObject(net,"setup_clients",ap_clients.num);
+        int8_t tx_power=0;
+        if(esp_wifi_get_max_tx_power(&tx_power)==ESP_OK)cJSON_AddNumberToObject(net,"wifi_max_tx_dbm",(double)tx_power/4.0);
         cJSON_AddNumberToObject(net,"http_link_requests",http_link_count);
         if(http_link_count)cJSON_AddNumberToObject(net,"last_http_link_age_ms",now_ms()-last_http_link);
         const cottage_integration_t *profile=controller_integrations_get();
@@ -473,35 +482,78 @@ static void control_task(void *unused)
         xSemaphoreGive(lock);vTaskDelay(pdMS_TO_TICKS(1000));
     }
 }
+/* Setup AP and ESP-NOW share one radio. A stable setup session temporarily
+ * has priority over station scans and ESP-NOW channel rendezvous. */
+static void enter_setup_recovery(const char *reason)
+{
+    if(atomic_exchange(&setup_recovery,true))return;
+    station_connecting=false;
+    ESP_LOGW(TAG,"%s: pausing LAN retries and ESP-NOW channel search. Join %s at http://192.168.4.1",
+        reason,CONFIG_THERMO_AP_SSID);
+    esp_err_t err=esp_wifi_disconnect();
+    if(err!=ESP_OK)ESP_LOGW(TAG,"Recovery Wi-Fi disconnect returned %s",esp_err_to_name(err));
+}
 static void wifi_event(void *arg,esp_event_base_t base,int32_t id,void *data)
 {
+    if(base==WIFI_EVENT&&id==WIFI_EVENT_AP_START)
+        ESP_LOGI(TAG,"Setup access point started: SSID=%s channel=6, no captive DNS; open http://192.168.4.1",CONFIG_THERMO_AP_SSID);
+    if(base==WIFI_EVENT&&id==WIFI_EVENT_AP_STACONNECTED)
+        ESP_LOGI(TAG,"Setup client joined; station retries and ESP-NOW channel scanning pause");
+    if(base==WIFI_EVENT&&id==WIFI_EVENT_AP_STADISCONNECTED)
+        ESP_LOGI(TAG,"Setup client left");
     if(base==WIFI_EVENT&&id==WIFI_EVENT_STA_DISCONNECTED){
         wifi_event_sta_disconnected_t *e=data;
-        ESP_LOGW(TAG,"LAN Wi-Fi disconnected (reason %u); paired ESP-NOW remains available",e->reason);
         station_up=false;station_connecting=false;
-        reconnect_at=(uint32_t)now_ms()+(tl_radio_configured()?20000:2000);
+        if(setup_recovery)return;
+        unsigned failures=atomic_fetch_add(&station_failures,1)+1;
+        ESP_LOGW(TAG,"LAN Wi-Fi disconnected (reason %u, failure %u); ESP-NOW configured=%s",
+            e->reason,failures,tl_radio_configured()?"yes":"no");
+        if(controller_wifi_recovery_needed(failures,tl_radio_configured()))
+            enter_setup_recovery("Three failed LAN connections without an ESP-NOW peer");
+        else reconnect_at=(uint32_t)now_ms()+(tl_radio_configured()?20000:2000);
     }
     if(base==IP_EVENT&&id==IP_EVENT_STA_LOST_IP){
-        station_up=false;station_connecting=true;connect_at=(uint32_t)now_ms();
+        station_up=false;
+        if(!setup_recovery){station_connecting=true;connect_at=(uint32_t)now_ms();}
     }
     if(base==IP_EVENT && id==IP_EVENT_STA_GOT_IP) {
-        station_up=true;station_connecting=false;
+        station_up=true;station_connecting=false;station_failures=0;setup_recovery=false;
         ip_event_got_ip_t *e=data;ESP_LOGI(TAG,"Controller LAN address: " IPSTR,IP2STR(&e->ip_info.ip));
     }
 }
 static void reconnect_task(void *arg)
 {
+#ifdef CONFIG_THERMO_SUPERMINI
+    uint32_t boot_held_from=0;
+#endif
     for(;;){
         uint32_t now=(uint32_t)now_ms();
-        if(!station_up){
+#ifdef CONFIG_THERMO_SUPERMINI
+        /* Hold BOOT for 3 s AFTER startup; holding it while applying power
+         * would enter the ROM download bootloader instead. */
+        if(gpio_get_level(GPIO_NUM_0)==0){
+            if(!boot_held_from)boot_held_from=now?now:1;
+            if(!setup_recovery&&(uint32_t)(now-boot_held_from)>=3000U)
+                enter_setup_recovery("BOOT held for three seconds after startup");
+        }else boot_held_from=0;
+#endif
+        if(setup_recovery){vTaskDelay(pdMS_TO_TICKS(250));continue;}
+        wifi_sta_list_t clients={0};
+        bool setup_client=esp_wifi_ap_get_sta_list(&clients)==ESP_OK&&clients.num>0;
+        if(!station_up&&!setup_client){
             if(!station_connecting)tl_radio_search_tick();
             controller_wifi_retry_t retry={.connecting=station_connecting,.started=connect_at,.due=reconnect_at};
             controller_wifi_action_t action=controller_wifi_retry_tick(&retry,now,tl_radio_configured());
             if(action!=CONTROLLER_WIFI_WAIT&&!station_up){
                 station_connecting=retry.connecting;connect_at=retry.started;reconnect_at=retry.due;
                 if(action==CONTROLLER_WIFI_ABORT){
-                    esp_err_t err=esp_wifi_disconnect();
-                    ESP_LOGW(TAG,"Controller Wi-Fi attempt timed out; retry scheduled (disconnect=%d)",(int)err);
+                    unsigned failures=atomic_fetch_add(&station_failures,1)+1;
+                    if(controller_wifi_recovery_needed(failures,tl_radio_configured()))
+                        enter_setup_recovery("Repeated LAN authentication timeouts without an ESP-NOW peer");
+                    else {
+                        esp_err_t err=esp_wifi_disconnect();
+                        ESP_LOGW(TAG,"Controller Wi-Fi attempt timed out; retry scheduled (disconnect=%d)",(int)err);
+                    }
                 }else if(*network.ssid){
                     ESP_LOGI(TAG,"Controller Wi-Fi reconnect attempt");
                     if(esp_wifi_connect()!=ESP_OK){station_connecting=false;reconnect_at=now+(tl_radio_configured()?20000:2000);}
@@ -532,12 +584,22 @@ static void network_start(void)
         ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA,&sta));
     }
     ESP_ERROR_CHECK(esp_wifi_start());ESP_ERROR_CHECK(esp_wifi_set_ps(WIFI_PS_NONE));
+#ifdef CONFIG_THERMO_SUPERMINI
+    /* Bench A/B test: cap shared AP/STA/ESP-NOW radio at 13 dBm.
+     * Lower TX power may help stability but reduces maximum range. */
+    ESP_ERROR_CHECK(esp_wifi_set_max_tx_power(52));
+    int8_t tx_power=0;ESP_ERROR_CHECK(esp_wifi_get_max_tx_power(&tx_power));
+    ESP_LOGI(TAG,"Super Mini Wi-Fi max TX power: %.2f dBm",tx_power/4.0);
+#endif
     uint8_t mac[6];ESP_ERROR_CHECK(esp_wifi_get_mac(WIFI_IF_STA,mac));
     snprintf(station_mac,sizeof(station_mac),"%02X:%02X:%02X:%02X:%02X:%02X",mac[0],mac[1],mac[2],mac[3],mac[4],mac[5]);
     ESP_LOGI(TAG,"Controller station MAC: %s; hostname: CottageThermoController",station_mac);
     const cottage_integration_t *integration=controller_integrations_get();
     tl_radio_start_config(link_handle,integration->radio_enabled,integration->peer,integration->key);
-    if(station){station_connecting=true;connect_at=(uint32_t)now_ms();esp_wifi_connect();}
+    /* Give the bench AP 15 seconds without station scans after startup. */
+    station_connecting=false;
+    reconnect_at=(uint32_t)now_ms()+15000U;
+    ESP_LOGI(TAG,"Setup AP discovery window 15 s; station SSID configured=%s",station?"yes":"no");
     ESP_ERROR_CHECK(xTaskCreate(reconnect_task,"wifi_retry",3072,NULL,3,NULL)==pdPASS?ESP_OK:ESP_ERR_NO_MEM);
     httpd_config_t c=HTTPD_DEFAULT_CONFIG();c.max_uri_handlers=18;c.stack_size=8192;
     httpd_handle_t h;ESP_ERROR_CHECK(httpd_start(&h,&c));
@@ -577,6 +639,10 @@ void app_main(void)
     if(nvs_get_blob(store,"network",&saved_network,&size)==ESP_OK&&size==sizeof(saved_network)&&network_profile_valid(&saved_network))network=saved_network;
     memset(&saved_network,0,sizeof(saved_network));
     controller_integrations_init();
+#ifdef CONFIG_THERMO_SUPERMINI
+    gpio_config_t recovery_button={.pin_bit_mask=1ULL<<GPIO_NUM_0,.mode=GPIO_MODE_INPUT,.pull_up_en=GPIO_PULLUP_ENABLE};
+    ESP_ERROR_CHECK(gpio_config(&recovery_button));
+#endif
     network_start();
     controller_mqtt_start();
     controller_encoder_start();
