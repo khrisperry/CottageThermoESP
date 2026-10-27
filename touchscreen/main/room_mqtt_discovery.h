@@ -55,7 +55,11 @@ static inline cJSON *room_mqtt_discovery(const char *id,const char *base,const c
     if(entity!=11){
     cJSON *a=cJSON_AddArrayToObject(j,"availability"),*online=cJSON_CreateObject();cJSON_AddStringToObject(online,"topic","~/availability");cJSON_AddItemToArray(a,online);
     if(entity<4&&entity!=2){cJSON *fresh=cJSON_CreateObject();cJSON_AddStringToObject(fresh,"topic","~/state");
-        cJSON_AddStringToObject(fresh,"value_template",entity==0?"{{ 'online' if value_json.sensor_fresh else 'offline' }}":"{{ 'online' if value_json.controller_online and value_json.target_f is not none else 'offline' }}");cJSON_AddItemToArray(a,fresh);}
+        cJSON_AddStringToObject(fresh,"value_template",
+            entity==0?"{{ 'online' if value_json.sensor_fresh else 'offline' }}":
+            entity==3?"{{ 'online' if value_json.controller_online and value_json.mode == 'thermostat' and value_json.target_f is not none else 'offline' }}":
+            "{{ 'online' if value_json.controller_online and value_json.target_f is not none else 'offline' }}");
+        cJSON_AddItemToArray(a,fresh);}
     cJSON_AddStringToObject(j,"availability_mode","all");
     }
     cJSON *d=cJSON_AddObjectToObject(j,"device"),*ids=cJSON_AddArrayToObject(d,"identifiers");cJSON_AddItemToArray(ids,cJSON_CreateString(id));
