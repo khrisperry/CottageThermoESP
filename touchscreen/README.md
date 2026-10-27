@@ -1,8 +1,10 @@
 # Cottage room panel — Waveshare ESP32-S3-Touch-LCD-4B
 
-Version 0.13.7 provides the **native 480×480 LCD and capacitive touch interface**. This is for the **4B**, with 16 MB flash and 8 MB octal PSRAM. It uses Waveshare BSP 2.0.0, LVGL 9.2.0 and ESP LVGL port 2.6.2, compiled with ESP-IDF 6.0.1. The dependency lock pins the tested graph. **The ESP connects directly to Home Assistant using your long-lived token; no bridge process, bridge address or bridge token is required.** No device has been flashed or physically verified by the coding environment.
+Version 0.13.8 provides the **native 480×480 LCD and capacitive touch interface**. This is for the **4B**, with 16 MB flash and 8 MB octal PSRAM. It uses Waveshare BSP 2.0.0, LVGL 9.2.0 and ESP LVGL port 2.6.2, compiled with ESP-IDF 6.0.1. The dependency lock pins the tested graph. **The ESP connects directly to Home Assistant using your long-lived token; no bridge process, bridge address or bridge token is required.** No device has been flashed or physically verified by the coding environment.
 
 The 4B is the planned production display. User tests confirmed the earlier UI, camera, audio and BME280 temperature test. v0.11.0 adds aligned colored Connections, full LAN configuration, Ships and application-bin OTA. v0.12.1 connects this display directly to MQTT for an HA Climate entity and monitoring sensors. HA target requests use the same queue as touchscreen changes; controller v0.4.1 removes controller MQTT commands. See [standalone MQTT monitoring](../docs/STANDALONE_MQTT_MONITORING.md). Follow [dashboard, ships and OTA setup](../docs/DEVICE_DASHBOARD_SHIPS_OTA.md), including the **initial USB flash required for OTA**. Earlier milestone notes below are historical.
+
+For controller discovery, use the Controller settings page and select **Use automatic discovery**. The display resolves **CottageThermoController.local** through mDNS, verifies identity and shows the resolved IP. See [mDNS auto-discovery bench checks](../docs/CONTROLLER_MDNS_AUTO_DISCOVERY.md).
 
 ## Display orientation
 
