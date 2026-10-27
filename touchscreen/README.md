@@ -1,5 +1,11 @@
 # Cottage room panel — Waveshare ESP32-S3-Touch-LCD-4B
 
+## v0.14.4 — one-row Climate controls and shorter Away display
+
+On the Waveshare 480×480 Climate page, **all four buttons now share the same bottom row**: `-1 | Set Temp | +1 | Away` (or `Home` while Away is selected). They use the full 456px content width with eight-pixel gutters. The separate Away button row has been removed, giving the dial and status more room. The large target label reads only **Away** in Freeze Hold, while the existing controller-owned 50°F setting, Home resume behavior and Home Assistant climate presets remain unchanged. The ring hint is now two centered lines: **DRAG RING** / **TO ADJUST**; its knob and touch behavior are unchanged. The mode and status text span the full width below the dial.
+
+The production geometry has compile-time assertions and a `test_room_home_layout` host regression covering all four bottom buttons. **Build only on the local ESP-IDF machine; no GitHub Actions run.** From the repository root after `git pull --ff-only`: `.\\tools\\build-room-4b.ps1 -Flash -Monitor -Port COM21`. Do not erase NVS or reflash controller v0.7.1.
+
 ## v0.14.3 — compact Home tiles and larger, unclipped Climate dial
 
 The native Waveshare 480×480 Climate page now uses a larger 252px interactive dial, safely inset from the header so the knob is not clipped. **-1 / Set Temperature / +1** share a single wide bottom control row. **Away (50 F)** remains separate and the ring continues to change a draft only: no servo or network request is sent until **Set Temperature** is pressed.
