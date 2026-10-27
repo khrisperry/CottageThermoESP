@@ -11,26 +11,28 @@ static const char *value(cJSON *j,const char *key){
 }
 int main(void)
 {
-    cJSON *j=room_mqtt_discovery("room_f4","cottage/thermostat/room_f4","Cottage Room","0.14.1",3);
+    cJSON *j=room_mqtt_discovery("room_f4","cottage/thermostat/room_f4","Cottage Room","0.14.2",3);
     assert(j&&strcmp(value(j,"preset_mode_command_topic"),"~/preset/set")==0);
     assert(!strcmp(value(j,"preset_mode_state_topic"),"~/state"));
     assert(strstr(value(j,"preset_mode_value_template"),"value_json.away"));
+    assert(strstr(value(j,"preset_mode_value_template"),"home"));
     assert(!strcmp(value(j,"temperature_command_topic"),"~/target/set"));
     cJSON *m=cJSON_GetObjectItemCaseSensitive(j,"modes");
     assert(cJSON_GetArraySize(m)==1&&!strcmp(cJSON_GetArrayItem(m,0)->valuestring,"heat"));
     cJSON *presets=cJSON_GetObjectItemCaseSensitive(j,"preset_modes");
-    assert(cJSON_GetArraySize(presets)==1);
-    assert(!strcmp(cJSON_GetArrayItem(presets,0)->valuestring,"away"));
+    assert(cJSON_GetArraySize(presets)==2);
+    assert(!strcmp(cJSON_GetArrayItem(presets,0)->valuestring,"home"));
+    assert(!strcmp(cJSON_GetArrayItem(presets,1)->valuestring,"away"));
     assert(!cJSON_GetObjectItemCaseSensitive(j,"mode_command_topic"));
     assert(!cJSON_GetObjectItemCaseSensitive(j,"fan_mode_command_topic"));
     assert(!cJSON_GetObjectItemCaseSensitive(j,"swing_mode_command_topic"));
     cJSON_Delete(j);
-    j=room_mqtt_discovery("room_f4","cottage/thermostat/room_f4","Cottage Room","0.14.1",0);
+    j=room_mqtt_discovery("room_f4","cottage/thermostat/room_f4","Cottage Room","0.14.2",0);
     assert(j&&!cJSON_GetObjectItemCaseSensitive(j,"preset_mode_command_topic"));
     cJSON_Delete(j);
     /* The switch is a separate visible entity on the same HA device:
      * it can be toggled even when a climate popup omits its presets. */
-    j=room_mqtt_discovery("room_f4","cottage/thermostat/room_f4","Cottage Room","0.14.1",12);
+    j=room_mqtt_discovery("room_f4","cottage/thermostat/room_f4","Cottage Room","0.14.2",12);
     assert(j&&!strcmp(room_mqtt_component(12),"switch"));
     assert(!strcmp(value(j,"command_topic"),"~/away/set"));
     assert(!strcmp(value(j,"state_topic"),"~/state"));
