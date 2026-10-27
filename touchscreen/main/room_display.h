@@ -19,3 +19,5 @@ cJSON *room_display_mqtt_state(void);
 
 /* Shared target-only command queue for touchscreen and HA; no raw servo control. */
 bool room_display_request_target(float target_f);
+/* Freeze Hold (50F) / Home is a controller-persisted climate preset. */
+bool room_display_request_away(bool enabled);
