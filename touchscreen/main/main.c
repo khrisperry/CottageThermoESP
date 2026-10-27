@@ -11,6 +11,7 @@
 #include "esp_netif.h"
 #include "esp_timer.h"
 #include "esp_wifi.h"
+#include "mdns.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "nvs_flash.h"
@@ -85,6 +86,9 @@ void app_main(void)
 #endif
     room_settings_init();
     room_wifi_start();
+    esp_err_t mdns_err=mdns_init();
+    if(mdns_err==ESP_OK)ESP_LOGI(TAG,"Controller mDNS lookup available; searching CottageThermoController.local");
+    else ESP_LOGW(TAG,"mDNS discovery unavailable: %s; explicit controller URL / ESP-NOW remain usable",esp_err_to_name(mdns_err));
     room_controller_start();
     room_ha_start();
     room_ships_start();
@@ -120,6 +124,6 @@ void app_main(void)
         ESP_ERROR_CHECK(xTaskCreate(sensor_task,"room_probe",6144,NULL,3,NULL)==pdPASS?ESP_OK:ESP_ERR_NO_MEM);
     else ESP_LOGW(TAG,"Local probe disabled: configure probe type and pins");
     room_ota_confirm_boot();
-    ESP_LOGI(TAG,"Room client v0.13.7; native display and browser services ready");
+    ESP_LOGI(TAG,"Room client v0.13.8; native display and browser services ready");
 }
 
