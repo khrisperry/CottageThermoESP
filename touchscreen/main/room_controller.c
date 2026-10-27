@@ -1,5 +1,6 @@
 #include "room_controller.h"
 #include "room_transport.h"
+#include "room_discovery_probe.h"
 #include "room_settings.h"
 #include "wifi_setup.h"
 #include "thermo_radio.h"
@@ -65,26 +66,19 @@ static void discover_controller(void)
         ESP_LOGW("controller_discovery","mDNS lookup CottageThermoController.local failed: %s",esp_err_to_name(err));
         return;
     }
-    char found_origin[64],found_ip[16],body[1800];int status=0,length=0;
+    char found_origin[64],found_ip[16];
     snprintf(found_ip,sizeof(found_ip),IPSTR,IP2STR(&ip));
     snprintf(found_origin,sizeof(found_origin),"http://%s",found_ip);
-    err=room_http(found_origin,NULL,NULL,"/api/status",NULL,body,sizeof(body),1800,&status,&length);
-    if(err!=ESP_OK||status!=200){
-        ESP_LOGW("controller_discovery","mDNS returned %s but status check failed: err=%d HTTP=%d",
-            found_ip,(int)err,status);
-        return;
-    }
-    cJSON *root=cJSON_Parse(body);
-    cJSON *net=cJSON_GetObjectItemCaseSensitive(root,"network");
-    const cJSON *hostname=cJSON_GetObjectItemCaseSensitive(net,"hostname");
-    const cJSON *mac=cJSON_GetObjectItemCaseSensitive(net,"station_mac");
     const cottage_integration_t *pair=room_settings_integrations();
-    bool same_name=cJSON_IsString(hostname)&&!strcmp(hostname->valuestring,"CottageThermoController");
-    bool same_pair=!pair->radio_enabled||!*pair->peer||
-        (cJSON_IsString(mac)&&!strcasecmp(mac->valuestring,pair->peer));
-    cJSON_Delete(root);
-    if(!same_name||!same_pair){
-        ESP_LOGW("controller_discovery","Ignored discovered host %s: hostname or configured controller MAC differs",found_ip);
+    room_discovery_result_t result={0};
+    if(!room_discovery_probe_origin(found_origin,pair->radio_enabled,
+                                   pair->peer,&result)){
+        if(result.identity_mismatch)
+            ESP_LOGW("controller_discovery",
+                "Ignored discovered host %s: hostname or configured controller MAC differs",found_ip);
+        else ESP_LOGW("controller_discovery",
+            "mDNS returned %s but complete status failed: err=%d HTTP=%d bytes=%d; keeping ESP-NOW",
+            found_ip,(int)result.http_error,result.http_status,result.response_bytes);
         return;
     }
     snprintf(discovered_origin,sizeof(discovered_origin),"%s",found_origin);
