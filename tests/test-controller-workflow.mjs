@@ -4,20 +4,22 @@ const {Window}=await import(process.env.HAPPY_DOM_MODULE||'happy-dom');
 const window=new Window({url:'http://controller.test',settings:{enableJavaScriptEvaluation:true}});
 const posts=[],errors=[],intervals=[];let offline=false,delayGo=null;
 const profile={start_us:600,end_us:2300,ready:true,issue:'',positions:Array.from({length:8},(_,i)=>({index:i,pulse_us:700+i*200,angle_deg:350-i*30,...(i>0&&i<7?{temp_f:45+i*5}:{})}))};
-const state={operation:'stopped',simulation:true,pwm_active:false,bench_armed:false,arm_remaining_ms:0,source:'room',temperature_f:64,target_f:65,reason:'hold',encoder:{angle_valid:true,angle_deg:228.7}};
+const state={operation:'stopped',operating_mode:'service',live_active:false,live_issue:'Service',simulation:true,pwm_active:false,bench_armed:false,arm_remaining_ms:0,source:'room',temperature_f:64,target_f:65,reason:'hold',encoder:{angle_valid:true,angle_deg:228.7}};
 window.setInterval=fn=>{intervals.push(fn);return intervals.length;};window.confirm=()=>true;
 window.addEventListener('error',e=>errors.push(e.message));
 window.fetch=async(path,opts={})=>{
  if(offline)throw Error('Offline');
  if(opts.method==='POST'){
   const data=JSON.parse(opts.body);posts.push({path,data});
-  if(path==='/api/stop')Object.assign(state,{operation:'stopped',simulation:true,pwm_active:false,bench_armed:false});
+  if(path==='/api/stop')Object.assign(state,{operation:'stopped',operating_mode:'service',live_active:false,simulation:true,pwm_active:false,bench_armed:false});
   else if(path==='/api/config')state.target_f=data.target_f;
   else if(path==='/api/setup'){
    if(data.action==='test')Object.assign(state,{operation:'test',simulation:true,pwm_active:false,bench_armed:true,arm_remaining_ms:900000,last_command_us:-1});
    else if(data.action==='pulse')Object.assign(state,{pwm_active:true,last_command_us:data.us});
    else if(data.action==='jog')state.last_command_us+=data.delta_us;
    else if(data.action==='go'){Object.assign(state,{operation:'go',simulation:false});if(delayGo)await delayGo;}
+   else if(data.action==='live')Object.assign(state,{operation:'go',operating_mode:'live',live_active:true,simulation:false,bench_armed:false,pwm_active:true});
+   else if(data.action==='service')Object.assign(state,{operation:'stopped',operating_mode:'service',live_active:false,simulation:true,bench_armed:false,pwm_active:false});
    else if(data.action==='temperatures')data.values.forEach((t,i)=>profile.positions[i+1].temp_f=t);
    else if(data.action==='edit_limit'){
      if(data.kind==='start')profile.start_us=0;else profile.end_us=0;
@@ -44,6 +46,21 @@ id('moveStart').click();await settle();assert.equal(posts.at(-1).data.us,profile
 id('goButton').click();await settle();assert.equal(posts.at(-1).data.action,'go');assert.equal(posts.at(-1).data.position,3);assert.equal(state.simulation,false);assert(id('jogPlus').disabled);
 id('goTarget').value='68';id('saveTarget').click();await settle();assert.equal(posts.at(-1).data.target_f,68);
 id('stopButton').click();await settle();assert.equal(posts.at(-1).path,'/api/stop');assert.equal(state.operation,'stopped');assert(id('goButton').disabled);
+/* Persistent Live requires confirmed bench position; Service persists and
+ * stops movement. It cannot be selected accidentally on initial page load. */
+id('testButton').click();await settle();
+id('moveStart').click();await settle();
+assert(!id('enableLive').disabled);
+id('enableLive').click();await settle();
+assert.equal(posts.at(-1).data.action,'live');
+assert.equal(posts.at(-1).data.position,3);
+assert.equal(state.operating_mode,'live');
+assert(id('testButton').disabled,'Test must require switching back to Service');
+id('enterService').click();await settle();
+assert.equal(posts.at(-1).data.action,'service');
+assert.equal(state.operating_mode,'service');
+assert.equal(state.operation,'stopped');
+
 id('tab-temperatures').click();for(let i=1;i<=6;i++)id('temp'+i).value=45+i*5;
 id('temperatureForm').dispatchEvent(new window.Event('submit',{cancelable:true}));await settle();assert.equal(posts.at(-1).data.action,'temperatures');
 id('temp3').value='40';const before=posts.length;id('temperatureForm').dispatchEvent(new window.Event('submit',{cancelable:true}));await settle();assert.equal(posts.length,before);assert(id('notice').textContent.includes('increase'));
