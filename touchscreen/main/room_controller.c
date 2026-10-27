@@ -1,6 +1,7 @@
 #include "room_controller.h"
 #include "room_transport.h"
 #include "room_discovery_probe.h"
+#include "room_link_policy.h"
 #include "room_settings.h"
 #include "wifi_setup.h"
 #include "thermo_radio.h"
@@ -223,7 +224,7 @@ static bool mutation(uint8_t operation,float value,int *code,
     /* Ordinary sensor samples may use a valid cached lease. Intentional
      * writes always refresh the 5-second controller lease first: previously
      * a UI command could borrow a ~4-second-old poll and receive TL_EXPIRED. */
-    if(requested||!fresh()){
+    if(room_link_needs_status(operation,fresh())){
         tl_packet_t hello=tl_request(TL_STATUS,client,++sequence),answer;
         if(!exchange(hello,&answer,true)||answer.result!=TL_OK){
             if(detail&&detail_size)snprintf(detail,detail_size,
