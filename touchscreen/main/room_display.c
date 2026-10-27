@@ -46,7 +46,7 @@ static const char *actions[]={"on","off","open","stop","close","start"};
 typedef struct { bool available; unsigned actions; int64_t sampled; char state[128]; } item_t;
 typedef struct {
     item_t items[COUNT];room_optimistic_t optimistic[COUNT]; int64_t ha_at,climate_at;
-    bool ha_ok,climate_ok,has_temp,has_target,simulation,away,settings_open,camera_fill;
+    bool ha_ok,climate_ok,has_temp,has_target,simulation,away,live_active,settings_open,camera_fill;
     unsigned pending;int64_t notice_until;
     float temp,target; char mode[32],reason[80],notice[128],ha_error[128];
     unsigned page,generation;
@@ -146,7 +146,7 @@ static void poll_climate(void)
     xSemaphoreTake(mutex,portMAX_DELAY);
     model.climate_ok=j!=NULL;model.climate_at=j?esp_timer_get_time():0;
     model.has_temp=ht;model.temp=t;model.has_target=hs;model.target=target;
-    model.simulation=yes(j,"simulation");model.away=yes(j,"away");
+    model.simulation=yes(j,"simulation");model.away=yes(j,"away");model.live_active=yes(j,"live_active");
     snprintf(model.mode,sizeof(model.mode),"%s",str(j,"mode"));
     snprintf(model.reason,sizeof(model.reason),"%s",str(j,"reason"));
     xSemaphoreGive(mutex);cJSON_Delete(j);
@@ -568,10 +568,10 @@ static void service_words(const model_t *snapshot,const char **words)
 }
 cJSON *room_display_mqtt_state(void)
 {
-    int64_t now=esp_timer_get_time();float temperature,target;bool sensor,controller,has_target,simulation,away;char mode[32];model_t snapshot={0};
+    int64_t now=esp_timer_get_time();float temperature,target;bool sensor,controller,has_target,simulation,away,live_active;char mode[32];model_t snapshot={0};
     xSemaphoreTake(mutex,portMAX_DELAY);
     sensor=model.probe_at&&now-model.probe_at<30000000;temperature=model.probe_f;
-    controller=model.climate_ok&&current(model.climate_at);has_target=controller&&model.has_target;target=model.target;simulation=model.simulation;away=model.away;
+    controller=model.climate_ok&&current(model.climate_at);has_target=controller&&model.has_target;target=model.target;simulation=model.simulation;away=model.away;live_active=model.live_active;
     snapshot.ha_ok=model.ha_ok;snapshot.ha_at=model.ha_at;snapshot.climate_ok=controller;snapshot.climate_at=model.climate_at;snapshot.probe_at=model.probe_at;
     snprintf(mode,sizeof(mode),"%s",model.mode);xSemaphoreGive(mutex);
     cJSON *j=cJSON_CreateObject();cJSON_AddBoolToObject(j,"sensor_fresh",sensor);cJSON_AddBoolToObject(j,"controller_online",controller);
@@ -579,6 +579,7 @@ cJSON *room_display_mqtt_state(void)
     if(has_target)cJSON_AddNumberToObject(j,"target_f",target);else cJSON_AddNullToObject(j,"target_f");
     cJSON_AddStringToObject(j,"mode",controller?mode:"unavailable");cJSON_AddBoolToObject(j,"simulation",simulation);
     cJSON_AddBoolToObject(j,"away",controller&&away);
+    cJSON_AddBoolToObject(j,"live_active",controller&&live_active);
     const char *words[7],*service_keys[]={"wifi","ha","controller","espnow","sensor","ships","mqtt"};service_words(&snapshot,words);
     cJSON *services=cJSON_AddObjectToObject(j,"services");for(unsigned i=0;i<7;++i)cJSON_AddStringToObject(services,service_keys[i],words[i]);
     cJSON_AddStringToObject(j,"temperature_source",CONFIG_ROOM_SENSOR==3?"BMP/BME280 local test":"Local primary probe");return j;
@@ -604,6 +605,7 @@ cJSON *room_display_status(void)
     if(probe)cJSON_AddNumberToObject(j,"temperature_f",m.probe_f);
     if(heat&&m.has_target)cJSON_AddNumberToObject(j,"target_f",m.target);
     cJSON_AddBoolToObject(j,"away",heat&&m.away);
+    cJSON_AddBoolToObject(j,"live_active",heat&&m.live_active);
     cJSON *perf=cJSON_AddObjectToObject(j,"performance");
     cJSON_AddNumberToObject(perf,"frame_ms",frame_last_us/1000.0);cJSON_AddNumberToObject(perf,"max_frame_ms",frame_max_us/1000.0);
     cJSON_AddNumberToObject(perf,"frames_over_50ms",frame_slow);
@@ -682,8 +684,8 @@ static void refresh(lv_timer_t *timer)
     else lv_label_set_text(target_label,"Target unavailable");
     lv_arc_set_value(temperature_ring,room_temp?(int)fmaxf(45,fminf(80,room_f)):45);
     lv_obj_set_style_arc_color(temperature_ring,lv_color_hex(room_temp?AMBER:EDGE),LV_PART_INDICATOR);
-    lv_label_set_text_fmt(mode_label,"%s%s",climate?(m.away?"Freeze Hold":m.mode):"Controller offline",
-        climate?(m.simulation?" / Service":" / thermostat"):"");
+    lv_label_set_text_fmt(mode_label,"%s%s",climate?(m.away?"Away / Freeze Hold":m.live_active?"Live heating":m.mode):"Controller offline",
+        climate?(m.live_active?" · Active":m.simulation?" · Service":" · Bench Go"):"");
     lv_label_set_text(reason_label,climate?m.reason:"Home controls are available on the Home page");
     bool can_adjust=climate&&m.has_target&&!m.away&&!(m.pending&CLIMATE_PENDING);
     enabled(minus_button,can_adjust);enabled(plus_button,can_adjust);
