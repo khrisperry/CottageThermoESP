@@ -46,7 +46,7 @@ static const char *actions[]={"on","off","open","stop","close","start"};
 typedef struct { bool available; unsigned actions; int64_t sampled; char state[128]; } item_t;
 typedef struct {
     item_t items[COUNT];room_optimistic_t optimistic[COUNT]; int64_t ha_at,climate_at;
-    bool ha_ok,climate_ok,has_temp,has_target,simulation,settings_open,camera_fill;
+    bool ha_ok,climate_ok,has_temp,has_target,simulation,away,settings_open,camera_fill;
     unsigned pending;int64_t notice_until;
     float temp,target; char mode[32],reason[80],notice[128],ha_error[128];
     unsigned page,generation;
@@ -57,7 +57,7 @@ static model_t model;
 static SemaphoreHandle_t mutex;
 static QueueHandle_t commands;
 static lv_obj_t *body[5],*nav[5],*connection,*notice,*temp_label,*target_label,*mode_label,*reason_label;
-static lv_obj_t *states[COUNT],*control[COUNT][6],*minus_button,*plus_button,*apply_button,*camera_image,*camera_note,*settings_button;
+static lv_obj_t *states[COUNT],*control[COUNT][6],*minus_button,*plus_button,*minus_five_button,*plus_five_button,*away_button,*apply_button,*camera_image,*camera_note,*settings_button;
 static lv_obj_t *settings_modal,*settings_volume,*settings_volume_label,*settings_camera_button,*settings_close_button;
 static lv_obj_t *temperature_ring,*camera_frame,*camera_status,*tile[COUNT],*icon_badge[COUNT];
 static lv_obj_t *bulb_head[COUNT],*bulb_stem[COUNT],*bulb_base[COUNT],*activity_ring[COUNT];
@@ -99,8 +99,16 @@ static cJSON *json_request(bool ha,const char *path,const char *post,int *code)
         if(!post){*code=200;return room_ha_status();}
         cJSON *payload=cJSON_Parse(post);cJSON *result=room_ha_command(payload,code);cJSON_Delete(payload);if(*code!=200){cJSON_Delete(result);return NULL;}return result;
     }
-    if(post){cJSON *p=cJSON_Parse(post);float target=0;bool valid=number(p,"target_f",&target);cJSON_Delete(p);
-        if(!valid){*code=400;return NULL;}return room_controller_target(target,code);}
+    if(post){
+        cJSON *p=cJSON_Parse(post),*away=cJSON_GetObjectItemCaseSensitive(p,"away");
+        if(cJSON_IsBool(away)){
+            bool enabled=cJSON_IsTrue(away);
+            cJSON_Delete(p);
+            return room_controller_away(enabled,code);
+        }
+        float target=0;bool valid=number(p,"target_f",&target);cJSON_Delete(p);
+        if(!valid){*code=400;return NULL;}return room_controller_target(target,code);
+    }
     cJSON *j=room_controller_status();*code=j?200:503;return j;
 }
 static void poll_ha(void)
@@ -138,7 +146,7 @@ static void poll_climate(void)
     xSemaphoreTake(mutex,portMAX_DELAY);
     model.climate_ok=j!=NULL;model.climate_at=j?esp_timer_get_time():0;
     model.has_temp=ht;model.temp=t;model.has_target=hs;model.target=target;
-    model.simulation=yes(j,"simulation");
+    model.simulation=yes(j,"simulation");model.away=yes(j,"away");
     snprintf(model.mode,sizeof(model.mode),"%s",str(j,"mode"));
     snprintf(model.reason,sizeof(model.reason),"%s",str(j,"reason"));
     xSemaphoreGive(mutex);cJSON_Delete(j);
@@ -147,18 +155,21 @@ static bool current(int64_t at) { return at>0 && esp_timer_get_time()-at<FRESH_U
 static void execute(command_t c)
 {
     model_t m;copy_model(&m);bool allowed=esp_timer_get_time()-c.at<COMMAND_TTL_US;
-    if(c.item<0)allowed=allowed&&m.climate_ok&&m.has_target&&current(m.climate_at)&&c.target>=45&&c.target<=80;
+    if(c.item==-1)allowed=allowed&&m.climate_ok&&m.has_target&&current(m.climate_at)&&!m.away&&c.target>=45&&c.target<=80;
+    else if(c.item==-2)allowed=allowed&&m.climate_ok&&m.has_target&&current(m.climate_at);
     else allowed=allowed&&room_wifi_connected()&&current(m.ha_at)&&m.items[c.item].available&&(m.items[c.item].actions&(1U<<c.action));
     if(!allowed)message("Request expired or device unavailable; nothing sent");
     else {
         char payload[200];int code;
-        if(c.item<0)snprintf(payload,sizeof(payload),"{\"target_f\":%.1f}",c.target);
+        if(c.item==-1)snprintf(payload,sizeof(payload),"{\"target_f\":%.1f}",c.target);
+        else if(c.item==-2)snprintf(payload,sizeof(payload),"{\"away\":%s}",c.action?"true":"false");
         else snprintf(payload,sizeof(payload),"{\"key\":\"%s\",\"action\":\"%s\",\"request_id\":\"esp-%08" PRIx32 "-%08" PRIx32 "-%" PRId64 "\"}",keys[c.item],actions[c.action],esp_random(),esp_random(),c.at);
         cJSON *j=json_request(c.item>=0,c.item<0?"/api/config":"/api/ha/command",payload,&code);
         if(code>=400&&c.item>=0){xSemaphoreTake(mutex,portMAX_DELAY);model.optimistic[c.item].active=false;xSemaphoreGive(mutex);}
         if(!j)message(code>=400?"Request rejected; check state before retrying":"Connection lost; outcome unknown. Check device state");
         else if(c.item>=0&&!yes(j,"accepted"))message("Outcome unknown; check device state before retrying");
-        else if(c.item<0)message("Target saved");
+        else if(c.item==-2)message(c.action?"Away / Freeze Hold 50 F saved":"Home comfort mode restored");
+        else if(c.item==-1)message("Target saved");
         cJSON_Delete(j);
         if(c.item<0)poll_climate();else poll_ha();
     }
@@ -300,14 +311,37 @@ bool room_display_request_target(float target)
     if(!mutex||!commands||!isfinite(target)||target<45||target>80)return false;
     command_t c={.item=-1,.target=target,.at=esp_timer_get_time()};
     xSemaphoreTake(mutex,portMAX_DELAY);
-    bool ready=model.climate_ok&&model.has_target&&current(model.climate_at)&&!(model.pending&CLIMATE_PENDING);
+    bool ready=model.climate_ok&&model.has_target&&!model.away&&current(model.climate_at)&&!(model.pending&CLIMATE_PENDING);
     if(ready){model.pending|=CLIMATE_PENDING;if(xQueueSend(commands,&c,0)!=pdTRUE){model.pending&=~CLIMATE_PENDING;ready=false;}}
+    xSemaphoreGive(mutex);return ready;
+}
+bool room_display_request_away(bool enabled)
+{
+    if(!mutex||!commands)return false;
+    command_t c={.item=-2,.action=enabled?1:0,.at=esp_timer_get_time()};
+    xSemaphoreTake(mutex,portMAX_DELAY);
+    bool ready=model.climate_ok&&model.has_target&&current(model.climate_at)&&
+        !(model.pending&CLIMATE_PENDING);
+    if(ready && model.away==enabled){xSemaphoreGive(mutex);return true;}
+    if(ready){
+        model.pending|=CLIMATE_PENDING;
+        if(xQueueSend(commands,&c,0)!=pdTRUE){
+            model.pending&=~CLIMATE_PENDING;ready=false;
+        }
+    }
     xSemaphoreGive(mutex);return ready;
 }
 static void send_event(lv_event_t *e)
 {
     intptr_t id=(intptr_t)lv_event_get_user_data(e);static model_t m;copy_model(&m);last_touch=esp_timer_get_time();
-    if(id==-2||id==-3){if(!(m.pending&CLIMATE_PENDING)&&m.climate_ok&&m.has_target&&current(m.climate_at)){draft=fmaxf(45,fminf(80,draft+(id==-2?-.5f:.5f)));editing=true;}return;}
+    if(id==-10){if(room_display_request_away(!m.away))editing=false;return;}
+    if(id==-2||id==-3||id==-4||id==-5){
+        if(!(m.pending&CLIMATE_PENDING)&&m.climate_ok&&m.has_target&&!m.away&&current(m.climate_at)){
+            float delta=id==-2?-1.0f:id==-3?1.0f:id==-4?-5.0f:5.0f;
+            draft=fmaxf(45,fminf(80,draft+delta));editing=true;
+        }
+        return;
+    }
     if(id<0){if(room_display_request_target(draft))editing=false;return;}
     command_t c={.item=id<0?-1:id/6,.action=id<0?0:id%6,.target=draft,.at=esp_timer_get_time()};
     unsigned pending_bit=c.item<0?CLIMATE_PENDING:1U<<c.item;
@@ -534,16 +568,17 @@ static void service_words(const model_t *snapshot,const char **words)
 }
 cJSON *room_display_mqtt_state(void)
 {
-    int64_t now=esp_timer_get_time();float temperature,target;bool sensor,controller,has_target,simulation;char mode[32];model_t snapshot={0};
+    int64_t now=esp_timer_get_time();float temperature,target;bool sensor,controller,has_target,simulation,away;char mode[32];model_t snapshot={0};
     xSemaphoreTake(mutex,portMAX_DELAY);
     sensor=model.probe_at&&now-model.probe_at<30000000;temperature=model.probe_f;
-    controller=model.climate_ok&&current(model.climate_at);has_target=controller&&model.has_target;target=model.target;simulation=model.simulation;
+    controller=model.climate_ok&&current(model.climate_at);has_target=controller&&model.has_target;target=model.target;simulation=model.simulation;away=model.away;
     snapshot.ha_ok=model.ha_ok;snapshot.ha_at=model.ha_at;snapshot.climate_ok=controller;snapshot.climate_at=model.climate_at;snapshot.probe_at=model.probe_at;
     snprintf(mode,sizeof(mode),"%s",model.mode);xSemaphoreGive(mutex);
     cJSON *j=cJSON_CreateObject();cJSON_AddBoolToObject(j,"sensor_fresh",sensor);cJSON_AddBoolToObject(j,"controller_online",controller);
     if(sensor)cJSON_AddNumberToObject(j,"temperature_f",temperature);else cJSON_AddNullToObject(j,"temperature_f");
     if(has_target)cJSON_AddNumberToObject(j,"target_f",target);else cJSON_AddNullToObject(j,"target_f");
     cJSON_AddStringToObject(j,"mode",controller?mode:"unavailable");cJSON_AddBoolToObject(j,"simulation",simulation);
+    cJSON_AddBoolToObject(j,"away",controller&&away);
     const char *words[7],*service_keys[]={"wifi","ha","controller","espnow","sensor","ships","mqtt"};service_words(&snapshot,words);
     cJSON *services=cJSON_AddObjectToObject(j,"services");for(unsigned i=0;i<7;++i)cJSON_AddStringToObject(services,service_keys[i],words[i]);
     cJSON_AddStringToObject(j,"temperature_source",CONFIG_ROOM_SENSOR==3?"BMP/BME280 local test":"Local primary probe");return j;
@@ -568,6 +603,7 @@ cJSON *room_display_status(void)
     for(unsigned i=0;i<7;++i){cJSON *v=cJSON_CreateObject();cJSON_AddStringToObject(v,"name",names[i]);cJSON_AddStringToObject(v,"state",words[i]);cJSON_AddStringToObject(v,"kind",colors[i]);cJSON_AddItemToArray(a,v);}
     if(probe)cJSON_AddNumberToObject(j,"temperature_f",m.probe_f);
     if(heat&&m.has_target)cJSON_AddNumberToObject(j,"target_f",m.target);
+    cJSON_AddBoolToObject(j,"away",heat&&m.away);
     cJSON *perf=cJSON_AddObjectToObject(j,"performance");
     cJSON_AddNumberToObject(perf,"frame_ms",frame_last_us/1000.0);cJSON_AddNumberToObject(perf,"max_frame_ms",frame_max_us/1000.0);
     cJSON_AddNumberToObject(perf,"frames_over_50ms",frame_slow);
@@ -631,19 +667,29 @@ static void refresh(lv_timer_t *timer)
     if(*m.notice&&now<m.notice_until){lv_label_set_text(notice,m.notice);lv_obj_remove_flag(notice,LV_OBJ_FLAG_HIDDEN);}
     else lv_obj_add_flag(notice,LV_OBJ_FLAG_HIDDEN);
     if(!editing&&climate&&m.has_target)draft=m.target;
+    if(m.away)editing=false;
     bool local=CONFIG_ROOM_SENSOR!=0;
     bool room_temp=local?(m.probe_at&&now-m.probe_at<30000000):(climate&&m.has_temp);
     float room_f=local?m.probe_f:m.temp;
     char text[80];
     if(room_temp){snprintf(text,sizeof(text),"%.1f F",room_f);lv_label_set_text(temp_label,text);}
     else lv_label_set_text(temp_label,"-- F");
-    if(climate&&m.has_target){snprintf(text,sizeof(text),"%s %.1f F",editing?"Set to":"Target",draft);lv_label_set_text(target_label,text);}
+    if(climate&&m.has_target){snprintf(text,sizeof(text),m.away?"AWAY / FREEZE  %.1f F":"%s %.1f F",m.away?m.target:draft);
+        if(!m.away)snprintf(text,sizeof(text),"%s %.1f F",editing?"Set to":"Target",draft);
+        lv_label_set_text(target_label,text);}
     else lv_label_set_text(target_label,"Target unavailable");
     lv_arc_set_value(temperature_ring,room_temp?(int)fmaxf(45,fminf(80,room_f)):45);
     lv_obj_set_style_arc_color(temperature_ring,lv_color_hex(room_temp?AMBER:EDGE),LV_PART_INDICATOR);
-    lv_label_set_text_fmt(mode_label,"%s%s",climate?m.mode:"Controller offline",climate?(m.simulation?" / simulation":" / bench"):"");
+    lv_label_set_text_fmt(mode_label,"%s%s",climate?(m.away?"Freeze Hold":m.mode):"Controller offline",
+        climate?(m.simulation?" / Service":" / thermostat"):"");
     lv_label_set_text(reason_label,climate?m.reason:"Home controls are available on the Home page");
-    enabled(minus_button,climate&&m.has_target&&!(m.pending&CLIMATE_PENDING));enabled(plus_button,climate&&m.has_target&&!(m.pending&CLIMATE_PENDING));enabled(apply_button,climate&&m.has_target&&!(m.pending&CLIMATE_PENDING));
+    bool can_adjust=climate&&m.has_target&&!m.away&&!(m.pending&CLIMATE_PENDING);
+    enabled(minus_button,can_adjust);enabled(plus_button,can_adjust);
+    enabled(minus_five_button,can_adjust);enabled(plus_five_button,can_adjust);
+    enabled(apply_button,can_adjust);
+    enabled(away_button,climate&&m.has_target&&!(m.pending&CLIMATE_PENDING));
+    lv_label_set_text(lv_obj_get_child(away_button,0),m.away?"Resume Home":"Away / 50 F");
+    lv_obj_set_style_bg_color(away_button,lv_color_hex(m.away?MINT:EDGE),0);
     for(int k=0;k<COUNT;++k){
         bool available=ha&&m.items[k].available;
         bool predicted=available&&room_optimistic_update(&m.optimistic[k],m.items[k].state,m.items[k].sampled,now);
@@ -751,9 +797,12 @@ static void build_ui(void)
     target_label=label(body[0],"Target unavailable",0,137,456,&lv_font_montserrat_20);centered(target_label);tint(target_label,AMBER);
     mode_label=label(body[0],"Controller offline",0,203,456,&lv_font_montserrat_16);centered(mode_label);tint(mode_label,AMBER);
     reason_label=label(body[0],"Waiting for status",12,231,432,&lv_font_montserrat_14);centered(reason_label);tint(reason_label,MUTED);lv_label_set_long_mode(reason_label,LV_LABEL_LONG_DOT);lv_obj_set_height(reason_label,24);
-    minus_button=button(body[0],"-",0,306,76,54,send_event,-2);
-    apply_button=button(body[0],"Set target",88,306,280,54,send_event,-1);
-    plus_button=button(body[0],"+",380,306,76,54,send_event,-3);
+    minus_five_button=button(body[0],"-5",0,271,108,43,send_event,-4);
+    minus_button=button(body[0],"-1",116,271,108,43,send_event,-2);
+    plus_button=button(body[0],"+1",232,271,108,43,send_event,-3);
+    plus_five_button=button(body[0],"+5",348,271,108,43,send_event,-5);
+    apply_button=button(body[0],"Set target",0,321,268,42,send_event,-1);
+    away_button=button(body[0],"Away / 50 F",280,321,176,42,send_event,-10);
     lv_obj_set_style_bg_color(apply_button,lv_color_hex(AMBER),0);tint(apply_button,INK);
     const int rows[]={0,1,2,7,9};
     const char *names[]={"Deck lights","Breezeway lights","Blinds","Kids heat","Vacuum"};
@@ -856,6 +905,8 @@ void room_display_probe_sample(float temperature_f) {(void)temperature_f;}
 void room_display_start(void) {}
 cJSON *room_display_status(void){return cJSON_CreateObject();}
 bool room_display_camera_fill(void){return false;}
+bool room_display_request_away(bool enabled){(void)enabled;return false;}
+bool room_display_request_target(float target){(void)target;return false;}
 void room_display_set_camera_fill(bool fill){(void)fill;}
 i2c_master_bus_handle_t room_display_probe_bus(int sda,int scl) {return NULL;}
 #endif
