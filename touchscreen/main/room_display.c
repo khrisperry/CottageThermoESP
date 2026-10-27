@@ -790,7 +790,7 @@ static void refresh(lv_timer_t *timer)
     ring_rendering=true;
     lv_arc_set_value(temperature_ring,climate&&m.has_target?shown_target:45);
     ring_rendering=false;
-    lv_obj_set_style_arc_color(temperature_ring,lv_color_hex(m.away?MUTED:AMBER),LV_PART_INDICATOR);
+    lv_obj_set_style_arc_color(temperature_ring,lv_color_hex(m.away?BLUE:AMBER),LV_PART_INDICATOR);
     const bool bench=climate&&!m.simulation&&!m.live_active&&!strcmp(m.mode,"thermostat");
     if(!climate)lv_label_set_text(mode_label,"Controller Offline");
     else if(m.away)lv_label_set_text(mode_label,m.live_active?"Away - Live Heating":
@@ -798,6 +798,7 @@ static void refresh(lv_timer_t *timer)
     else if(m.live_active)lv_label_set_text(mode_label,"Live Heating - Active");
     else if(bench)lv_label_set_text(mode_label,"Bench Control - Active");
     else lv_label_set_text(mode_label,"Service - Standby");
+    tint(mode_label,!climate?MUTED:m.away?BLUE:m.live_active?MINT:bench?BLUE:AMBER);
     lv_label_set_text(reason_label,climate?climate_reason_label(m.reason):
         "Climate control waiting for connection");
     const bool can_adjust=climate&&m.has_target&&!m.away&&!(m.pending&CLIMATE_PENDING);
@@ -807,7 +808,8 @@ static void refresh(lv_timer_t *timer)
     if(can_adjust)lv_obj_remove_state(temperature_ring,LV_STATE_DISABLED);
     else lv_obj_add_state(temperature_ring,LV_STATE_DISABLED);
     lv_label_set_text(lv_obj_get_child(away_button,0),m.away?"Home":"Away");
-    lv_obj_set_style_bg_color(away_button,lv_color_hex(m.away?MINT:EDGE),0);
+    lv_obj_set_style_bg_color(away_button,lv_color_hex(m.away?MINT:LIFT),0);
+    lv_obj_set_style_border_color(away_button,lv_color_hex(m.away?MINT:EDGE),0);
     tint(away_button,m.away?INK:TEXT);
     for(int k=0;k<COUNT;++k){
         bool available=ha&&m.items[k].available;
@@ -958,8 +960,12 @@ static void build_ui(void)
     lv_obj_set_style_pad_all(notice,8,0);
     lv_obj_set_style_radius(notice,12,0);
     lv_label_set_long_mode(notice,LV_LABEL_LONG_DOT);lv_obj_set_height(notice,42);lv_obj_add_flag(notice,LV_OBJ_FLAG_HIDDEN);
-    /* Keep the enlarged, unclipped dial. All four controls now share
-     * one bottom row: -1 | Set Temp | +1 | Away/Home. */
+    /* Climate inherits the same raised-card language as the other tabs.
+     * The draggable arc and one-commit Set Temp behavior are unchanged. */
+    lv_obj_t *climate_surface=panel(body[0],0,0,456,364,SURFACE,20);
+    lv_obj_set_style_border_color(climate_surface,lv_color_hex(EDGE),0);
+    lv_obj_t *climate_status=panel(body[0],12,266,432,46,CARD,13);
+    lv_obj_set_style_border_width(climate_status,1,0);
     temperature_ring=lv_arc_create(body[0]);
     lv_obj_set_size(temperature_ring,ROOM_CLIMATE_RING_SIZE,ROOM_CLIMATE_RING_SIZE);
     lv_obj_set_pos(temperature_ring,ROOM_CLIMATE_RING_X,ROOM_CLIMATE_RING_Y);
@@ -968,8 +974,10 @@ static void build_ui(void)
     lv_arc_set_mode(temperature_ring,LV_ARC_MODE_NORMAL);
     lv_obj_set_style_arc_width(temperature_ring,14,LV_PART_MAIN);
     lv_obj_set_style_arc_width(temperature_ring,14,LV_PART_INDICATOR);
-    lv_obj_set_style_arc_color(temperature_ring,lv_color_hex(EDGE),LV_PART_MAIN);
+    lv_obj_set_style_arc_color(temperature_ring,lv_color_hex(0x274966),LV_PART_MAIN);
     lv_obj_set_style_bg_color(temperature_ring,lv_color_hex(AMBER),LV_PART_KNOB);
+    lv_obj_set_style_border_color(temperature_ring,lv_color_hex(0xffe0a2),LV_PART_KNOB);
+    lv_obj_set_style_border_width(temperature_ring,2,LV_PART_KNOB);
     lv_obj_set_style_pad_all(temperature_ring,8,LV_PART_KNOB);
     lv_obj_set_style_radius(temperature_ring,LV_RADIUS_CIRCLE,LV_PART_KNOB);
     lv_obj_add_flag(temperature_ring,LV_OBJ_FLAG_CLICKABLE);
@@ -1003,7 +1011,9 @@ static void build_ui(void)
     away_button=button(body[0],"Away",ROOM_CLIMATE_AWAY_X,ROOM_CLIMATE_BUTTON_Y,
         ROOM_CLIMATE_AWAY_W,ROOM_CLIMATE_BUTTON_H,send_event,-10);
     lv_obj_set_style_bg_color(apply_button,lv_color_hex(AMBER),0);
+    lv_obj_set_style_border_color(apply_button,lv_color_hex(0xffd996),0);
     tint(apply_button,INK);
+    lv_obj_set_style_bg_color(away_button,lv_color_hex(LIFT),0);
     /* Home Assistant-style compact 2-column grid, 5 usable tiles:
      * Deck / Breezeway, Blinds / Vacuum, Kids Heat / reserved empty slot.
      * Only light tiles toggle on touch; other controls stay explicit. */
