@@ -4,9 +4,6 @@ on:
   push:
     branches:
       - fix/supermini-wifi-recovery-v0.5.7
-  pull_request:
-    branches:
-      - feature/connectivity-climate-review
   workflow_dispatch:
 
 permissions:
