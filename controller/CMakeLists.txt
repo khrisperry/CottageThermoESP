@@ -3,7 +3,7 @@ cmake_minimum_required(VERSION 3.16)
 set(COMPONENTS main)
 set(EXTRA_COMPONENT_DIRS "${CMAKE_CURRENT_LIST_DIR}/../shared/thermo" "${CMAKE_CURRENT_LIST_DIR}/../shared/thermo_link")
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
-project(cottage_thermo_controller VERSION 0.5.7)
+project(cottage_thermo_controller VERSION 0.5.8)
 
 # Reject incompatible saved configuration rather than silently using the wrong flash size.
 if(CONFIG_THERMO_SUPERMINI)
