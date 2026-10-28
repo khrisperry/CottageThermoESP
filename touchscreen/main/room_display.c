@@ -73,7 +73,7 @@ typedef struct { int item,action; float target; int64_t at; } command_t;
 static model_t model;
 static SemaphoreHandle_t mutex;
 static QueueHandle_t commands;
-static lv_obj_t *body[5],*nav[5],*nav_marker[5],*connection,*notice,*temp_label,*target_label,*mode_label,*reason_label;
+static lv_obj_t *body[5],*nav[5],*nav_marker[5],*nav_icon[5],*nav_caption[5],*connection,*notice,*temp_label,*target_label,*mode_label,*reason_label;
 static lv_obj_t *states[COUNT],*control[COUNT][6],*minus_button,*plus_button,*away_button,*apply_button,*camera_image,*camera_note,*settings_button;
 static lv_obj_t *settings_modal,*settings_volume,*settings_volume_label,*settings_camera_button,*settings_close_button;
 static lv_obj_t *temperature_ring,*camera_frame,*camera_status,*tile[COUNT],*icon_badge[COUNT];
@@ -304,9 +304,10 @@ static void select_page(unsigned p)
     if(settings_modal)lv_obj_add_flag(settings_modal,LV_OBJ_FLAG_HIDDEN);
     if(diagnostic_modal)lv_obj_add_flag(diagnostic_modal,LV_OBJ_FLAG_HIDDEN);
     for(unsigned n=0;n<5;++n){if(n==p)lv_obj_remove_flag(body[n],LV_OBJ_FLAG_HIDDEN);else lv_obj_add_flag(body[n],LV_OBJ_FLAG_HIDDEN);
-        lv_obj_set_style_bg_color(nav[n],lv_color_hex(n==p?LIFT:SURFACE),0);
-        lv_obj_set_style_text_color(nav[n],lv_color_hex(n==p?TEXT:MUTED),0);
-        lv_obj_set_style_border_color(nav[n],lv_color_hex(n==p?BLUE:EDGE),0);
+        lv_obj_set_style_bg_color(nav[n],lv_color_hex(n==p?0x083857:0x071724),0);
+        lv_obj_set_style_border_color(nav[n],lv_color_hex(n==p?BLUE:0x112b41),0);
+        if(nav_icon[n])tint(nav_icon[n],n==p?BLUE:MUTED);
+        if(nav_caption[n])tint(nav_caption[n],n==p?BLUE:TEXT);
         if(nav_marker[n]){
             if(n==p)lv_obj_remove_flag(nav_marker[n],LV_OBJ_FLAG_HIDDEN);
             else lv_obj_add_flag(nav_marker[n],LV_OBJ_FLAG_HIDDEN);
@@ -758,8 +759,12 @@ static void refresh(lv_timer_t *timer)
         .ha_configured=*room_settings_ha_token()!=0,.radio_configured=room_controller_radio_ready(),
         .ship_configured=room_settings_ships_enabled(),.ship_online=room_ships_online()};
     room_health_status_t status=room_health_status(health);
-    if(status.other_faults)lv_label_set_text_fmt(connection,"%s +%u",status.text,status.other_faults);
-    else lv_label_set_text(connection,status.text);
+    /* Keep the compact top-right status pill honest, with full detail
+     * in the existing tap-to-open Connections diagnostics. */
+    const char *header_status=status.text;
+    if(strlen(header_status)>10)header_status=
+        status.color==0xff6464?"Attention":status.color==0xffa24c?"ESP-NOW":"Degraded";
+    lv_label_set_text(connection,header_status);
     tint(connection,status.color);lv_obj_set_style_bg_color(health_dot,lv_color_hex(status.color),0);
     /* Keep the visual theme stable even when a service is offline.
      * Offline/busy state is conveyed by the existing health indicator. */
@@ -946,33 +951,52 @@ static void build_ui(void)
     tint(screen,TEXT);lv_obj_set_style_text_font(screen,&lv_font_montserrat_16,0);
     lv_obj_remove_flag(screen,LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_add_event_cb(screen,gesture,LV_EVENT_GESTURE,NULL);
-    /* One shared app shell across Climate/Home/Laundry/Camera/Ships.
-     * Both existing screen bounds and every tab interaction remain intact. */
-    lv_obj_t *top_bar=panel(screen,12,5,456,46,SURFACE,15);
-    lv_obj_set_style_border_color(top_bar,lv_color_hex(EDGE),0);
-    lv_obj_t *brand_accent=panel(screen,20,17,4,23,BLUE,2);
-    lv_obj_set_style_border_width(brand_accent,0,0);
-    lv_obj_t *brand=label(screen,"Cottage",32,12,123,&lv_font_montserrat_24);
+    /* Original Design #3: quiet Cottage wordmark, small status pill,
+     * icon-first bottom navigation and a subtly graduated midnight shell.
+     * All five pages keep their existing routes and event callbacks. */
+    lv_obj_t *top_bar=panel(screen,12,5,456,46,SURFACE,14);
+    lv_obj_set_style_bg_grad_color(top_bar,lv_color_hex(0x0a2745),0);
+    lv_obj_set_style_bg_grad_dir(top_bar,LV_GRAD_DIR_HOR,0);
+    lv_obj_set_style_border_width(top_bar,0,0);
+    lv_obj_t *brand=label(screen,"Cottage",23,12,164,&lv_font_montserrat_24);
     tint(brand,TEXT);
-    health_button=button(screen,"",157,8,244,40,diagnostics_event,0);
-    lv_obj_set_style_bg_color(health_button,lv_color_hex(CARD),0);
-    lv_obj_set_style_border_color(health_button,lv_color_hex(EDGE),0);
-    health_dot=panel(health_button,12,14,12,12,0xff6464,6);
+    health_button=button(screen,"",313,11,100,34,diagnostics_event,0);
+    lv_obj_set_style_radius(health_button,16,0);
+    lv_obj_set_style_bg_color(health_button,lv_color_hex(0x102a3a),0);
+    lv_obj_set_style_border_color(health_button,lv_color_hex(0x1f4955),0);
+    health_dot=panel(health_button,9,13,9,9,0xff6464,5);
     lv_obj_set_style_border_width(health_dot,0,0);
-    connection=label(health_button,"Offline",34,11,204,&lv_font_montserrat_16);
-    lv_obj_set_height(connection,24);lv_obj_remove_flag(connection,LV_OBJ_FLAG_CLICKABLE);
-    settings_button=button(screen,LV_SYMBOL_SETTINGS,416,8,48,40,settings_event,0);
-    lv_obj_set_style_bg_color(settings_button,lv_color_hex(LIFT),0);
-    const char *nav_text[]={"Climate","Home","Laundry","Camera","Ships"};
-    for(int n=0;n<5;++n){
-        body[n]=lv_obj_create(screen);lv_obj_remove_style_all(body[n]);
-        lv_obj_set_pos(body[n],12,57);lv_obj_set_size(body[n],456,364);
+    connection=label(health_button,"Offline",25,7,72,&lv_font_montserrat_14);
+    lv_obj_set_height(connection,22);
+    lv_obj_remove_flag(connection,LV_OBJ_FLAG_CLICKABLE);
+    settings_button=button(screen,LV_SYMBOL_SETTINGS,423,10,45,36,settings_event,0);
+    lv_obj_set_style_radius(settings_button,12,0);
+    lv_obj_set_style_bg_color(settings_button,lv_color_hex(0x142f48),0);
+    const char *nav_text[]={"Home","Climate","Laundry","Camera","Ships"};
+    const char *nav_glyphs[]={LV_SYMBOL_HOME,LV_SYMBOL_CHARGE,LV_SYMBOL_LOOP,
+                               LV_SYMBOL_VIDEO,"..."};
+    /* Page indices remain Climate=0, Home=1, Laundry=2, Camera=3, Ships=4.
+     * Only visual button positions are reordered to match mockup. */
+    const unsigned nav_pages[]={1,0,2,3,4};
+    for(int pos=0;pos<5;++pos){
+        const unsigned n=nav_pages[pos];
+        body[n]=lv_obj_create(screen);
+        lv_obj_remove_style_all(body[n]);
+        lv_obj_set_pos(body[n],12,57);
+        lv_obj_set_size(body[n],456,364);
         lv_obj_remove_flag(body[n],LV_OBJ_FLAG_SCROLLABLE|LV_OBJ_FLAG_CLICKABLE);
         lv_obj_add_flag(body[n],LV_OBJ_FLAG_GESTURE_BUBBLE);
-        nav[n]=button(screen,nav_text[n],12+n*93,429,84,44,nav_event,n);
-        lv_obj_set_style_bg_color(nav[n],lv_color_hex(SURFACE),0);
-        lv_obj_set_style_text_font(nav[n],&lv_font_montserrat_14,0);
-        nav_marker[n]=panel(nav[n],20,39,44,3,MINT,2);
+        nav[n]=button(screen,"",12+pos*92,423,88,54,nav_event,n);
+        lv_obj_set_style_bg_color(nav[n],lv_color_hex(0x071724),0);
+        lv_obj_set_style_radius(nav[n],11,0);
+        lv_obj_set_style_border_color(nav[n],lv_color_hex(0x112b41),0);
+        nav_icon[n]=lv_obj_get_child(nav[n],0);
+        lv_label_set_text(nav_icon[n],nav_glyphs[pos]);
+        lv_obj_set_style_text_font(nav_icon[n],&lv_font_montserrat_20,0);
+        lv_obj_set_pos(nav_icon[n],32,2);
+        nav_caption[n]=label(nav[n],nav_text[pos],0,28,88,&lv_font_montserrat_14);
+        centered(nav_caption[n]);
+        nav_marker[n]=panel(nav[n],24,0,40,2,BLUE,1);
         lv_obj_set_style_border_width(nav_marker[n],0,0);
         lv_obj_add_flag(nav_marker[n],LV_OBJ_FLAG_HIDDEN);
     }
