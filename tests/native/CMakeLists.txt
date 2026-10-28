@@ -18,6 +18,13 @@ target_compile_options(native_ui_test PRIVATE -ffunction-sections -fdata-section
 target_link_options(native_ui_test PRIVATE -Wl,--gc-sections)
 target_link_libraries(native_ui_test PRIVATE lvgl m)
 
+add_executable(climate_weather_test test_native.c ../../touchscreen/managed_components/espressif__cjson/cJSON/cJSON.c)
+target_compile_definitions(climate_weather_test PRIVATE ROOM_CLIMATE_WEATHER_TEST=1)
+target_include_directories(climate_weather_test PRIVATE stubs "${CMAKE_CURRENT_BINARY_DIR}" ../../touchscreen/main ../../touchscreen/managed_components/espressif__cjson/cJSON ../../touchscreen/managed_components/espressif__esp_jpeg/include)
+target_compile_options(climate_weather_test PRIVATE -ffunction-sections -fdata-sections -Wall -Wextra -Wno-unused-parameter -Wno-unused-function)
+target_link_options(climate_weather_test PRIVATE -Wl,--gc-sections)
+target_link_libraries(climate_weather_test PRIVATE lvgl m)
+
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
 execute_process(COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_LIST_DIR}/../../tools/generate-ha-entities.py" "${CMAKE_CURRENT_LIST_DIR}/../../ha_bridge/entities.json" "${CMAKE_CURRENT_BINARY_DIR}/room_ha_entities.h" COMMAND_ERROR_IS_FATAL ANY)
 add_executable(direct_ha_test test_direct_ha.c ../../touchscreen/managed_components/espressif__cjson/cJSON/cJSON.c)
@@ -68,7 +75,7 @@ add_executable(climate_discovery_test test_climate_discovery.c ../../touchscreen
 target_include_directories(climate_discovery_test PRIVATE ../../touchscreen/managed_components/espressif__cjson/cJSON)
 target_compile_options(climate_discovery_test PRIVATE -Wall -Wextra -Werror)
 enable_testing()
-foreach(CHECK native_ui direct_ha empty_ha wifi_portal keepalive camera_size visual_state feedback audio camera_scale bmp280 room_controller climate_discovery)
+foreach(CHECK native_ui climate_weather direct_ha empty_ha wifi_portal keepalive camera_size visual_state feedback audio camera_scale bmp280 room_controller climate_discovery)
     add_test(NAME ${CHECK} COMMAND ${CHECK}_test)
 endforeach()
 

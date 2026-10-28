@@ -7,6 +7,18 @@
 #define THERMO_SCHEMA 2
 #define THERMO_SCHEDULE_MAX 14
 #define THERMO_TTL_MS 90000
+/* Minimum spacing for intentional thermostat setpoint moves. Unlike adaptive
+ * corrections, a new requested setpoint must not wait five minutes. */
+#define THERMO_SETPOINT_GUARD_MS 2000U
+/* Observation-only diagnostics. Automatic thermal trim is disabled until
+ * colocated room/furnace cycles and explicit unoccupied eligibility validate
+ * a model. These thresholds do not authorize any corrective movement. */
+#define THERMO_OVERSHOOT_THRESHOLD_F 2.0f
+#define THERMO_OVERSHOOT_CONFIRM_MS 300000ULL
+#define THERMO_HEAT_OBSERVE_MS 600000ULL
+#define THERMO_FEEDBACK_ADJUST_DWELL_MS 900000ULL
+#define THERMO_FEEDBACK_STEP 0.25f
+#define THERMO_FEEDBACK_MAX_TRIM 1.0f
 
 typedef enum { TH_HOLD, TH_MANUAL, TH_DIRECT, TH_AUTO } th_mode_t;
 typedef enum { TH_NONE, TH_ROOM, TH_SWITCHBOT } th_source_t;
@@ -29,10 +41,17 @@ typedef struct { float f; uint64_t at_ms; bool valid; } th_sample_t;
 typedef struct {
     th_config_t config;
     th_sample_t room, secondary;
-    bool simulated, synchronized, has_command;
+    bool simulated, synchronized, has_command, away, away_clamped;
     float commanded_level;
     int commanded_us;
     uint64_t last_move_ms;
+    /* Ephemeral adaptive observations; never stored in controller config
+     * or interpreted as verified servo position / validated furnace physics. */
+    bool feedback_tracking, feedback_reached;
+    float feedback_target_f, feedback_peak_f, feedback_trim;
+    uint64_t feedback_target_since_ms, feedback_over_since_ms;
+    uint64_t feedback_last_adjust_ms;
+    unsigned feedback_corrections;
     th_source_t source;
     float selected_f, proposed_level;
     const char *reason;
@@ -40,7 +59,7 @@ typedef struct {
     int weekday, minute; // Monday=0, local wall-clock minute of day
     float effective_target_f;
 } th_state_t;
-typedef struct { bool move; float level; int pulse_us; } th_action_t;
+typedef struct { bool move; float level; int pulse_us; bool feedback_adjustment; } th_action_t;
 
 th_config_t th_defaults(void);
 bool th_config_valid(const th_config_t *c);

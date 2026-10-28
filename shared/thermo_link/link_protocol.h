@@ -10,9 +10,9 @@
 #define TL_MAGIC 0x434c4e4bU
 #define TL_VERSION 1
 #define TL_LEASE_MS 5000U
-enum { TL_STATUS=1, TL_TARGET, TL_SAMPLE, TL_REPLY };
+enum { TL_STATUS=1, TL_TARGET, TL_SAMPLE, TL_REPLY, TL_AWAY };
 enum { TL_OK=0, TL_INVALID, TL_EXPIRED, TL_REPLAY, TL_SAVE_FAILED };
-enum { TL_HAS_TEMP=1, TL_SIMULATION=2, TL_HAS_TARGET=4, TL_MQTT_CONFIGURED=8, TL_MQTT_ONLINE=16 };
+enum { TL_HAS_TEMP=1, TL_SIMULATION=2, TL_HAS_TARGET=4, TL_MQTT_CONFIGURED=8, TL_MQTT_ONLINE=16, TL_AWAY_ACTIVE=32, TL_LIVE_ACTIVE=64 };
 typedef struct {
     uint64_t client, sequence, controller_boot, deadline_ms;
     uint32_t magic, age_ms;
@@ -32,7 +32,7 @@ static inline tl_packet_t tl_request(uint8_t operation,uint64_t client,uint64_t 
 static inline bool tl_valid(const tl_packet_t *p)
 {
     if(p->magic!=TL_MAGIC||p->version!=TL_VERSION||!p->client||!p->sequence||
-       p->operation<TL_STATUS||p->operation>TL_REPLY)return false;
+       p->operation<TL_STATUS||p->operation>TL_AWAY)return false;
     for(size_t i=0;i<sizeof(p->reserved);++i)if(p->reserved[i])return false;
     return memchr(p->reason,0,sizeof(p->reason))!=NULL;
 }
@@ -51,8 +51,10 @@ static inline int tl_check(tl_guard_t *g,const tl_packet_t *p,uint64_t boot,uint
     }
     if(p->controller_boot!=boot||p->deadline_ms<=now||p->deadline_ms-now>TL_LEASE_MS)return TL_EXPIRED;
     if(g->client!=p->client||p->sequence<=g->sequence)return TL_REPLAY;
-    if(!isfinite(p->value)||(p->operation==TL_TARGET?(p->value<45||p->value>80):
-        (p->value<32||p->value>110||p->age_ms>2000)))return TL_INVALID;
+    if(!isfinite(p->value) ||
+       (p->operation==TL_TARGET && (p->value<45||p->value>80)) ||
+       (p->operation==TL_SAMPLE && (p->value<32||p->value>110||p->age_ms>2000)) ||
+       (p->operation==TL_AWAY && p->value!=0 && p->value!=1))return TL_INVALID;
     return TL_OK;
 }
 static inline void tl_hex(const tl_packet_t *p,char out[sizeof(tl_packet_t)*2+1])

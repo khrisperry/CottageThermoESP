@@ -8,10 +8,14 @@
 #include "room_controller.h"
 #include "room_ota.h"
 #include "room_mqtt.h"
+#include "room_temp_cal.h"
+#include "room_ha.h"
 #include "sdkconfig.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdatomic.h>
+#include <math.h>
 #include "nvs.h"
 #include "esp_random.h"
 #include "esp_system.h"
@@ -29,6 +33,10 @@ typedef struct {
     cottage_integration_t integrations;
 } settings_t;
 static settings_t current;
+/* Separate NVS key preserves the existing (credential-bearing) profile
+ * layout and does not require reboot. Sensor task reads atomically. */
+static atomic_int temp_offset_tenths;
+static atomic_uint furnace_config=180U<<8;
 static bool reboot_pending;
 extern const unsigned char settings_start[] asm("_binary_settings_html_start");
 extern const unsigned char settings_end[] asm("_binary_settings_html_end");
@@ -40,6 +48,10 @@ bool room_settings_ships_enabled(void){return current.ships_enabled;}
 unsigned room_settings_ship_range(void){return current.ship_range;}
 const cottage_integration_t *room_settings_integrations(void){return &current.integrations;}
 bool room_settings_radio_managed(void){return current.radio_managed;}
+int room_settings_temp_offset_tenths(void){return atomic_load(&temp_offset_tenths);}
+unsigned room_settings_furnace_config(void){return atomic_load(&furnace_config);}
+float room_settings_temp_offset_f(void)
+{return (float)room_settings_temp_offset_tenths()/10.0f;}
 static bool printable(const char *s,size_t max)
 {
     if(strlen(s)>max)return false;
@@ -77,6 +89,14 @@ void room_settings_init(void)
         }
     }
     if(saved){memset(saved,0,sizeof(*saved));free(saved);}
+    int16_t stored=0;
+    if(nvs_get_i16(nvs,"temp_offset_t10",&stored)!=ESP_OK ||
+       !room_temp_offset_valid(stored))stored=0;
+    atomic_store(&temp_offset_tenths,(int)stored);
+    uint32_t monitor=180U<<8;
+    if(nvs_get_u32(nvs,"furnace_monitor",&monitor)!=ESP_OK ||
+       (monitor&0xFCU) || (monitor>>8)<30 || (monitor>>8)>900)monitor=180U<<8;
+    atomic_store(&furnace_config,monitor);
     nvs_close(nvs);
 }
 bool room_web_authorized(httpd_req_t *r,bool mutation)
@@ -110,6 +130,13 @@ static cJSON *sanitized(void)
 {
     cJSON *j=cJSON_CreateObject();cJSON_AddStringToObject(j,"ha_url",current.ha);cJSON_AddBoolToObject(j,"token_configured",*current.token!=0);
     cJSON_AddStringToObject(j,"controller",current.controller);
+    cJSON_AddNumberToObject(j,"temperature_offset_f",room_settings_temp_offset_f());
+    cJSON_AddNumberToObject(j,"temperature_offset_tenths",room_settings_temp_offset_tenths());
+    unsigned monitor=room_settings_furnace_config();
+    cJSON *furnace=cJSON_AddObjectToObject(j,"furnace_monitor");
+    cJSON_AddBoolToObject(furnace,"enabled",(monitor&1U)!=0);
+    cJSON_AddBoolToObject(furnace,"installed",(monitor&2U)!=0);
+    cJSON_AddNumberToObject(furnace,"max_report_age_seconds",monitor>>8);
     cJSON_AddBoolToObject(j,"ships_enabled",current.ships_enabled);cJSON_AddStringToObject(j,"ship_url",current.ship_url);cJSON_AddNumberToObject(j,"ship_range",current.ship_range);
     const cottage_integration_t *p=&current.integrations;cJSON *m=cJSON_AddObjectToObject(j,"mqtt");
     cJSON_AddBoolToObject(m,"enabled",p->mqtt_enabled);cJSON_AddBoolToObject(m,"managed",current.mqtt_managed);
@@ -140,6 +167,30 @@ static esp_err_t save(httpd_req_t *r)
     int at=0;while(at<r->content_len){int n=httpd_req_recv(r,body+at,r->content_len-at);if(n<=0){memset(body,0,r->content_len+1);free(body);return ESP_FAIL;}at+=n;}
     cJSON *j=cJSON_ParseWithLengthOpts(body,at+1,NULL,true);memset(body,0,at+1);free(body);
     cJSON *v=cJSON_GetObjectItemCaseSensitive(j,"section");const char *section=cJSON_IsString(v)?v->valuestring:"";
+    if(!strcmp(section,"furnace_monitor")){
+        cJSON *enabled=cJSON_GetObjectItemCaseSensitive(j,"enabled");
+        cJSON *installed=cJSON_GetObjectItemCaseSensitive(j,"installed");
+        cJSON *age=cJSON_GetObjectItemCaseSensitive(j,"max_report_age_seconds");
+        bool valid=cJSON_IsBool(enabled)&&cJSON_IsBool(installed)&&cJSON_IsNumber(age)&&
+            isfinite(age->valuedouble)&&age->valuedouble==floor(age->valuedouble)&&
+            age->valuedouble>=30&&age->valuedouble<=900;
+        if(!valid){cJSON_Delete(j);return reply(r,400,"Send enabled/installed flags and a whole report age between 30 and 900 seconds.");}
+        unsigned value=((unsigned)age->valueint<<8)|(cJSON_IsTrue(enabled)?1U:0U)|(cJSON_IsTrue(installed)?2U:0U);
+        cJSON_Delete(j);
+        nvs_handle_t nvs;esp_err_t err=nvs_open("room_config",NVS_READWRITE,&nvs);
+        if(err==ESP_OK){err=nvs_set_u32(nvs,"furnace_monitor",value);if(err==ESP_OK)err=nvs_commit(nvs);nvs_close(nvs);}
+        if(err!=ESP_OK)return reply(r,500,"Could not save furnace monitoring; previous settings remain active.");
+        atomic_store(&furnace_config,value);
+        return reply(r,200,"Furnace monitoring saved. No restart needed. Automatic thermal corrections remain disabled.");
+    }
+    if(!strcmp(section,"restart")){
+        cJSON *confirm=cJSON_GetObjectItemCaseSensitive(j,"confirm");
+        bool confirmed=cJSON_IsString(confirm)&&!strcmp(confirm->valuestring,"restart_thermostat");
+        cJSON_Delete(j);
+        if(!confirmed)return reply(r,400,"Confirm thermostat restart.");
+        if(!room_settings_reboot_later())return reply(r,500,"Could not schedule restart. Please retry.");
+        return reply(r,200,"Thermostat restarting. Saved settings are preserved.");
+    }
     settings_t *next=malloc(sizeof(*next));if(!next){cJSON_Delete(j);return ESP_ERR_NO_MEM;}*next=current;
     bool valid=false,restart=true;
     if(!strcmp(section,"ha")){
@@ -148,7 +199,13 @@ static esp_err_t save(httpd_req_t *r)
         cJSON *token=cJSON_GetObjectItemCaseSensitive(j,"ha_token");valid=valid&&cJSON_IsString(token)&&printable(token->valuestring,2048)&&!(clear&&*token->valuestring);
         if(valid){if(clear)next->token[0]=0;else if(*token->valuestring)snprintf(next->token,sizeof(next->token),"%s",token->valuestring);}
     }else if(!strcmp(section,"controller")){
-        char url[256];valid=cottage_string(j,"controller",url,sizeof(url),false)&&cottage_origin(next->controller,sizeof(next->controller),url,false);
+        char url[256];
+        valid=cottage_string(j,"controller",url,sizeof(url),false);
+        if(valid){
+            /* "auto" preserves NVS layout and opts into controller discovery. */
+            if(!*url||!strcmp(url,"auto"))snprintf(next->controller,sizeof(next->controller),"auto");
+            else valid=cottage_origin(next->controller,sizeof(next->controller),url,false);
+        }
     }else if(!strcmp(section,"ships")){
         char url[256];cJSON *range=cJSON_GetObjectItemCaseSensitive(j,"range");
         valid=cottage_bool(j,"enabled",&next->ships_enabled)&&cottage_string(j,"url",url,sizeof(url),false)&&cottage_origin(next->ship_url,sizeof(next->ship_url),url,false)&&cJSON_IsNumber(range)&&
@@ -167,6 +224,33 @@ static esp_err_t save(httpd_req_t *r)
         valid=cJSON_IsNumber(volume)&&volume->valuedouble>=0&&volume->valuedouble<=100&&volume->valueint==volume->valuedouble&&cJSON_IsBool(fill);
         if(valid)valid=room_audio_set_volume(volume->valueint);
         if(valid)room_display_set_camera_fill(cJSON_IsTrue(fill));
+        restart=false;
+    }else if(!strcmp(section,"temperature")){
+        /* Exact tenths, no acceptance of fractional/out-of-range JSON.
+         * NVS commit happens before the sensor task observes the value.
+         * No reboot and no controller command from the settings endpoint. */
+        cJSON *v=cJSON_GetObjectItemCaseSensitive(j,"offset_tenths");
+        valid=cJSON_IsNumber(v)&&isfinite(v->valuedouble)&&
+              v->valuedouble==floor(v->valuedouble)&&
+              v->valuedouble>=ROOM_TEMP_OFFSET_MIN_TENTHS&&
+              v->valuedouble<=ROOM_TEMP_OFFSET_MAX_TENTHS;
+        if(valid){
+            int offset=v->valueint;
+            nvs_handle_t nvs;
+            esp_err_t err=nvs_open("room_config",NVS_READWRITE,&nvs);
+            if(err==ESP_OK){
+                err=nvs_set_i16(nvs,"temp_offset_t10",(int16_t)offset);
+                if(err==ESP_OK)err=nvs_commit(nvs);
+                nvs_close(nvs);
+            }
+            cJSON_Delete(j);
+            memset(next,0,sizeof(*next));free(next);
+            if(err!=ESP_OK)return reply(r,500,
+                "Could not persist the offset; previous temperature calibration remains active.");
+            atomic_store(&temp_offset_tenths,offset);
+            return reply(r,200,
+                "Temperature offset saved. Applied to the next sensor sample (within 15 seconds); no restart needed.");
+        }
         restart=false;
     }else if(!strcmp(section,"sound_test")){valid=room_audio_test();restart=false;
     }else if(!strcmp(section,"wifi")){
@@ -205,6 +289,10 @@ cJSON *room_settings_controller_integrations(void)
 static esp_err_t status(httpd_req_t *r)
 {
     cJSON *j=room_display_status();cJSON_AddItemToObject(j,"wifi",room_wifi_status());cJSON_AddItemToObject(j,"firmware",room_ota_status());
+    cJSON *discovery=room_controller_discovery_status();
+    if(discovery)cJSON_AddItemToObject(j,"controller_discovery",discovery);
+    cJSON_AddItemToObject(j,"furnace_power",room_ha_furnace_status());
+    cJSON_AddItemToObject(j,"weather",room_ha_weather_status());
     return json_reply(r,200,j);
 }
 void room_settings_register(httpd_handle_t server)

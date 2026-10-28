@@ -12,5 +12,12 @@
     "kids_temp": {"entity_id": "sensor.cottage_kids_temperature_and_humidity_temperature", "label": "Kids temperature", "kind": "temperature"},
     "vacuum": {"entity_id": "vacuum.k11_vacuum_9d68", "label": "Vacuum", "kind": "vacuum"},
     "camera": {"entity_id": "camera.cottagecamptz_fluent", "label": "Parking-lot camera", "kind": "camera"}
+  },
+  "furnace_monitor": {
+    "furnace_current": {"entity_id": "sensor.furnace_power_current", "label": "Furnace current", "kind": "current"},
+    "furnace_power": {"entity_id": "sensor.furnace_power_power", "label": "Furnace electrical power", "kind": "power"}
+  },
+  "weather_monitor": {
+    "home_weather": {"entity_id": "weather.forecast_home", "label": "Home weather", "kind": "weather"}
   }
 }

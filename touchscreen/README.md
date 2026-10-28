@@ -1,8 +1,162 @@
 # Cottage room panel — Waveshare ESP32-S3-Touch-LCD-4B
 
-Version 0.13.7 provides the **native 480×480 LCD and capacitive touch interface**. This is for the **4B**, with 16 MB flash and 8 MB octal PSRAM. It uses Waveshare BSP 2.0.0, LVGL 9.2.0 and ESP LVGL port 2.6.2, compiled with ESP-IDF 6.0.1. The dependency lock pins the tested graph. **The ESP connects directly to Home Assistant using your long-lived token; no bridge process, bridge address or bridge token is required.** No device has been flashed or physically verified by the coding environment.
+## v0.15.0 — persistent room temperature calibration and link diagnostics
+
+**Primary sensor temperature offset:** Waveshare web settings now include a **Temperature** page with a signed **−10.0°F to +10.0°F** adjustment in **0.1°F** increments. The page displays the raw SHT45/SHT31 sensor reading, proposed corrected reading, a slider and numeric entry, plus Reset (sets preview to zero until saved). If the sensor reads warmer than a trusted room thermometer, enter a **negative** offset. The offset is validated server-side, stored separately as signed tenths under NVS `room_config/temp_offset_t10`, and loaded on boot with a zero default. Changing it **does not restart** the display or overwrite the existing settings profile (credentials, MQTT, ESP-NOW, HA, controller URL, Ships and OTA).
+
+Every 15-second successful sensor sample is corrected exactly once **before** delivery to the screen, Home Assistant MQTT Climate state and the authenticated controller temperature sample. The raw value is retained separately in `/api/device/status` as `raw_temperature_f`; its corrected peer remains `temperature_f`, with `temperature_offset_f` reflecting the saved adjustment. Web Overview shows raw and corrected readings side by side. The correction does **not** change the furnace target setpoint, dial-position mapping or controller firmware. Corrections outside the current controller sample protocol range (32–110°F) are rejected and logged rather than sent out of bounds; this conservative pre-existing protocol range should be revisited before using the system for freeze protection in below-freezing conditions. Recheck the offset after the final enclosure is installed and sensor temperature stabilizes; screen self-heating and room airflow can bias an exposed bench sensor.
+
+**LAN / ESP-NOW diagnostics:** When mDNS returns a controller IP but the Waveshare cannot establish HTTP to it, the link will **remain on ESP-NOW** until an authenticated LAN response succeeds. A browser on a different device being able to open the controller does not prove the Waveshare can open a TCP socket to it. The Controller page now reports selected transport, local Wi-Fi RF channel, recent ESP-NOW authenticated reply state, consecutive ESP-NOW status failures and LAN discovery HTTP error/status values. Use **Test Wi-Fi and ESP-NOW** to check both paths without moving the servo. The radio protocol, link selection, fallback implementation, MQTT, controller and servo controls are unchanged. Investigate AP wireless client isolation, VLAN forwarding and different Wi-Fi channels before attempting controller firmware changes.
+
+**Only update Waveshare:** from the local ESP-IDF PowerShell, run:
+
+```powershell
+cd C:\Users\kperry\Documents\GitHub\CottageThermoESP
+git pull --ff-only
+.\tools\build-room-4b.ps1 -Flash -Monitor -Port COM14
+```
+
+No GitHub Actions build, NVS erase, pairing change or Super Mini controller update. Run local host test `test_room_temp_cal` (registered in `tests/CMakeLists.txt`) and test serial log, web `Temperature` preview and saved value, Home Assistant Climate reading, and Controller transport diagnostics. Keep unattended heating in **Service** until sensor correction and dependable controller link are verified on the installed hardware.
+
+## v0.14.9 — photographed-display polish (visual-only)
+
+Reviewed five real Waveshare 480×480 photos from the previous Design #3 build. Main fixes:
+
+- **Navigation:** the five icons previously overlapped or sat beside their labels because the button helper centered the LVGL label and subsequent x/y positioning did not reset its alignment. Labels are now explicitly aligned to the top-left coordinate system and centered in dedicated icon rectangles above the captions. The Home, Climate, Laundry, Camera and Ships route mapping remains unchanged.
+- **Laundry:** the four blank white rings looked like progress meters but had no meaningful progress source. Each card now shows a plain, legible status tag (IDLE, DONE, PAUSED, ALERT or OFFLINE) when not active. A rotating indicator is shown **only while the machine is actually active**. Existing HA status, Notify buttons and sound logic remain unchanged.
+- **Camera:** the rectangular black area in the photographed image was confirmed by the user to originate from the camera itself. It is *not* a firmware rendering problem. Camera image presentation, scaling, clipping, request/decode and status behavior remain unchanged; the speculative frame-redraw change was reverted.
+
+This is a visual-only release; the thermostat/controller communication stack, sensor and temperature readings, ESP-NOW fallback, MQTT/Home Assistant commands, blower/servo calibration, clock screensaver and all five pages are unchanged.
+
+**Build only locally, no GitHub Actions:** from your configured ESP-IDF PowerShell, run `git pull --ff-only` followed by `.\tools\build-room-4b.ps1 -Flash -Monitor -Port COM14`. Preserve NVS/pairing and leave controller v0.7.1 untouched.
+
+## v0.14.8 — full-screen digital clock screensaver
+
+The native Waveshare 4B automatically displays a large **cyan seven-segment
+digital clock** after **60 seconds** with no touchscreen activity. It is a full
+480×480 overlay that hides the page and bottom navigation, shows **local
+12-hour time with AM/PM and weekday/date**, and dims display brightness from
+the normal 80% to 48%. The colon blinks each second.
+
+- **Touch anywhere to dismiss:** the overlay consumes the initial finger
+  press and waits for release; waking must not also activate a hidden
+  thermostat, light, blind, or Home Assistant button. Brightness restores
+  immediately and the **same page and existing modal** return.
+- The idle timer now opens the clock rather than automatically returning
+  every screen to Climate after 60 seconds.
+- Time comes from the touchscreen's **existing pool.ntp.org SNTP client**,
+  formatted in the Michigan `America/Detroit` time zone using
+  `EST5EDT,M3.2.0/2,M11.1.0/2` (automatic spring/fall daylight-saving
+  transitions). Wi-Fi/HA are **not needed to continue ticking after a
+  successful sync**. If freshly booted without time sync, the clock displays
+  dashes and `Waiting for network time`, never an incorrect 1970 timestamp.
+- No network, command, controller, thermostat, servo, NVS, MQTT, radio, or
+  camera data flow is changed. Clock widgets are constructed once and
+  updated at most once a second.
+- Pure-C host test `test_room_clock` verifies the 60-second inactivity
+  threshold, unsynchronized time guard, 12-hour formatting and AM/PM.
+
+**Local build only**; no GitHub Actions builds. Flash **only the Waveshare**,
+retaining all local settings and NVS. The Super Mini controller stays at
+v0.7.1.
+
+```powershell
+cd C:\Users\kperry\Documents\GitHub\CottageThermoESP
+git pull --ff-only
+.\tools\build-room-4b.ps1 -Flash -Monitor -Port COM14
+```
+
+After a local flash, leave the screen untouched for one minute, check clock
+and daylight-saving local time, then tap the clock above the temperature
+buttons or Home light tiles and confirm that no underlying action fires. The
+ESP-IDF firmware build and on-device rendering are still to be confirmed
+locally; pure host tests do not certify the hardware.
+
+## v0.14.7 — faithful Design #3 composition (local build only)
+
+The **original six-panel reference graphic** (selected Design #3, bottom-row Home and Climate concepts) was reviewed side by side with the firmware. Versions 0.14.5–0.14.6 only applied a color treatment; they did not reproduce the asymmetric layout, vivid card illustrations, or icon-led tab navigation. This release corrects those differences.
+
+- **Climate:** the *proposed target* is now the large temperature headline on the **left**, with actual **Current** temperature immediately underneath. A genuine, still draggable **blue/orange 248px split gauge** occupies the right, with radial markers and a small two-line `DRAG RING / TO ADJUST` hint inside. The original controller-facing command flow is unchanged: drag previews, and the four buttons remain `−1 | Set Temp | +1 | Away/Home` on the bottom row. A narrow status strip preserves Live/Service/Bench state and failure reason without filling the gauge. The button styling follows Design #3's blue Set Temp action.
+- **Home:** the same five existing connected HA controls are arranged in a **2-column grid** of icon-left, text-right blue/teal/amber cards. Deck/Breezeway tiles retain safe tap-to-toggle; Blinds retains Open/Stop/Close; Vacuum Start/Stop; Kids Heat On/Off and temperature. **No Camera card** is placed on Home and the sixth tile remains free.
+- **Navigation:** shared across all screens with a compact **Cottage** header, a small tappable online health pill, and five **icon + label** tabs ordered Home / Climate / Laundry / Camera / Ships. The underlying page IDs and callbacks have not changed. Ships stays visible and its page content is not redesigned.
+- **Laundry/Camera:** keep exactly their previous data and actions, with the reference design's layered blue cards and smaller accent treatments.
+
+**Visual-only production file changes**: `touchscreen/main/room_display.c`, `touchscreen/main/room_layout.h`, host-only geometry regression test, version metadata and docs. No `room_controller.c`, `room_mqtt.c`, `wifi_setup.c`, ESP-NOW, temperature mappings, NVS, thermostat motor/servo logic, Home Assistant commands, camera streaming or any other backend behavior was changed.
+
+**Build and flash locally** from your ESP-IDF PowerShell (the recent Waveshare port was COM14):
+
+```powershell
+cd C:\Users\kperry\Documents\GitHub\CottageThermoESP
+git pull --ff-only
+.\tools\build-room-4b.ps1 -Flash -Monitor -Port COM14
+```
+
+**No GitHub Actions build** was triggered. This branch has source-level bounds checks and LVGL 9.2 API verification, but the completed ESP-IDF compile and the actual 480x480 rendering still need to be verified on the user's Windows machine before this is treated as released hardware firmware. No NVS erase, calibration, controller update or pairing changes are needed.
+
+## v0.14.5 — Design #3 native LVGL visual refresh (local build)
+
+**Visual-only upgrade** of the existing Waveshare ESP32-S3 Touch LCD 4B interface. The new shared **midnight-blue design system** uses brighter electric-blue/teal accents, warm amber for the heat target, high-contrast typography, rounded raised cards, consistent status colors, a unified header and a highlighted bottom navigation tab. No new bitmap assets, fonts, animation engines, web dependencies or LVGL alpha-layer effects were added. Ships is **still present and functional in navigation**; only its common header and navigation adopt the style, and its page contents have not been redesigned.
+
+- **Climate:** enlarged draggable setpoint ring and one-row `-1 | Set Temp | +1 | Away/Home` controls remain. The dial sits in a single rounded dark surface, the setpoint knob has a brighter outline, and live/bench/service status is grouped in a subtle card with consistent accent color. Dragging remains a **preview only** until Set Temp is pressed.
+- **Home:** preserves exactly the five compact 2-column tiles and the vacant sixth slot. Light tiles retain touch-to-toggle, golden lit bulbs, and known-state/pending command gating. Blinds retains Open/Stop/Close, Vacuum retains Start/Stop with a new lightweight LVGL robot-vacuum icon, and Kids Heat retains On/Off plus temperature. Active tiles receive a restrained tinted background and colored outline.
+- **Laundry:** the original four equipment cards and their Notify buttons remain, but gain modern blue icon plaques, thin dividers, clear WASHER/DRYER labels, unified borders/spacing, consistent status capitalization and subtle animated activity rings.
+- **Camera:** Parking Lot gets a matching title strip, connection/status label and border treatment. **Camera requests, media decoding, image scale, viewport dimensions and clip policy are unchanged.** There is no camera tile on Home.
+- **Ships:** left as-is. It remains visible in the five-tab navigation and continues to function as before.
+
+**No communication or controller changes whatsoever:** ESP-NOW fallback, Wi-Fi recovery/discovery, MQTT/HA climate/away, all Home Assistant actions, notification toggles, thermostat control and mode flags, calibration, NVS, schedule and network timing remain unchanged. The only edited production code is the native Waveshare `room_display.c` styling, plus the displayed firmware version.
+
+**Local flash only; GitHub Actions not used:** run in the Windows ESP-IDF 6.0.1 PowerShell from the project root:
+
+```powershell
+git pull --ff-only
+.\tools\build-room-4b.ps1 -Flash -Monitor -Port COM21
+```
+
+Controller Super Mini **v0.7.1 stays unchanged**. Do not erase NVS. After flashing, verify the rounded card text doesn't overlap, all five tabs including Ships still switch, Climate drag/setpoint buttons behave exactly as before, lights and cover/vacuum/radiator controls work, Laundry notifications remain togglable, and Camera still displays its feed.
+
+## v0.14.4 — one-row Climate controls and shorter Away display
+
+On the Waveshare 480×480 Climate page, **all four buttons now share the same bottom row**: `-1 | Set Temp | +1 | Away` (or `Home` while Away is selected). They use the full 456px content width with eight-pixel gutters. The separate Away button row has been removed, giving the dial and status more room. The large target label reads only **Away** in Freeze Hold, while the existing controller-owned 50°F setting, Home resume behavior and Home Assistant climate presets remain unchanged. The ring hint is now two centered lines: **DRAG RING** / **TO ADJUST**; its knob and touch behavior are unchanged. The mode and status text span the full width below the dial.
+
+The production geometry has compile-time assertions and a `test_room_home_layout` host regression covering all four bottom buttons. **Build only on the local ESP-IDF machine; no GitHub Actions run.** From the repository root after `git pull --ff-only`: `.\\tools\\build-room-4b.ps1 -Flash -Monitor -Port COM21`. Do not erase NVS or reflash controller v0.7.1.
+
+## v0.14.3 — compact Home tiles and larger, unclipped Climate dial
+
+The native Waveshare 480×480 Climate page now uses a larger 252px interactive dial, safely inset from the header so the knob is not clipped. **-1 / Set Temperature / +1** share a single wide bottom control row. **Away (50 F)** remains separate and the ring continues to change a draft only: no servo or network request is sent until **Set Temperature** is pressed.
+
+The Home page is a compact **two-column grid** of 224px tiles:
+
+- Row 1: **Deck Lights** and **Breezeway Lights**, each a whole-tile On/Off toggle with an illuminated gold bulb when On; unknown/stale states and in-flight commands cannot be tapped
+- Row 2: **Blinds** with Open / Stop / Close icon buttons, and **Vacuum** with Start / Stop and dock status
+- Row 3: **Kids Heat** with On / Off and current bedroom temperature, leaving the right-hand sixth tile position unused for future features
+
+The tiles retain their existing Home Assistant entity mappings, queue, pending-command checks and state/availability behavior. No controller-side changes are required. The production layout constants and static bounds assertions live in `main/room_layout.h`, and `test_room_home_layout.c` checks grid geometry and known-state-only light toggling. **All flash/build work stays local** rather than using GitHub Actions. To update the 4B only:
+
+```powershell
+cd C:\Users\kperry\Documents\GitHub\CottageThermoESP
+git pull --ff-only
+.\tools\build-room-4b.ps1 -Flash -Monitor -Port COM21
+```
+
+Leave the Super Mini controller on v0.7.1. This is a layout/UI release and does not require an NVS erase, recalibration, MQTT reconnection or new pairing.
+
+## v0.14.2 — local-build Climate polish and reliable controller commands
+
+The Climate page uses a **draggable target-temperature ring** with a visible handle (45–80°F, one-degree steps). The large center number remains the **current room temperature**, while the amber target indicator and ring show the *proposed setpoint*. Sliding the ring or tapping the small **−1 / +1** buttons only edits a draft; tap **Set Temperature** once to send it to the controller. **Away (50 F)** and **Resume Home** remain a prominent independent button. Raw firmware states such as `mapped_setting_reached` are translated to user-facing status labels, with consistent capitalization and no unsupported special-font separators.
+
+Each deliberate target/Away request now obtains a **fresh read-only controller lease before the single mutation**, avoiding intermittently expired five-second leases. The previously ambiguous "Request rejected" toast now reports whether the controller was busy, denied a command (e.g. because Away is active), had an expired/replaced session, or had an uncertain reply. **Do not automatically retry an uncertain command**; inspect the reported setpoint first. Encrypted ESP-NOW fallback, controller authorization and calibrations are unchanged.
+
+Home Assistant MQTT Climate now advertises **Home** and **Away** as explicit presets and reports Home when Away is off. Home Assistant *always* inserts its own built-in **None** entry; MQTT firmware cannot rename or suppress that built-in control. The existing separate **Away / Freeze Hold (50 F)** switch on the device is another convenient option. Republish discovery from the touchscreen settings after flashing.
+
+**Build locally, no GitHub Actions required:** from your configured ESP-IDF 6.0.1 PowerShell in the repo root, after `git pull --ff-only`, run `.\tools\build-room-4b.ps1 -Flash -Monitor -Port COM21`. Preserve existing `sdkconfig.4b`, local secrets and NVS. **Controller v0.7.1 does not need reflashing.** Validate the slider touch and ±1 controls, one-time submit, Home/Away MQTT state, and reconnecting from Wi-Fi to ESP-NOW before the cottage installation.
+
+
+
+Version 0.13.8 provides the **native 480×480 LCD and capacitive touch interface**. This is for the **4B**, with 16 MB flash and 8 MB octal PSRAM. It uses Waveshare BSP 2.0.0, LVGL 9.2.0 and ESP LVGL port 2.6.2, compiled with ESP-IDF 6.0.1. The dependency lock pins the tested graph. **The ESP connects directly to Home Assistant using your long-lived token; no bridge process, bridge address or bridge token is required.** No device has been flashed or physically verified by the coding environment.
 
 The 4B is the planned production display. User tests confirmed the earlier UI, camera, audio and BME280 temperature test. v0.11.0 adds aligned colored Connections, full LAN configuration, Ships and application-bin OTA. v0.12.1 connects this display directly to MQTT for an HA Climate entity and monitoring sensors. HA target requests use the same queue as touchscreen changes; controller v0.4.1 removes controller MQTT commands. See [standalone MQTT monitoring](../docs/STANDALONE_MQTT_MONITORING.md). Follow [dashboard, ships and OTA setup](../docs/DEVICE_DASHBOARD_SHIPS_OTA.md), including the **initial USB flash required for OTA**. Earlier milestone notes below are historical.
+
+For controller discovery, use the Controller settings page and select **Use automatic discovery**. The display resolves **CottageThermoController.local** through mDNS, verifies identity and shows the resolved IP. See [mDNS auto-discovery bench checks](../docs/CONTROLLER_MDNS_AUTO_DISCOVERY.md).
 
 ## Display orientation
 

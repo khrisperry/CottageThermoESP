@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include "driver/i2c_master.h"
 #include "esp_event.h"
 #include "esp_http_client.h"
@@ -11,6 +12,7 @@
 #include "esp_netif.h"
 #include "esp_timer.h"
 #include "esp_wifi.h"
+#include "mdns.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "nvs_flash.h"
@@ -22,6 +24,7 @@
 #include "room_ha.h"
 #include "wifi_setup.h"
 #include "room_settings.h"
+#include "room_temp_cal.h"
 #include "room_bmp280.h"
 #include "room_controller.h"
 #include "room_ships.h"
@@ -55,12 +58,29 @@ static void sensor_task(void *arg)
     for(;;) {
         float f;
         if(read_probe(&f)) {
-            room_display_probe_sample(f);
-            if(CONFIG_ROOM_SENSOR==3){
-                ESP_LOGI(TAG,"BMP/BME280 TEST: %.2f F (%.2f C); not sent to controller",f,(f-32.0f)/1.8f);
-            } else {
-                bool sent=room_controller_sample(f);
-                ESP_LOGI(TAG,"%s room %.2f F (%.2f C); report %s",CONFIG_ROOM_SENSOR==2?"SHT45/SHT4x":"SHT31",f,(f-32.0f)/1.8f,sent?"acknowledged":"not acknowledged");
+            const float raw_f=f;
+            const int offset=room_settings_temp_offset_tenths();
+            f=room_temp_correct(raw_f,offset);
+            /* The controller's protocol intentionally admits 32..110 F.
+             * Never send an out-of-range corrected value, but report why. */
+            if(!isfinite(f)||f<32.0f||f>110.0f){
+                ESP_LOGW(TAG,
+                    "Primary probe raw %.2f F plus offset %+.1f F is outside 32..110 F; no sample sent",
+                    raw_f,offset/10.0f);
+            }else{
+                /* One correction before the reading branches to display,
+                 * MQTT, and controller. No offset is added to targets. */
+                room_display_probe_sample(f,raw_f);
+                if(CONFIG_ROOM_SENSOR==3){
+                    ESP_LOGI(TAG,"BMP/BME280 TEST raw %.2f F + offset %+.1f F = %.2f F; not sent to controller",
+                             raw_f,offset/10.0f,f);
+                }else{
+                    bool sent=room_controller_sample(f);
+                    ESP_LOGI(TAG,
+                        "%s raw %.2f F + offset %+.1f F = room %.2f F; report %s",
+                        CONFIG_ROOM_SENSOR==2?"SHT45/SHT4x":"SHT31",
+                        raw_f,offset/10.0f,f,sent?"acknowledged":"not acknowledged");
+                }
             }
         } else ESP_LOGW(TAG,"No fresh valid probe sample; no temperature report sent");
         vTaskDelay(pdMS_TO_TICKS(15000));
@@ -84,7 +104,15 @@ void app_main(void)
     cJSON_Hooks hooks={.malloc_fn=json_allocate,.free_fn=free};cJSON_InitHooks(&hooks);
 #endif
     room_settings_init();
+    /* Digital clock follows Michigan local time including automatic DST.
+     * This only affects localtime_r() formatting. Existing SNTP source,
+     * Wi-Fi/ESP-NOW, controller protocol and MQTT are unchanged. */
+    if(setenv("TZ","EST5EDT,M3.2.0/2,M11.1.0/2",1)==0)tzset();
+    else ESP_LOGW(TAG,"Cannot set local clock timezone; time may show UTC");
     room_wifi_start();
+    esp_err_t mdns_err=mdns_init();
+    if(mdns_err==ESP_OK)ESP_LOGI(TAG,"Controller mDNS lookup available; searching CottageThermoController.local");
+    else ESP_LOGW(TAG,"mDNS discovery unavailable: %s; explicit controller URL / ESP-NOW remain usable",esp_err_to_name(mdns_err));
     room_controller_start();
     room_ha_start();
     room_ships_start();
@@ -120,6 +148,6 @@ void app_main(void)
         ESP_ERROR_CHECK(xTaskCreate(sensor_task,"room_probe",6144,NULL,3,NULL)==pdPASS?ESP_OK:ESP_ERR_NO_MEM);
     else ESP_LOGW(TAG,"Local probe disabled: configure probe type and pins");
     room_ota_confirm_boot();
-    ESP_LOGI(TAG,"Room client v0.13.7; native display and browser services ready");
+    ESP_LOGI(TAG,"Room client v0.15.4; native display and browser services ready");
 }
 

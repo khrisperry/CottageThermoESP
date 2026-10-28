@@ -8,15 +8,21 @@
 #include "../../touchscreen/main/room_ota.c"
 static uint8_t stored_profile[8192];static size_t stored_size;static char stored_code[32];
 static int writes,selects,aborts,begins,confirms;static bool bad_end,bad_write,bad_begin,no_slot,bad_select;
+static bool fail_reboot_task;
+static int reboot_tasks,reboot_calls,profile_writes;
+static int16_t saved_offset;
+static uint32_t saved_monitor;
+static bool monitor_saved,fail_monitor_save;
+static void (*pending_reboot_task)(void *);
 static esp_partition_t running={"factory",4194304},inactive={"ota_0",4194304};
 static esp_app_desc_t description={.version="test"};
 const unsigned char settings_start[]={0},settings_end[]={0};
 int64_t esp_timer_get_time(void){return 10000000;}
 uint32_t esp_random(void){return 123;}
 void esp_fill_random(void *out,size_t n){memset(out,0x12,n);}
-void esp_restart(void){}
+void esp_restart(void){++reboot_calls;}
 void vTaskDelay(int t){}
-int xTaskCreate(void(*f)(void*),const char*n,int stack,void*a,int prio,void*b){return 1;}
+int xTaskCreate(void(*f)(void*),const char*n,int stack,void*a,int prio,void*b){if(fail_reboot_task)return 0;pending_reboot_task=f;++reboot_tasks;return 1;}
 int esp_wifi_get_mac(int i,uint8_t *mac){memset(mac,2,6);return 0;}
 unsigned room_audio_get_volume(void){return 100;}
 bool room_audio_set_volume(unsigned v){return v<=100;}
@@ -29,10 +35,17 @@ cJSON *room_wifi_status(void){return cJSON_CreateObject();}
 bool room_wifi_submit(const char *ssid,const char *pw,bool open){return true;}
 cJSON *room_controller_test(void){cJSON *j=cJSON_CreateObject();cJSON_AddStringToObject(j,"message","Wi-Fi: controller acknowledged. ESP-NOW: controller acknowledged.");return j;}
 cJSON *room_controller_status(void){return cJSON_CreateObject();}
+cJSON *room_controller_discovery_status(void){return cJSON_CreateObject();}
+cJSON *room_ha_furnace_status(void){return cJSON_CreateObject();}
+cJSON *room_ha_weather_status(void){return cJSON_CreateObject();}
 int nvs_open(const char *name,int mode,unsigned *h){*h=1;return 0;}
 void nvs_close(unsigned h){}
 int nvs_get_blob(unsigned h,const char *key,void *out,size_t *size){if(!stored_size)return -1;if(*size<stored_size)return -1;memcpy(out,stored_profile,stored_size);*size=stored_size;return 0;}
-int nvs_set_blob(unsigned h,const char *key,const void *in,size_t size){assert(size<=sizeof(stored_profile));memcpy(stored_profile,in,size);stored_size=size;return 0;}
+int nvs_set_blob(unsigned h,const char *key,const void *in,size_t size){assert(size<=sizeof(stored_profile));++profile_writes;memcpy(stored_profile,in,size);stored_size=size;return 0;}
+int nvs_get_i16(unsigned h,const char *key,int16_t *out){*out=saved_offset;return 0;}
+int nvs_set_i16(unsigned h,const char *key,int16_t value){saved_offset=value;return 0;}
+int nvs_get_u32(unsigned h,const char *key,uint32_t *out){assert(!strcmp(key,"furnace_monitor"));if(!monitor_saved)return -1;*out=saved_monitor;return 0;}
+int nvs_set_u32(unsigned h,const char *key,uint32_t value){assert(!strcmp(key,"furnace_monitor"));if(fail_monitor_save)return -1;saved_monitor=value;monitor_saved=true;return 0;}
 int nvs_get_str(unsigned h,const char *key,char *out,size_t *size){if(!*stored_code)return -1;snprintf(out,*size,"%s",stored_code);*size=strlen(stored_code)+1;return 0;}
 int nvs_set_str(unsigned h,const char *key,const char *s){snprintf(stored_code,sizeof(stored_code),"%s",s);return 0;}
 int nvs_commit(unsigned h){return 0;}
@@ -67,6 +80,34 @@ int main(int argc,char **argv){
  r=req(mqtt,strlen(mqtt),"application/json");save(&r);assert(r.code==200);reboot_pending=false;memset(&current,0,sizeof(current));room_settings_init();cJSON *sync=room_settings_controller_integrations();cJSON *m=cJSON_GetObjectItem(sync,"mqtt");assert(!m);cJSON_Delete(sync); /* MQTT credentials are never forwarded to the controller. */
  const char *probe="{\"section\":\"controller_test\"}";size_t previous_size=stored_size;
  r=req(probe,strlen(probe),"application/json");save(&r);assert(r.code==200&&strstr(r.response,"acknowledged")&&!reboot_pending&&stored_size==previous_size);
+ /* Restart runs the real settings handler, without saving/replacing NVS or
+  * issuing a controller command. Guard the same-origin and OTA boundaries. */
+ const char *restart="{\"section\":\"restart\",\"confirm\":\"restart_thermostat\"}";
+ int tasks_before=reboot_tasks,profile_writes_before=profile_writes;
+ settings_t settings_before=current;uint8_t profile_before[8192];memcpy(profile_before,stored_profile,sizeof(profile_before));
+ r=req(restart,strlen(restart),"application/json");r.headers[1].value="http://evil.example";save(&r);assert(r.code==403&&reboot_tasks==tasks_before);
+ const char *unconfirmed="{\"section\":\"restart\"}";
+ r=req(unconfirmed,strlen(unconfirmed),"application/json");save(&r);assert(r.code==400&&reboot_tasks==tasks_before);
+ busy=true;r=req(restart,strlen(restart),"application/json");save(&r);assert(r.code==409&&!reboot_pending);busy=false;
+ fail_reboot_task=true;r=req(restart,strlen(restart),"application/json");save(&r);assert(r.code==500&&!reboot_pending);fail_reboot_task=false;
+ r=req(restart,strlen(restart),"application/json");save(&r);assert(r.code==200&&reboot_pending&&reboot_calls==0&&reboot_tasks==tasks_before+1);
+ assert(profile_writes==profile_writes_before&&!memcmp(&current,&settings_before,sizeof(current))&&!memcmp(profile_before,stored_profile,sizeof(profile_before)));
+ r=req(restart,strlen(restart),"application/json");save(&r);assert(r.code==409&&reboot_tasks==tasks_before+1);
+ pending_reboot_task(NULL);assert(reboot_calls==1);reboot_pending=false;
+ /* Monitor flags default disabled/bench and persist independently of the
+  * credential profile, with no restart or controller mutation. */
+ assert(room_settings_furnace_config()==(180U<<8));
+ const char *monitor="{\"section\":\"furnace_monitor\",\"enabled\":true,\"installed\":false,\"max_report_age_seconds\":180}";
+ r=req(monitor,strlen(monitor),"application/json");save(&r);assert(r.code==200&&!reboot_pending);
+ assert(room_settings_furnace_config()==((180U<<8)|1U));
+ assert(profile_writes==profile_writes_before&&!memcmp(&current,&settings_before,sizeof(current)));
+ room_settings_init();assert(room_settings_furnace_config()==((180U<<8)|1U));
+ fail_monitor_save=true;
+ const char *disable_monitor="{\"section\":\"furnace_monitor\",\"enabled\":false,\"installed\":false,\"max_report_age_seconds\":180}";
+ r=req(disable_monitor,strlen(disable_monitor),"application/json");save(&r);assert(r.code==500&&room_settings_furnace_config()==((180U<<8)|1U));fail_monitor_save=false;
+ const char *bad_monitor="{\"section\":\"furnace_monitor\",\"enabled\":true,\"installed\":true,\"max_report_age_seconds\":0}";
+ r=req(bad_monitor,strlen(bad_monitor),"application/json");save(&r);assert(r.code==400);
+ saved_monitor=0xFFFFFFFF;room_settings_init();assert(room_settings_furnace_config()==(180U<<8));
  uint8_t image[4096]={0};esp_image_header_t header={.magic=ESP_IMAGE_HEADER_MAGIC,.chip_id=ESP_CHIP_ID_ESP32S3};esp_app_desc_t desc={.magic_word=ESP_APP_DESC_MAGIC_WORD,.project_name="cottage_thermo_room_4b"};
  memcpy(image,&header,sizeof(header));memcpy(image+sizeof(header)+sizeof(esp_image_segment_header_t),&desc,sizeof(desc));assert(valid_header(image,sizeof(image)));
  if(argc>1){FILE *file=fopen(argv[1],"rb");assert(file);uint8_t actual[1024];assert(fread(actual,1,sizeof(actual),file)==sizeof(actual));fclose(file);assert(valid_header(actual,sizeof(actual)));}

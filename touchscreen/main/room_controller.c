@@ -1,5 +1,7 @@
 #include "room_controller.h"
 #include "room_transport.h"
+#include "room_discovery_probe.h"
+#include "room_link_policy.h"
 #include "room_settings.h"
 #include "wifi_setup.h"
 #include "thermo_radio.h"
@@ -11,6 +13,10 @@
 #include "esp_random.h"
 #include "esp_log.h"
 #include "esp_timer.h"
+#include "esp_netif_ip_addr.h"
+#include "esp_wifi.h"
+#include "mdns.h"
+#include <strings.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 static SemaphoreHandle_t io;
@@ -20,8 +26,106 @@ static tl_packet_t latest;
 static int64_t received_at;
 static atomic_bool fallback;
 static atomic_int sync_state;
+static char discovered_origin[64],discovered_address[16];
+static uint32_t next_discovery_ms;
+static unsigned manual_failures;
+static bool discovery_verified;
+static esp_err_t discovery_last_error;
+static int discovery_last_http_status;
+static unsigned discovery_failed_checks,radio_failed_probes;
 static void sync_task(void *arg);
 static bool fresh(void){return received_at&&esp_timer_get_time()-received_at<4000000;}
+
+static bool controller_is_auto(void)
+{
+    const char *saved=room_settings_controller_url();
+    return !*saved||!strcmp(saved,"auto");
+}
+static bool controller_can_use_mdns(void)
+{
+    /* Never silently downgrade an explicit HTTPS controller origin to HTTP. */
+    return strncmp(room_settings_controller_url(),"https://",8)!=0;
+}
+static bool controller_is_local_name(void)
+{
+    const char *saved=room_settings_controller_url();
+    return controller_can_use_mdns()&&strstr(saved,"CottageThermoController.local")!=NULL;
+}
+static const char *controller_origin(void)
+{
+    if(*discovered_origin&&controller_can_use_mdns()&&(controller_is_auto()||controller_is_local_name()||manual_failures>=2))
+        return discovered_origin;
+    return controller_is_auto()?"":room_settings_controller_url();
+}
+static void discover_controller(void)
+{
+    if(!room_wifi_connected())return;
+    bool needed=controller_can_use_mdns()&&(controller_is_auto()||controller_is_local_name()||manual_failures>=2);
+    if(!needed||*discovered_origin)return;
+    uint32_t now=(uint32_t)(esp_timer_get_time()/1000);
+    if((int32_t)(now-next_discovery_ms)<0)return;
+    next_discovery_ms=now+15000U;
+    esp_ip4_addr_t ip={0};
+    esp_err_t err=mdns_query_a("CottageThermoController",1200,&ip);
+    if(err!=ESP_OK){
+        discovery_last_error=err;
+        ++discovery_failed_checks;
+        ESP_LOGW("controller_discovery","mDNS lookup CottageThermoController.local failed: %s",esp_err_to_name(err));
+        return;
+    }
+    char found_origin[64],found_ip[16];
+    snprintf(found_ip,sizeof(found_ip),IPSTR,IP2STR(&ip));
+    snprintf(found_origin,sizeof(found_origin),"http://%s",found_ip);
+    const cottage_integration_t *pair=room_settings_integrations();
+    room_discovery_result_t result={0};
+    if(!room_discovery_probe_origin(found_origin,pair->radio_enabled,
+                                   pair->peer,&result)){
+        discovery_last_error=result.http_error;
+        discovery_last_http_status=result.http_status;
+        ++discovery_failed_checks;
+        if(result.identity_mismatch)
+            ESP_LOGW("controller_discovery",
+                "Ignored discovered host %s: hostname or configured controller MAC differs",found_ip);
+        else ESP_LOGW("controller_discovery",
+            "mDNS returned %s but complete status failed: err=%d HTTP=%d bytes=%d; keeping ESP-NOW",
+            found_ip,(int)result.http_error,result.http_status,result.response_bytes);
+        return;
+    }
+    snprintf(discovered_origin,sizeof(discovered_origin),"%s",found_origin);
+    snprintf(discovered_address,sizeof(discovered_address),"%s",found_ip);
+    discovery_verified=true;
+    discovery_last_error=ESP_OK;
+    discovery_last_http_status=200;
+    discovery_failed_checks=0;
+    ESP_LOGI("controller_discovery","Verified CottageThermoController.local at %s",found_ip);
+}
+cJSON *room_controller_discovery_status(void)
+{
+    cJSON *j=cJSON_CreateObject();if(!j)return NULL;
+    if(!io||xSemaphoreTake(io,pdMS_TO_TICKS(50))!=pdTRUE){
+        cJSON_AddStringToObject(j,"status","busy");return j;
+    }
+    cJSON_AddStringToObject(j,"hostname","CottageThermoController.local");
+    cJSON_AddBoolToObject(j,"automatic",controller_is_auto());
+    cJSON_AddBoolToObject(j,"verified",discovery_verified&&*discovered_origin);
+    cJSON_AddStringToObject(j,"resolved_ip",discovered_address);
+    cJSON_AddStringToObject(j,"active_url",controller_origin());
+    uint8_t channel=0;wifi_second_chan_t second=WIFI_SECOND_CHAN_NONE;
+    if(esp_wifi_get_channel(&channel,&second)==ESP_OK)
+        cJSON_AddNumberToObject(j,"wifi_channel",channel);
+    cJSON_AddStringToObject(j,"selected_transport",fallback?"ESP-NOW":"LAN");
+    cJSON_AddBoolToObject(j,"espnow_online",tl_radio_online());
+    cJSON_AddBoolToObject(j,"espnow_configured",tl_radio_configured());
+    cJSON_AddNumberToObject(j,"espnow_failed_probes",radio_failed_probes);
+    cJSON_AddNumberToObject(j,"discovery_failed_checks",discovery_failed_checks);
+    cJSON_AddNumberToObject(j,"discovery_http_error",(int)discovery_last_error);
+    cJSON_AddNumberToObject(j,"discovery_http_status",discovery_last_http_status);
+    cJSON_AddStringToObject(j,"source",*discovered_origin&&
+        (controller_is_auto()||controller_is_local_name()||manual_failures>=2)?"mDNS":
+        controller_is_auto()?"searching":"configured");
+    xSemaphoreGive(io);return j;
+}
+
 void room_controller_start(void)
 {
     io=xSemaphoreCreateMutex();ESP_ERROR_CHECK(io?ESP_OK:ESP_ERR_NO_MEM);
@@ -37,14 +141,21 @@ bool room_controller_radio_online(void){return tl_radio_online();}
 static bool http(const tl_packet_t *p,tl_packet_t *out)
 {
     if(!room_wifi_connected())return false;
+    const char *origin=controller_origin();
+    if(!*origin)return false;
     char hex[sizeof(*p)*2+1],body[sizeof(*p)*2+20],response[512];int status=0,length=0;
     tl_hex(p,hex);snprintf(body,sizeof(body),"{\"packet\":\"%s\"}",hex);
-    esp_err_t err=room_http_keepalive(&http_session,room_settings_controller_url(),NULL,NULL,
+    esp_err_t err=room_http_keepalive(&http_session,origin,NULL,NULL,
        "/api/link",body,response,sizeof(response),1800,&status,&length);
     if(err!=ESP_OK||status!=200){
-        ESP_LOGW("controller_link","Controller %s/api/link: error=%d HTTP=%d",room_settings_controller_url(),(int)err,status);
+        ESP_LOGW("controller_link","Controller %s/api/link: error=%d HTTP=%d",origin,(int)err,status);
+        if(origin==discovered_origin){
+            discovered_origin[0]=0;discovered_address[0]=0;discovery_verified=false;
+            next_discovery_ms=0;
+        }else if(manual_failures<100)++manual_failures;
         return false;
     }
+    if(origin!=discovered_origin)manual_failures=0;
     cJSON *j=cJSON_Parse(response),*v=cJSON_GetObjectItemCaseSensitive(j,"packet");
     bool ok=cJSON_IsString(v)&&tl_unhex(v->valuestring,out);cJSON_Delete(j);return ok;
 }
@@ -56,10 +167,16 @@ static bool exchange(tl_packet_t p,tl_packet_t *r,bool probe)
 {
     int64_t start=esp_timer_get_time();bool ok=false,via_radio=fallback;
     if(probe){
+        discover_controller();
+        /* Discovery may block on multicast; the link lease starts at the
+         * actual controller exchange, not the discovery lookup. */
+        start=esp_timer_get_time();
         if(http(&p,r)&&matching(&p,r)&&r->result==TL_OK){via_radio=false;ok=true;}
         else {
             start=esp_timer_get_time();
-            if(tl_radio_exchange(&p,r)==ESP_OK&&matching(&p,r)&&r->result==TL_OK){via_radio=true;ok=true;}
+            if(tl_radio_exchange(&p,r)==ESP_OK&&matching(&p,r)&&r->result==TL_OK){
+                via_radio=true;ok=true;radio_failed_probes=0;
+            }else if(radio_failed_probes<1000000U)++radio_failed_probes;
         }
     }else ok=fallback?(tl_radio_exchange(&p,r)==ESP_OK&&matching(&p,r)):(http(&p,r)&&matching(&p,r));
     if(ok&&esp_timer_get_time()-start<3000000){
@@ -78,6 +195,8 @@ static cJSON *status_json(const tl_packet_t *r)
     if(r->flags&TL_HAS_TEMP)cJSON_AddNumberToObject(j,"temperature_f",r->temperature);
     if(r->flags&TL_HAS_TARGET)cJSON_AddNumberToObject(j,"target_f",r->target);
     cJSON_AddBoolToObject(j,"simulation",(r->flags&TL_SIMULATION)!=0);
+    cJSON_AddBoolToObject(j,"away",(r->flags&TL_AWAY_ACTIVE)!=0);
+    cJSON_AddBoolToObject(j,"live_active",(r->flags&TL_LIVE_ACTIVE)!=0);
     const char *modes[]={"hold","manual","direct","thermostat"};
     cJSON_AddStringToObject(j,"mode",r->mode<4?modes[r->mode]:"unknown");
     cJSON_AddStringToObject(j,"reason",r->reason);return j;
@@ -95,6 +214,7 @@ cJSON *room_controller_test(void)
 {
     if(xSemaphoreTake(io,pdMS_TO_TICKS(100))!=pdTRUE)return NULL;
     tl_packet_t p=tl_request(TL_STATUS,client,++sequence),r;
+    discover_controller();
     bool wifi_ok=http(&p,&r)&&matching(&p,&r)&&r.result==TL_OK;
     p=tl_request(TL_STATUS,client,++sequence);
     bool radio_ok=tl_radio_exchange(&p,&r)==ESP_OK&&matching(&p,&r)&&r.result==TL_OK;
@@ -108,29 +228,103 @@ cJSON *room_controller_test(void)
     cJSON_AddStringToObject(j,"message",message);
     xSemaphoreGive(io);return j;
 }
-static bool mutation(uint8_t operation,float value,int *code)
+/* Only read-only status requests are safe to repeat. For a user command,
+ * obtain a fresh lease before sending it once; never blindly retry an
+ * ambiguous setpoint / Away write across Wi-Fi and ESP-NOW transports. */
+static bool mutation(uint8_t operation,float value,int *code,
+                     char *detail,size_t detail_size)
 {
-    *code=503;if(xSemaphoreTake(io,pdMS_TO_TICKS(100))!=pdTRUE)return false;
-    bool ok=false;int64_t sampled=esp_timer_get_time();
-    if(!fresh()){tl_packet_t p=tl_request(TL_STATUS,client,++sequence),r;exchange(p,&r,true);}
-    if(fresh()){
+    if(detail&&detail_size)detail[0]=0;
+    *code=503;
+    const bool requested=operation==TL_TARGET||operation==TL_AWAY;
+    const uint32_t lock_timeout=requested?2000:100;
+    if(xSemaphoreTake(io,pdMS_TO_TICKS(lock_timeout))!=pdTRUE){
+        if(detail&&detail_size)snprintf(detail,detail_size,
+            "Controller is busy. Nothing was sent; please try again.");
+        return false;
+    }
+    bool ok=false;
+    int64_t sampled=esp_timer_get_time();
+    /* Ordinary sensor samples may use a valid cached lease. Intentional
+     * writes always refresh the 5-second controller lease first: previously
+     * a UI command could borrow a ~4-second-old poll and receive TL_EXPIRED. */
+    if(room_link_needs_status(operation,fresh())){
+        tl_packet_t hello=tl_request(TL_STATUS,client,++sequence),answer;
+        if(!exchange(hello,&answer,true)||answer.result!=TL_OK){
+            if(detail&&detail_size)snprintf(detail,detail_size,
+                "Controller link not ready. Nothing was changed.");
+            ESP_LOGW("controller_link",
+                "Read-only preflight failed for op=%u; no mutation sent",
+                (unsigned)operation);
+            goto done;
+        }
+    }
+    if(!fresh()){
+        if(detail&&detail_size)snprintf(detail,detail_size,
+            "Controller response expired. Nothing was sent.");
+        goto done;
+    }
+    {
         tl_packet_t p=tl_request(operation,client,++sequence),r;
         p.controller_boot=latest.controller_boot;
-        /* Lease is in controller monotonic time, with a conservative 1 s
-         * transit budget. Older leases fail at the server; no wall clock. */
+        /* The controller's monotonic time and 1-second transit allowance
+         * are validated on receipt. A fresh status maximizes this window. */
         p.deadline_ms=latest.deadline_ms+TL_LEASE_MS-1000;
-        p.value=value;p.age_ms=operation==TL_SAMPLE?(uint32_t)((esp_timer_get_time()-sampled)/1000)+1000:0;
-        bool delivered=exchange(p,&r,false);ok=delivered&&r.result==TL_OK;*code=ok?200:delivered?409:503;
+        p.value=value;
+        p.age_ms=operation==TL_SAMPLE?
+            (uint32_t)((esp_timer_get_time()-sampled)/1000)+1000:0;
+        const bool delivered=exchange(p,&r,false);
+        ok=delivered&&r.result==TL_OK;
+        *code=ok?200:delivered?409:503;
+        if(!ok){
+            const char *why=!delivered?
+                "Controller reply unavailable; check current target before retrying.":
+                r.result==TL_EXPIRED?
+                "Controller session expired. Nothing changed; please try again.":
+                r.result==TL_REPLAY?
+                "Controller session changed. Check current state before trying again.":
+                r.result==TL_SAVE_FAILED?
+                "Controller could not save the setting. Check its status.":
+                r.result==TL_INVALID?
+                (operation==TL_TARGET?
+                    "Target rejected. Exit Away before editing temperature; otherwise check range.":
+                    "Controller rejected that setting. Check current mode."):
+                "Controller refused the command. Check its status.";
+            if(detail&&detail_size)snprintf(detail,detail_size,"%s",why);
+            ESP_LOGW("controller_link",
+                "Command op=%u result=%d delivered=%d (not replayed)",
+                (unsigned)operation,delivered?(int)r.result:-1,(int)delivered);
+        }
     }
-    xSemaphoreGive(io);return ok;
+done:
+    xSemaphoreGive(io);
+    return ok;
+}
+static cJSON *mutation_reply(bool ok,const char *error)
+{
+    cJSON *j=cJSON_CreateObject();
+    if(!j)return NULL;
+    cJSON_AddBoolToObject(j,"ok",ok);
+    if(!ok)cJSON_AddStringToObject(j,"error",
+        error&&*error?error:"Controller not ready; check its current status.");
+    return j;
 }
 cJSON *room_controller_target(float target,int *code)
 {
-    if(!mutation(TL_TARGET,target,code))return NULL;
-    cJSON *j=cJSON_CreateObject();cJSON_AddBoolToObject(j,"ok",true);return j;
+    char detail[144];
+    bool ok=mutation(TL_TARGET,target,code,detail,sizeof(detail));
+    return mutation_reply(ok,detail);
+}
+cJSON *room_controller_away(bool enabled,int *code)
+{
+    /* Same protected lease and exactly one transport as target changes.
+     * Controller NVS retains 50 F Away independently of Wi-Fi and MQTT. */
+    char detail[144];
+    bool ok=mutation(TL_AWAY,enabled?1.0f:0.0f,code,detail,sizeof(detail));
+    return mutation_reply(ok,detail);
 }
 bool room_controller_sample(float temperature)
-{int code;return mutation(TL_SAMPLE,temperature,&code);}
+{int code;return mutation(TL_SAMPLE,temperature,&code,NULL,0);}
 
 const char *room_controller_sync_state(void){return sync_state==2?"Applied":sync_state==1?"Pending controller":"Not managed";}
 static void sync_task(void *arg)
@@ -140,14 +334,17 @@ static void sync_task(void *arg)
         if(!j)continue;
         bool managed=cJSON_GetArraySize(j)>0;
         if(!managed){cJSON_Delete(j);continue;}sync_state=1;
-        if(room_wifi_connected()&&!fallback){
+        if(room_wifi_connected()&&!fallback&&xSemaphoreTake(io,pdMS_TO_TICKS(100))==pdTRUE){
+            discover_controller();
+            const char *origin=controller_origin();
             char *body=cJSON_PrintUnformatted(j);char response[256];int code=0,length;
-            if(body){
-                esp_err_t err=room_http(room_settings_controller_url(),NULL,NULL,
+            if(body&&*origin){
+                esp_err_t err=room_http(origin,NULL,NULL,
                     "/api/integrations",body,response,sizeof(response),3000,&code,&length);
                 if(err==ESP_OK&&code==200){cJSON *reply=cJSON_Parse(response);if(cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(reply,"ok")))sync_state=2;cJSON_Delete(reply);}
-                memset(body,0,strlen(body));free(body);
             }
+            if(body){memset(body,0,strlen(body));free(body);}
+            xSemaphoreGive(io);
         }
         cJSON_Delete(j);if(sync_state==2){vTaskDelete(NULL);return;}
         vTaskDelay(pdMS_TO_TICKS(45000));

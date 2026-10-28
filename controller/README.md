@@ -1,10 +1,171 @@
-# Controller v0.5.3 — thermostat development and servo bench
+# Controller v0.7.4 — trace why persistent Live was not restored after power loss
+
+The controller already restores the *explicitly saved* Live preference from
+NVS, then waits for full calibration, a fresh thermostat reading, and a stable
+AS5600 angle. The reported reboot began in **persistent Service**, so the saved
+Live preference was absent/cleared. This cannot be caused merely by Wi-Fi
+joining late. **Bench Go is an attended 15-minute session and never persists.**
+
+To diagnose a Live-to-Service transition, firmware now atomically records
+the last Live exit reason with the Live preference. A verified Live servo/PWM
+fault retains the conservative behavior of disarming and saving Service, but
+stores its specific reason (for example, a 16-second servo angle verification
+failure) so it survives reboot. Manual Service and Stop commands record their
+own reasons. Re-enabling Live clears the previous reason. Earlier firmware
+can show an unknown reason until the next explicit mode transition.
+
+Look for this boot message:
+
+```
+Persistent Live NVS: read=ESP_OK value=0x... selected=no last_exit=...
+```
+
+The controller `/api/status` field `last_live_exit_reason` and the controller
+webpage's Live safety message also report that reason. **No automatic re-arming
+was added**: if a true servo/encoder fault forced Service, a person must inspect
+and deliberately re-enable Live after physical validation. Wi-Fi startup,
+ESP-NOW, RGB status, temperatures, calibration and normal servo control are
+unchanged. Code requires a local ESP-IDF build/physical power-cycle test.
+
+---
+# Controller v0.7.3 — GPIO48 full-color status indication (HW-747 Super Mini)
+
+The status-only WS2812 LED on GPIO48 now has a low-brightness color protocol:
+
+| Status | Indicator |
+|---|---|
+| Initial boot / waiting for authenticated room traffic | Pulsing purple |
+| Newly authenticated LAN connection | Green for 2 seconds |
+| Healthy authenticated LAN traffic | Off |
+| ESP-NOW is the freshest authenticated path | Amber flashing (0.5s on/off) |
+| No authenticated room traffic after 60s startup grace | Red flashing (0.5s on/off) |
+| Persistent Live or PWM fault | Solid red |
+
+Existing 20-second authenticated link freshness, fault priority, servo control,
+13 dBm Wi-Fi configuration, NVS, setup/calibration and paired transport are
+unchanged. LED behavior is advisory only. A LAN IP alone does not establish
+health; the thermostat must make recent authenticated contact. Green is shown
+only on entry/recovery to a healthy LAN link, never continuously. Service mode
+by itself is not an error. The USB-side blue blinking battery-charge indicator
+is **not** GPIO48's addressable RGB status LED and cannot be controlled with
+firmware. Do not remove unidentified parts or cut traces on the board.
+
+The controller webpage Wi-Fi & connection status and `/api/status` now show
+`network.status_led` and `network.status_led_gpio` instead of the previous
+`blue_led` fields. Only the Super Mini controller needs flashing. No NVS erase.
+
+Local ESP-IDF 6.0.1 build/flash from the root:
+```powershell
+git switch feature/controller-mdns-discovery-web
+git pull --ff-only
+.\\tools\\build-controller-supermini.ps1 -Flash -Monitor -Port COM13
+```
+Verify the COM port before flashing. Run host test `controller_status_led`.
+This code change has not been validated on physical hardware yet.
+
+---
+# Controller v0.7.2 — blue status LED on HW-747 Super Mini
+
+The Super Mini's **blue channel of the WS2812 RGB pixel near the main chip**
+is used for connection and fault status. **This is NOT the small blue LED
+beside USB-C**: that is a battery-charging indicator, and on common HW-747
+boards it flashes continually with no battery attached. The tiny red LED
+beside USB-C shares GPIO48 with the RGB data signal, so it can also go dark
+or flicker when our firmware runs. These two USB-side lights do NOT indicate
+Wi-Fi/ESP-NOW status. This
+applies only to the `CONFIG_THERMO_SUPERMINI` build; no LED pins are taken
+from the servo GPIO5 or AS5600 GPIO6/GPIO7.
+
+| Blue LED | Meaning |
+|---|---|
+| **Off** | The Waveshare is currently communicating with the controller through verified LAN/Wi-Fi HTTP; all normal link/fault checks pass |
+| **Flashing (0.5 s on / 0.5 s off)** | ESP-NOW is the freshest paired link (even if the controller still has a Wi-Fi address) |
+| **Solid** | Persistent Live fault/PWM fault, or no recent authenticated room link after a one-minute boot grace period |
+
+**Service/Calibration is NOT itself a fault.** A normal Service page may be
+healthy with the blue LED off when the Waveshare has been communicating via
+LAN. A Live failure always overrides an otherwise healthy connection.
+These LEDs are **indicators only**; they do not arm, move, release or
+otherwise control the furnace. The brightness is intentionally low (blue
+channel 18/255) for nighttime use. The LED runs in a separate low-priority
+task using a single WS2812 RGB pixel on **GPIO48**, as commonly wired on the
+HW-747 ESP32-S3 Super Mini. Generic S3 SuperMini board revisions differ
+(e.g., some share GPIO48 with other LED circuits). **Verify the blue LED
+on the exact physical controller at the bench**, especially that the red
+power light behaves normally. The firmware cannot switch off a hardwired
+red power/charging LED.
+
+After boot, allow up to 60 seconds for Wi-Fi association and ESP-NOW pairing
+before treating solid blue as a communication fault. The room link expires
+after 20 seconds without recent controller traffic. The controller's
+`/api/status` `network.blue_led` field, and the controller webpage
+**Wi-Fi & connection** panel, report the chosen LED status. Note that an
+ESP-NOW reply queued successfully by the controller is not definitive proof
+the remote Waveshare received it; diagnose persistent blue with the
+Waveshare's own transport page and serial logs.
+
+**Local build only**; no GitHub Actions. In ESP-IDF 6.0.1 PowerShell, from
+the repository root:
+
+```powershell
+git pull --ff-only
+.\tools\build-controller-supermini.ps1 -Flash -Monitor -Port COM13
+```
+
+Replace COM13 with the actual controller's USB port. Do not erase NVS.
+**Only the Super Mini needs flashing** for the LED behavior; the Waveshare
+does not. Existing firmware pairing, Wi-Fi 13 dBm power setting, MQTT,
+sensor readings and servo commands are unchanged. The new host-only
+`test_controller_status_led` validates all three states and priority
+without RMT/ESP-IDF hardware.
+
+## Previous controller v0.7.1 — guarded persistent Live, Service and 50°F Freeze Hold
+
+**New persistent modes:** Service/Calibration is the safe default (PWM off on boot). After final mounted calibration, select Test, move to a saved numbered dial position, verify the AS5600, then select **Enable persistent Live**. Controller NVS remembers Live through firmware flashing and power loss, but never moves until startup validates the full dial/angle map, a stable magnetic position, and a fresh primary SHT45 report. Live has no 15-minute bench timeout; every Live movement requires AS5600 follow-up or it stops and attempts to persist Service. **Service** remains the only way to manually calibrate/test. The old 15-minute Go remains available for supervised bench use. Home Assistant cannot arm Live.
+
+**Freeze Hold / Away:** The room panel and existing Home Assistant MQTT Climate preset modes **Away / None** use the same paired transport and controller-owned NVS flag. Away targets **50°F** and preserves the normal target. Home restores the normal target. This is heat-only; no AC or off command. If dial 1 maps warmer than 50°F, Away commands dial 1 and reports the limitation; verified frost protection requires actual cottage observations and a backup warning mechanism. Touchscreen Climate now offers **−5, −1, +1, +5**, Set target, and Away / Resume Home.
+
+**Companion Waveshare:** v0.14.0. Flash **both** ESP32 boards without erasing NVS to use the new paired Away operation. Full test matrix, precautions, known limitations and commands: [Installation / production-readiness acceptance](../docs/PRODUCTION_READINESS_V070.md).
+
+## Previous v0.6.5 fix
+
+# Controller v0.6.5 — restore repeat servo movement (ESP-IDF v6.0.1)
+
+**Critical v0.6.5 fix:** v0.6.4 configured servo PWM on GPIO5 successfully on the first command, but its subsequent `ledc_set_duty_and_update()` call failed because that ESP-IDF v6.0.1 API requires the LEDC fade service even though the servo has no fade animation. The failure deliberately disarmed Test/Go, making the controller appear stuck after the first pulse. v0.6.5 routes subsequent commands through a tiny, separately host-tested non-fade `ledc_set_duty()` + `ledc_update_duty()` driver, which also re-enables the channel after `ledc_stop()`. We now regression-test repeated commands, stop/restart, and failures with the actual production implementation. The controller retains the 13 dBm Wi-Fi limit, mDNS hostname, current dial/temperature calibration, ESP-NOW pairing and 15-minute attended Go safety gates. **Flashing the new Super Mini image does not require erasing NVS or reflashing the Waveshare thermostat.** Bench-test repeated manual pulses and 50→65→70°F Go setpoint changes unloaded before mounting.
+
+## Previous v0.6.4 feedback behavior
+
+# Controller v0.6.4 — responsive setpoints plus heat-only feedback
+
+**v0.6.4 provisional heat feedback:** Changing the thermostat setpoint still moves promptly to the requested calibrated dial (after a maximum 2-second command guard). Then the firmware watches fresh primary room temperatures; it records the observed peak/reached target and requires a **2°F overshoot sustained for 5 minutes**, plus at least **10 minutes since the setpoint**, before **lowering** the dial at most **0.25 setting**. Additional downward corrections are at least **15 minutes apart**, with at most **one dial setting total reduction** and no adjustment below dial 1. Any new target resets the transient trim. This prevents temperature noise and short residual-heat spikes from changing the knob repeatedly. The adaptive trim and peak are **runtime observations only**: they do NOT automatically change the saved furnace-number temperature estimates, and no single heating cycle is treated as proven calibration. There is no cooling/AC or automatic increase algorithm yet.
+
+**Safety/testing limitation:** In the current 15-minute **attended Go bench mode**, meaningful whole-cottage heating and repeated-cycle learning cannot be validated; the device still disarms and stops PWM when time expires, after restart, or on Stop. Continue with controlled fixture tests and separately record room temperature / furnace power through full cycles before enabling any unattended feedback mode. The AS5600 remains telemetry-only. Local Wifi and ESP-NOW pairing, dial limits, and temperature estimates persist across flashing.
+
+## Previous v0.6.3 changes
+
+# Controller v0.6.3 — responsive setpoints and safer PWM channel usage
+
+**v0.6.3 prompt setpoints:** In attended **Go** mode, thermostat/panel/Home Assistant/scheduled target updates move directly to the calibrated dial value after at most a short 2-second anti-chatter guard. The five-minute / quarter-dial policy now applies only to non-setpoint adjustments. Room temperature alone does not drive oscillatory dial corrections: the target is mapped to the Williams dial's empirical temperature setting. All calibration/travel, position-sync, fresh sensor, valid target, explicit Go, Stop, and 15-minute bench expiry checks remain. Go still does **not** restore after restart, and this is **not** unattended furnace firmware. Servo PWM now configures LEDC channel once and changes duty for subsequent commands rather than attempting to reserve GPIO5 repeatedly; verify the pin and AS5600 motion in the unloaded fixture before installation.
+
+## Previous v0.6.2 changes
+
+**v0.6.2 — editable travel limits, guided dial setup and bench control**
+
+**v0.6.2 endpoint correction:** On the controller webpage, Calibration → **Re-measure start limit…** or **Re-measure end limit…** stops PWM, exits Go/Test, clears only the selected limit and retains the other limit, all eight dial positions/recorded angles and all six estimated temperatures. Re-enter attended Test Mode, move carefully using a starting pulse and small jogs, then **Capture current start/end** to save the corrected boundary. With either bound missing, manual PWM is restricted only to the 500–2500 µs firmware limits and **Go is blocked**. Do not perform this on the mounted furnace; use an unloaded supervised bench. Correct any captured dial position outside a revised narrower range before completing travel limits. Calibration stays in NVS; never erase flash/NVS to correct an endpoint.
+
+
+v0.6.1 restores the Super Mini 13 dBm TX limit after authentication timeouts at the 20 dBm default. Calibration/Test/Go are unchanged. See [Wi-Fi comparison notes](../docs/CONTROLLER_WIFI_V061.md).
+
+Use [the v0.6.0 workflow](../docs/CONTROLLER_WORKFLOW_V060.md) for the current webpage, calibration, Test and physical Go controls. The instructions below describe the earlier v0.5.x interface and are retained as hardware/API history; the old compile-time live-bench switch is retired.
+
 
 ESP-IDF **6.0.1**, ESP32-S3, M5Stack AtomS3 Lite (8 MB flash), servo signal **G38/GPIO38**. Build defaults simulate automatic thermostat movement. No measurements or placeholder calibration map are installed.
 
 v0.4.1 keeps thermostat/servo decisions on this standalone controller and removes its MQTT client and command handlers. The room panel supplies local temperature reports and setpoint requests over the paired HTTP/ESP-NOW link. Home Assistant can request a target temperature through display v0.12.1's Climate entity; the display uses its normal validated controller link. HA has no direct controller/MQTT mode or servo commands. Neither HA nor a broker is required for the thermostat engine. See [standalone MQTT monitoring](../docs/STANDALONE_MQTT_MONITORING.md).
 
 Paired radio configuration from the display webpage and the 2 MiB app partition remain. Configuration changes restart in Hold with bench output released. Controller firmware updates still use USB. Bench output interlocks, simulation default and explicit arming/synchronization are retained.
+
+The Super Mini v0.5.9 build advertises **CottageThermoController.local** using mDNS, and exposes live hostname/LAN/ESP-NOW diagnostics plus a browser-only TEST capture/export. See [mDNS auto-discovery and bench test](../docs/CONTROLLER_MDNS_AUTO_DISCOVERY.md).
 
 See [controller Wi-Fi setup and Omada/ESP-NOW testing](../docs/CONTROLLER_LINK_TESTING.md) for the current connection workflow. Wi-Fi credentials can now be saved on the controller webpage; menuconfig values are the initial defaults.
 

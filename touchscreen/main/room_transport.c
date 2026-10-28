@@ -6,6 +6,7 @@
 #include <time.h>
 #include "esp_crt_bundle.h"
 #include "esp_http_client.h"
+#include "esp_log.h"
 
 esp_err_t room_http(const char *origin, const char *header, const char *token,
                     const char *path, const char *post, void *out, size_t capacity,
@@ -40,8 +41,17 @@ esp_err_t room_http(const char *origin, const char *header, const char *token,
     *status=esp_http_client_get_status_code(h);
     if (err==ESP_OK) {
         int n=esp_http_client_read_response(h,out,capacity-1);
-        if (n<0 || n>=(int)capacity-1 || !esp_http_client_is_complete_data_received(h)) err=ESP_FAIL;
-        else { ((char*)out)[n]=0; *length=n; }
+        bool complete=n>=0 && esp_http_client_is_complete_data_received(h);
+        if (n<0 || n>=(int)capacity-1 || !complete) {
+            /* With a too-small caller buffer, IDF returns HTTP 200 but the
+             * body is not fully read. Log the actual size problem rather
+             * than misdiagnosing it as a Wi-Fi association failure. */
+            ESP_LOGW("room_transport",
+                "Incomplete HTTP body for %s: code=%d received=%d capacity=%u content_length=%lld complete=%d",
+                path,*status,n,(unsigned)capacity,
+                (long long)esp_http_client_get_content_length(h),(int)complete);
+            err=ESP_FAIL;
+        } else { ((char*)out)[n]=0; *length=n; }
     }
     esp_http_client_close(h); esp_http_client_cleanup(h);
     return err;
@@ -78,7 +88,12 @@ esp_err_t room_http_keepalive(room_http_session_t **session,
     if(!*host||strpbrk(host,"/@?#\\ \r\n")||
        strlen(origin)>=sizeof(((room_http_session_t*)0)->origin))return ESP_ERR_INVALID_ARG;
     if(tls&&time(NULL)<1767225600)return ESP_ERR_INVALID_STATE;
-    if(*session&&strcmp((*session)->origin,origin))return ESP_ERR_INVALID_ARG;
+    /* DHCP/mDNS may change the selected controller IP between attempts.
+     * A failed old connection is never reused for a new origin. */
+    if(*session&&strcmp((*session)->origin,origin)){
+        if((*session)->client)esp_http_client_cleanup((*session)->client);
+        free(*session);*session=NULL;
+    }
     char url[320];int size=snprintf(url,sizeof(url),"%s%s",origin,path);
     if(size<0||size>=(int)sizeof(url))return ESP_ERR_INVALID_SIZE;
     if(!*session){

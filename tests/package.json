@@ -1,1 +1,15 @@
-{"private":true,"scripts":{"test":"node test-ui.cjs && node test-ha-ui.cjs","test:device":"node test-device-web.cjs","test:ha":"node test-ha-ui.cjs","test:encoder":"node test-encoder-ui.cjs"},"devDependencies":{"playwright":"1.62.1"}}
+{
+  "private": true,
+  "scripts": {
+    "test": "node test-controller-workflow.mjs && node test-thermostat-restart.mjs && node test-ha-ui.cjs",
+    "test:restart": "node test-thermostat-restart.mjs",
+    "test:device": "node test-device-web.cjs",
+    "test:ha": "node test-ha-ui.cjs",
+    "test:encoder": "node test-encoder-ui.cjs",
+    "test:controller": "node test-controller-workflow.mjs"
+  },
+  "devDependencies": {
+    "happy-dom": "^21.0.4",
+    "playwright": "1.62.1"
+  }
+}

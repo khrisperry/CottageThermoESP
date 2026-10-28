@@ -17,3 +17,10 @@ bool room_settings_reboot_later(void);
 cJSON *room_settings_controller_integrations(void);
 const cottage_integration_t *room_settings_integrations(void);
 bool room_settings_radio_managed(void);
+/* Local room probe calibration, bounded to +/-10.0 F in 0.1 F steps.
+ * Independent NVS key: preserve older profile blob and all credentials.
+ * Reading the offset is lock-free and safe from the sensor task. */
+int room_settings_temp_offset_tenths(void);
+float room_settings_temp_offset_f(void);
+/* Independent persisted monitor configuration. Default: disabled, bench. */
+unsigned room_settings_furnace_config(void);

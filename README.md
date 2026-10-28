@@ -2,9 +2,25 @@
 
 ESP-IDF smart thermostat / mechanical knob actuator project for a **Williams model 1773512 direct-vent cottage furnace**.
 
-> **Review: controller v0.5.6; native 4B room panel v0.13.6.** Controller and room client are separate ESP-IDF 6.0.1 projects. Automatic output defaults to simulation; physical servo commands are explicitly armed bench operations. Mechanical travel/torque, encoder feedback and appliance integration remain unverified.
+> **Current branch: controller v0.7.4; native 4B room panel v0.15.4.** Controller and room client are separate ESP-IDF 6.0.1 projects. Saved Live survives restart and resumes only after fresh thermostat and calibrated AS5600 checks. Service and temporary Bench Go start stopped. Mechanical/appliance validation remains separate from firmware tests.
+
+Room panel v0.15.4 tracks current observations from `weather.forecast_home`. Outside temperature appears immediately below Current on the native Climate screen; the left-hand temperature group is shifted up without moving the dial/buttons. Weather is also available on the webpage and status API (conditions, outdoor/feels-like temperature, humidity, cloud cover, wind/gusts where supplied). Monitoring remains observational and does not change the calibrated dial target. See [weather monitoring](docs/WEATHER_MONITORING.md).
+
+Room panel v0.15.3 adds persisted **Monitor furnace power** and **Thermostat installed at cottage** flags under **Furnace power**. Monitoring defaults off; leave Installed unchecked for bench/desk testing. When enabled, a source-timestamp-aware state machine identifies standby, startup, likely heating and likely blower cooldown from the supplied power history. It rejects cached/stale evidence, debounces changes, and counts confirmed observed cycles. Settings apply without restart. Neither flag enables automatic dial corrections or calibration learning. See [furnace power monitoring](docs/FURNACE_POWER_MONITORING.md).
+
+Controller v0.7.4 disables automatic temperature-only overshoot trim: solar warmth cannot lower the calibrated nighttime dial setting. Room panel v0.15.2 monitors `sensor.furnace_power_current` (A) and `sensor.furnace_power_power` (W) through its existing HA connection and displays them under **Furnace power**. These are read-only electrical snapshots, not validated burner status; adaptive learning remains disabled while the room sensor is offsite and furnace cycles are unvalidated. See [furnace power monitoring](docs/FURNACE_POWER_MONITORING.md).
+
+Room panel v0.15.1 adds **System → Restart thermostat** on its webpage. It preserves saved settings, waits for a new boot before reporting reconnection, and rejects restart during a firmware update. It does not change the controller's saved operating mode.
+
+Controller v0.7.3 adds **Restart controller** to its webpage, preserving saved mode, target and calibration. In Live, 30 minutes without an accepted primary thermostat sample (HTTP or encrypted ESP-NOW) schedules a restart, including when no first connection was established. Service/Calibration and encoder/PWM faults are exempt. Browser/status traffic cannot reset this timer. A continued outage can cause another restart after each full 30-minute boot window. The webpage reports the countdown; active Live with PWM off now reads **Monitoring**, rather than **Stopped**. See [restart and recovery testing](docs/CONTROLLER_RESTART_RECOVERY.md).
+
+Controller v0.6.1 restores the Super Mini 13 dBm TX limit for a controlled Wi-Fi comparison after authentication timeouts at the 20 dBm driver default. See [the Wi-Fi comparison notes](docs/CONTROLLER_WIFI_V061.md).
+
+Controller setup now follows **Calibration → Estimated temperatures → Test → Go**. See [the v0.6.0 workflow](docs/CONTROLLER_WORKFLOW_V060.md) and [self-contained page preview](docs/controller-workflow-preview.html).
 
 The consolidated v0.9.4 baseline is on `main`; this follow-up is on `feature/connectivity-climate-review`. See [connectivity review and setup](docs/CONNECTIVITY_REVIEW.md) for the new status/diagnostics UI, paired ESP-NOW fallback, initial MQTT discovery, exact build evidence and pending physical checks. See the latest [dashboard, ship tracker and OTA setup](docs/DEVICE_DASHBOARD_SHIPS_OTA.md) for the aligned status screens, full LAN settings, live ship service integration and first USB migration to webpage updates. The latest [standalone thermostat and MQTT Climate guide](docs/STANDALONE_MQTT_MONITORING.md) describes HA target-temperature requests through the wall thermostat. HA never controls the servo directly; standalone thermostat operation remains independent of HA/MQTT.
+
+Bench hostname discovery, controller website diagnostics and disposable test capture: [mDNS and controller auto-discovery](docs/CONTROLLER_MDNS_AUTO_DISCOVERY.md). Both devices must be on an mDNS-reachable LAN.
 
 Current controller setup and independent link checks: [Wi-Fi, ESP-NOW and Omada outage testing](docs/CONTROLLER_LINK_TESTING.md).
 

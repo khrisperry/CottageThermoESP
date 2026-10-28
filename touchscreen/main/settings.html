@@ -4,8 +4,8 @@
 <section class="card"><h2>Connections</h2><div class="statuses" id="services"></div><small id="statusAge">Waiting for the device...</small></section>
 <section class="card" id="content"></section><section class="card"><p id="message" role="status" aria-live="polite"></p><small>Tokens, keys and passwords are never returned after saving.</small></section></main></div>
 <script>
-'use strict';const $=id=>document.getElementById(id);let config=null,lastStatus=null,page='Overview',timer=null,uploading=false,reconnecting=false,reconnectBoot=null;
-const pages=['Overview','Wi-Fi','Home Assistant','MQTT thermostat','Controller','ESP-NOW','Ship tracking','Sound & display','System'];
+'use strict';const $=id=>document.getElementById(id);let config=null,lastStatus=null,page='Overview',timer=null,uploading=false,reconnecting=false,reconnectBoot=null,restartBusy=false;
+const pages=['Overview','Temperature','Furnace power','Weather','Wi-Fi','Home Assistant','MQTT thermostat','Controller','ESP-NOW','Ship tracking','Sound & display','System'];
 function el(tag,text,cls){const n=document.createElement(tag);if(text!==undefined)n.textContent=String(text);if(cls)n.className=cls;return n;}
 function badge(text,kind){return el('span',text,'badge '+(['ok','offline','unconfigured','standby','fallback'].includes(kind)?kind:'standby'));}
 function field(parent,label,id,value='',type='text',placeholder=''){const wrap=el('div');const l=el('label',label);l.htmlFor=id;const i=el('input');i.id=id;i.type=type;i.value=value||'';i.placeholder=placeholder;i.autocomplete=type==='password'?'new-password':'off';if(type==='password'){const secret=el('div',undefined,'secret');const show=el('button','Show');show.type='button';show.onclick=()=>{i.type=i.type==='password'?'text':'password';show.textContent=i.type==='password'?'Show':'Hide'};secret.append(i,show);wrap.append(l,secret);}else wrap.append(l,i);parent.append(wrap);return i;}
@@ -14,7 +14,7 @@ function select(parent,label,id,value,options){const wrap=el('div');const l=el('
 function message(s){$('message').textContent=s;}
 function headers(){return {'Content-Type':'application/json'};}
 async function request(payload){const r=await fetch('/api/settings',{method:'POST',headers:headers(),body:JSON.stringify(payload)});const j=await r.json();if(!r.ok)throw Error(j.message||'Request failed');message(j.message);return j;}
-function actions(form,section,getPayload,caption='Save and restart display'){const row=el('div',undefined,'actions');const save=el('button',caption,'primary');save.type='submit';row.append(save);form.append(row);form.onsubmit=async e=>{e.preventDefault();save.disabled=true;try{await request({section,...getPayload()});if(caption.includes('restart')){reconnecting=true;reconnectBoot=lastStatus?.firmware?.boot_id;message('Saved. Display restarting; reconnecting to live status...');config=null;}}catch(err){message(err.message)}finally{save.disabled=false;}};return row;}
+function actions(form,section,getPayload,caption='Save and restart display'){const row=el('div',undefined,'actions');const save=el('button',caption,'primary');save.type='submit';row.append(save);form.append(row);form.onsubmit=async e=>{e.preventDefault();save.disabled=true;try{await request({section,...getPayload()});if(section==='temperature'||section==='furnace_monitor')await loadConfig();if(caption.includes('restart')){reconnecting=true;reconnectBoot=lastStatus?.firmware?.boot_id;message('Saved. Display restarting; reconnecting to live status...');config=null;}}catch(err){message(err.message)}finally{save.disabled=false;}};return row;}
 function linkTest(parent){const b=el('button','Test Wi-Fi and ESP-NOW');b.type='button';b.onclick=async()=>{b.disabled=true;message('Testing both controller links...');try{await request({section:'controller_test'});}catch(e){message(e.message)}finally{b.disabled=false;}};parent.append(b);}
 function needConfig(){if(config)return false;$('content').append(el('p','Loading device settings...'));return true;}
 function render(){
@@ -22,9 +22,60 @@ function render(){
  const c=$('content');c.replaceChildren(el('h2',page));
  if(page==='Overview'){c.append(el('p','The display remains the local thermostat. Ship data and Home Assistant run in background tasks.'));
   const metrics=el('div',undefined,'metrics');metrics.id='metrics';c.append(metrics);renderMetrics();return;}
+ if(page==='Weather'){const n=el('div');n.id='weatherStatus';c.append(n);renderWeather();return;}
+ if(page==='Furnace power'){
+  if(needConfig())return;
+  const f=config.furnace_monitor||{enabled:false,installed:false,max_report_age_seconds:180};
+  const form=el('form'),grid=el('div',undefined,'grid');form.append(grid);c.append(form);
+  check(grid,'Monitor furnace power','monitorFurnace',f.enabled);
+  check(grid,'Thermostat installed at cottage','furnaceInstalled',f.installed);
+  const age=field(grid,'Source report freshness limit (seconds)','furnaceReportAge',f.max_report_age_seconds,'number');age.min=30;age.max=900;age.step=1;
+  grid.append(el('small','Leave Installed at cottage unchecked during bench / desk testing. Monitoring classifies electrical stages only; neither checkbox enables automatic dial corrections or calibration learning.','full'));
+  actions(form,'furnace_monitor',()=>{
+   const age=Number($('furnaceReportAge').value);
+   if(!Number.isInteger(age)||age<30||age>900)throw Error('Use a source report limit from 30 to 900 seconds.');
+   return {enabled:$('monitorFurnace').checked,installed:$('furnaceInstalled').checked,max_report_age_seconds:age};
+  },'Save monitoring settings');
+  const n=el('div');n.id='furnacePower';c.append(n);renderFurnacePower();return;
+ }
  if(needConfig())return;const form=el('form');const grid=el('div',undefined,'grid');form.append(grid);c.append(form);
  const keep='Leave blank to keep the saved value.';
- if(page==='Wi-Fi'){
+ if(page==='Temperature'){
+  c.insertBefore(el('p','Calibrate the primary room sensor after installation. If the thermostat reads too warm, use a negative offset. This adjusts the displayed temperature, Home Assistant and the reading sent to the furnace controller; it does not change your target temperature or dial calibration.'),form);
+  const saved=Number(config.temperature_offset_tenths)||0;
+  const current=typeof lastStatus?.raw_temperature_f==='number'?lastStatus.raw_temperature_f:null;
+  const reading=el('p','Raw sensor: '+(current===null?'Waiting for primary sensor':current.toFixed(1)+' °F'),'full');
+  reading.id='temperatureRaw';grid.append(reading);
+  const range=field(grid,'Temperature offset (°F)','offsetRange',saved/10,'range');
+  range.min='-10';range.max='10';range.step='0.1';
+  const numeric=field(grid,'Fine adjustment (°F)','offsetNumber',(saved/10).toFixed(1),'number');
+  numeric.min='-10';numeric.max='10';numeric.step='0.1';
+  const preview=el('p','','full');preview.id='temperaturePreview';grid.append(preview);
+  grid.append(el('small','Range: −10.0 °F through +10.0 °F, adjustable in 0.1 °F increments. Example: a raw reading of 82 °F with a −4 °F offset becomes 78 °F. The new value takes effect on the next 15-second sensor sample. No restart needed.','full'));
+  const previewUpdate=(fromRange)=>{
+   if(fromRange)numeric.value=range.value;
+   else if(numeric.value.trim())range.value=numeric.value;
+   const n=Number(numeric.value);
+   if(!numeric.value.trim()||!Number.isFinite(n)||n<-10||n>10){
+    preview.textContent='Enter an offset between −10.0 °F and +10.0 °F.';
+    return;
+   }
+   const raw=lastStatus?.raw_temperature_f;
+   const corrected=typeof raw==='number'?(raw+n).toFixed(1)+' °F':'Waiting for primary sensor';
+   preview.textContent='Corrected temperature: '+corrected+'   |   Offset: '+(n>=0?'+':'')+n.toFixed(1)+' °F';
+  };
+  range.oninput=()=>previewUpdate(true);
+  numeric.oninput=()=>previewUpdate(false);
+  previewUpdate(false);
+  const row=actions(form,'temperature',()=>{
+    const value=numeric.value.trim(),n=Number(value);
+    if(!value||!Number.isFinite(n)||n<-10||n>10||Math.abs(n*10-Math.round(n*10))>0.00001)
+     throw Error('Use a temperature offset between −10.0 °F and +10.0 °F in 0.1 °F increments.');
+    return {offset_tenths:Math.round(n*10)};
+  },'Save Temperature Offset');
+  const reset=el('button','Reset to 0.0 °F');reset.type='button';
+  reset.onclick=()=>{numeric.value='0.0';previewUpdate(false)};row.append(reset);
+ }else if(page==='Wi-Fi'){
   c.insertBefore(el('p','Test a new network. The previous saved profile is retained if connection fails. The device may change its IP address.'),form);
   field(grid,'Network name (SSID)','ssid','','text','Network name').maxLength=32;field(grid,'Wi-Fi password','wifiPassword','','password').maxLength=64;check(grid,'Open network (no password)','open',false);
   actions(form,'wifi',()=>({ssid:$('ssid').value,password:$('wifiPassword').value,open:$('open').checked}),'Test and save Wi-Fi');
@@ -41,9 +92,13 @@ function render(){
   const row=actions(form,'mqtt',()=>({enabled:$('enabled').checked,broker:($('tls').checked?'mqtts://':'mqtt://')+$('brokerHost').value.trim()+':'+$('port').value,username:$('username').value,password:$('password').value,clear_password:$('clearPassword').checked,prefix:$('prefix').value.trim(),name:$('name').value.trim()}));
   const state=el('p',lastStatus?.mqtt?.status||'Waiting for MQTT status');state.id='mqttDetail';state.className='full';grid.append(state);const test=el('button','Republish HA discovery');test.type='button';test.id='mqttReannounce';test.disabled=!lastStatus?.mqtt?.connected;test.onclick=async()=>{try{await request({section:'mqtt_test'});message('HA Climate discovery queued.');}catch(e){message(e.message)}};row.append(test);
  }else if(page==='Controller'){
-  field(grid,'Thermostat controller IP, name or URL','controller',config.controller);
-  actions(form,'controller',()=>({controller:$('controller').value.trim()}));
-  linkTest(c);
+  c.insertBefore(el('p','Recommended: automatic discovery. The display uses mDNS to find CottageThermoController.local, verifies identity and tracks IP changes. You can still enter a manual hostname/IP when multicast discovery is unavailable.'),form);
+  field(grid,'Controller address (auto, hostname or URL)','controller',config.controller||'auto');
+  const discovered=el('p','Checking controller discovery...','full');discovered.id='controllerDiscovery';grid.append(discovered);
+  grid.append(el('small','If mDNS finds the controller but LAN times out, the Waveshare cannot reach its HTTP server even if a computer browser can. Check IoT client isolation/guest Wi-Fi, and compare the controller Wi-Fi channel with the Waveshare channel for ESP-NOW.','full'));
+  const row=actions(form,'controller',()=>({controller:$('controller').value.trim()||'auto'}));
+  const automatic=el('button','Use automatic discovery');automatic.type='button';automatic.onclick=async()=>{automatic.disabled=true;try{await request({section:'controller',controller:'auto'});reconnecting=true;reconnectBoot=lastStatus?.firmware?.boot_id;config=null;message('Automatic controller discovery saved. Display restarting...');}catch(e){message(e.message)}finally{automatic.disabled=false}};
+  row.append(automatic);linkTest(c);renderControllerDiscovery();
  }else if(page==='ESP-NOW'){
   c.insertBefore(el('p','Wi-Fi stays preferred. Pair both devices with the same private key. The peer below is the controller station MAC. The display station MAC is sent to the controller automatically. Applying changes restarts the controller when reachable.'),form);
   check(grid,'Enable paired fallback','enabled',config.radio.enabled);field(grid,'Controller station MAC','peer',config.radio.peer,'text','AA:BB:CC:DD:EE:FF').maxLength=17;field(grid,'Shared key (32 hex digits)','key','','password',config.radio.key_configured?keep:'Private shared key').maxLength=32;
@@ -58,15 +113,28 @@ function render(){
   check(grid,'Camera: Fill (crop edges)','fill',config.camera_fill);const row=actions(form,'sound',()=>({volume:Number($('volume').value),camera_fill:$('fill').checked}),'Apply');
   const test=el('button','Test sound');test.type='button';test.onclick=async()=>{try{await request({section:'sound',volume:Number($('volume').value),camera_fill:$('fill').checked});await request({section:'sound_test'});}catch(e){message(e.message)}};row.append(test);
  }else if(page==='System'){
+  const restartRow=el('div',undefined,'actions');
+  const restart=el('button','Restart thermostat');restart.id='restartThermostat';restart.type='button';restart.disabled=uploading||reconnecting||restartBusy;
+  restart.onclick=async()=>{
+   if(uploading||reconnecting||restartBusy||restart.disabled)return;
+   if(!confirm('Restart the thermostat? Saved settings are preserved. The display and sensor reports will pause briefly while it reconnects.'))return;
+   restartBusy=true;restart.disabled=true;$('uploadFirmware').disabled=true;
+   const previousBoot=lastStatus?.firmware?.boot_id;
+   try{await request({section:'restart',confirm:'restart_thermostat'});reconnecting=true;reconnectBoot=previousBoot;message('Thermostat restarting; reconnecting to live status...');}
+   catch(err){message('Restart could not be confirmed: '+err.message);}
+   finally{restartBusy=false;restart.disabled=reconnecting;$('uploadFirmware').disabled=reconnecting;}
+  };
+  restartRow.append(restart);c.insertBefore(restartRow,form);
+  c.insertBefore(el('p','Restart the thermostat without changing saved settings. The furnace controller keeps its saved operating mode.'),form);
   c.insertBefore(el('p','Upload the application .bin built for this Waveshare 4B display. Do not upload a bootloader, merged flash image, or controller firmware. One initial USB flash installs the OTA partition layout.'),form);
   const details=el('p');details.id='firmwareInfo';c.insertBefore(details,form);renderFirmware();
   const file=field(grid,'Firmware .bin file','firmware','','file');file.accept='.bin,application/octet-stream';
   const progress=el('progress');progress.id='uploadProgress';progress.max=100;progress.value=0;form.append(progress);
-  const row=el('div',undefined,'actions');const b=el('button','Upload firmware','primary');b.type='submit';row.append(b);form.append(row);
-  form.onsubmit=e=>{e.preventDefault();const f=file.files[0];if(!f||!f.name.toLowerCase().endsWith('.bin')){message('Choose an application .bin file.');return;}
+  const row=el('div',undefined,'actions');const b=el('button','Upload firmware','primary');b.type='submit';b.id='uploadFirmware';b.disabled=reconnecting;row.append(b);form.append(row);
+  form.onsubmit=e=>{e.preventDefault();if(uploading||reconnecting||restartBusy)return;const f=file.files[0];if(!f||!f.name.toLowerCase().endsWith('.bin')){message('Choose an application .bin file.');return;}
    const slot=lastStatus?.firmware?.slot_bytes;if(!slot){message('OTA layout unavailable. Flash this version once over USB first.');return;}
    if(f.size>slot){message('The file is larger than the OTA slot.');return;}
-   uploading=true;b.disabled=true;const x=new XMLHttpRequest();x.open('POST','/api/firmware');x.setRequestHeader('Content-Type','application/octet-stream');
+   uploading=true;b.disabled=true;restart.disabled=true;const x=new XMLHttpRequest();x.open('POST','/api/firmware');x.setRequestHeader('Content-Type','application/octet-stream');
    x.upload.onprogress=e=>{if(e.lengthComputable){progress.value=Math.round(e.loaded/e.total*100);message('Uploading '+progress.value+'% — keep power connected.');}};
    x.onload=()=>{uploading=false;b.disabled=false;let j={};try{j=JSON.parse(x.responseText)}catch{}if(x.status===200){progress.value=100;reconnecting=true;reconnectBoot=lastStatus?.firmware?.boot_id;message(j.message||'Image validated. Rebooting...');}else message(j.message||'Upload rejected. Previous firmware remains active.');};
    x.onerror=()=>{uploading=false;b.disabled=false;message('Upload connection interrupted. Check the device status before retrying.');};x.timeout=180000;x.ontimeout=x.onerror;x.send(f);
@@ -74,20 +142,85 @@ function render(){
  }
 }
 function metric(parent,title,value){const m=el('div',undefined,'metric');m.append(el('small',title),el('strong',value));parent.append(m);}
+function renderWeather(){
+ const n=$('weatherStatus');if(!n)return;const w=lastStatus?.weather;
+ n.replaceChildren(el('p','Current conditions from weather.forecast_home. Observational context only; weather does not change the dial or enable thermal learning.'));
+ const available=!!w?.available;
+ n.append(badge(available?(w.condition||'Unknown').replaceAll('-',' '):'Weather unavailable',available?'ok':'offline'));
+ const grid=el('div',undefined,'metrics');n.append(grid);
+ for(const [key,label,unit] of [['temperature_f','Outdoor temperature',' °F'],['apparent_temperature_f','Feels like',' °F'],['humidity_percent','Humidity','%'],['cloud_coverage_percent','Cloud cover','%'],['wind_mph','Wind',' mph'],['wind_gust_mph','Wind gust',' mph']]){
+  const value=w?.[key];metric(grid,label,available&&Number.isFinite(value)?value.toFixed(1)+unit:'Unavailable');
+ }
+ n.append(el('p','Last HA read: '+(Number.isFinite(w?.read_age_ms)?Math.floor(w.read_age_ms/1000)+' seconds ago':'not received')+' · Source reported: '+(w?.last_reported||'not supplied')));
+ if(w?.error)n.append(el('p',w.error));
+ n.append(el('small','Refreshes every five minutes while HA/Wi-Fi are available. Forecasts are not fetched by this page. Cloud cover and sunny conditions provide context; they do not measure solar heat inside the cottage.'));
+}
+function renderFurnacePower(){
+ const n=$('furnacePower');if(!n)return;const f=lastStatus?.furnace_power;
+ n.replaceChildren(el('p','Electrical stages are inferred from the supplied furnace history. They do not verify burner/flame operation. Automatic thermal adjustments and calibration learning remain disabled.'));
+ for(const [key,label,unit] of [['power','Power','W'],['current','Current','A']]){
+  const r=f?.[key],available=r?.available&&Number.isFinite(r.value);
+  const box=el('div',undefined,'metric');box.append(el('small',label),el('strong',available?r.value.toFixed(key==='power'?1:3)+' '+unit:'Unavailable'));
+  box.append(el('small',r?.entity_id||(key==='power'?'sensor.furnace_power_power':'sensor.furnace_power_current')));
+  box.append(el('small','Last HA read: '+(Number.isFinite(r?.read_age_ms)?(r.read_age_ms/1000).toFixed(0)+' seconds ago':'not received')));
+  box.append(el('small','HA source last reported: '+(r?.last_reported||'not supplied')));
+  box.append(el('small',r?.source_fresh?'Source report within freshness limit':'Source report stale, missing, or monitoring disabled'));n.append(box);
+ }
+ const labels={disabled:'Disabled',unknown:'Unknown',standby:'Standby',startup:'Startup',likely_heating:'Likely heating',likely_cooldown:'Likely blower cooldown',transition:'Transition',unclassified_load:'Unclassified electrical load'};
+ n.append(el('p','Activity: '+(labels[f?.activity]||'Unknown')+' · Completed observed cycles: '+(f?.completed_cycles||0)));
+ if(f?.pending_activity&&f.pending_activity!==f.activity)n.append(el('small','Confirming: '+(labels[f.pending_activity]||'Unknown')));
+ n.append(el('p',f?.reason||'Monitoring settings unavailable. Automatic thermal corrections remain disabled.'));
+ n.append(el('small','Stage changes require distinct fresh source reports spanning at least 10 seconds. Stale/missing data becomes Unknown. Cooldown requires a preceding likely-heating stage; restarting or changing monitoring settings resets the observation session.'));
+
+}
 function renderMetrics(){const m=$('metrics');if(!m||!lastStatus)return;m.replaceChildren();const p=lastStatus.performance||{};
- metric(m,'Local temperature',lastStatus.temperature_f===undefined?'No fresh sample':lastStatus.temperature_f.toFixed(1)+' °F');metric(m,'Target',lastStatus.target_f===undefined?'Unavailable':lastStatus.target_f.toFixed(1)+' °F');
+ metric(m,'Corrected room temperature',typeof lastStatus.temperature_f==='number'?lastStatus.temperature_f.toFixed(1)+' °F':'No fresh sample');
+ metric(m,'Raw primary sensor',typeof lastStatus.raw_temperature_f==='number'?lastStatus.raw_temperature_f.toFixed(1)+' °F':'No fresh sample');
+ metric(m,'Temperature offset',typeof lastStatus.temperature_offset_f==='number'?(lastStatus.temperature_offset_f>=0?'+':'')+lastStatus.temperature_offset_f.toFixed(1)+' °F':'0.0 °F');
+ const weather=lastStatus.weather;
+ metric(m,'Outdoor weather',weather?.available?(weather.condition||'Unknown').replaceAll('-',' '):'Unavailable');
+ metric(m,'Outdoor temperature',weather?.available&&Number.isFinite(weather.temperature_f)?weather.temperature_f.toFixed(1)+' °F':'Unavailable');
+ metric(m,'Cloud cover',weather?.available&&Number.isFinite(weather.cloud_coverage_percent)?weather.cloud_coverage_percent.toFixed(0)+'%':'Unavailable');
+ metric(m,'Target',typeof lastStatus.target_f==='number'?lastStatus.target_f.toFixed(1)+' °F':'Unavailable');
  metric(m,'Frame last / peak',(p.frame_ms||0).toFixed(1)+' / '+(p.max_frame_ms||0).toFixed(1)+' ms');metric(m,'LVGL stack minimum free',Math.round((p.lvgl_stack_min_free||0)/1024)+' KiB');metric(m,'Free internal RAM',Math.round((p.free_internal||0)/1024)+' KiB');metric(m,'Largest internal block',Math.round((p.largest_internal||0)/1024)+' KiB');metric(m,'Free PSRAM',((p.free_psram||0)/1048576).toFixed(1)+' MiB');
  metric(m,'Ships shown / nearby',(lastStatus.ships?.count||0)+' / '+(lastStatus.ships?.nearby||0));metric(m,'Ship request',(lastStatus.ships?.request_ms||0)+' ms / '+(lastStatus.ships?.bytes||0)+' B');metric(m,'Ship service / AIS',!lastStatus.ships?.service_online?'Service offline':lastStatus.ships?.feed_online?'Online / online':'Online / AIS offline');metric(m,'Last ship refresh',lastStatus.ships?.last_error||'OK');metric(m,'MQTT',lastStatus.mqtt?.status||'Not configured');metric(m,'Radio pairing sync',lastStatus.integration_sync||'Not managed');
+}
+function renderControllerDiscovery(){
+ const n=$('controllerDiscovery');if(!n)return;const d=lastStatus?.controller_discovery;
+ n.textContent=!d?'Waiting for mDNS lookup...':d.status==='busy'?'Controller lookup busy':
+   'Hostname: '+d.hostname+' | Mode: '+(d.automatic?'Auto':'Manual / fallback')+
+   ' | Link URL: '+(d.active_url||'Searching...')+
+   ' | Resolved IP: '+(d.resolved_ip||'Not found yet')+
+   ' | Source: '+d.source+
+   ' | Identity verified: '+(d.verified?'yes':'not yet')+
+   ' | Selected link: '+(d.selected_transport||'?')+
+   ' | Local Wi-Fi channel: '+(d.wifi_channel??'?')+
+   ' | ESP-NOW: '+(d.espnow_online?'recent authenticated reply':d.espnow_configured?'configured, no recent reply':'not configured')+
+   ' | Consecutive ESP-NOW status failures: '+(d.espnow_failed_probes??'?')+
+   ' | Failed LAN discovery checks: '+(d.discovery_failed_checks??'?')+
+   ' | Last LAN HTTP status: '+(d.discovery_http_status??'?')+
+   ' | Last LAN probe error code: '+(d.discovery_http_error??'?');
 }
 function renderFirmware(){const n=$('firmwareInfo');if(!n||!lastStatus)return;const f=lastStatus.firmware||{};n.textContent='Version '+(f.version||'?')+' • '+(f.board||'Waveshare 4B')+' • Slot '+(f.running_slot||'?')+' • OTA '+(f.slot_bytes?Math.round(f.slot_bytes/1048576)+' MiB':'not available');}
 async function loadConfig(){const r=await fetch('/api/settings',{cache:'no-store'});const j=await r.json();if(!r.ok)throw Error(j.message||'Settings unavailable');config=j;render();}
 async function poll(){if(uploading)return;try{const r=await fetch('/api/device/status',{cache:'no-store'});if(!r.ok)throw Error('Status unavailable');const j=await r.json();lastStatus=j;
  $('services').replaceChildren();(j.services||[]).forEach(s=>{const row=el('div',undefined,'status-row');row.append(el('span',s.name),badge(s.state,s.kind));$('services').append(row)});
  const summary=j.summary_kind||'standby';$('summary').replaceWith(Object.assign(badge(j.summary,summary),{id:'summary'}));
- $('statusAge').textContent='Live status • updated '+new Date().toLocaleTimeString();renderMetrics();renderFirmware();if($('mqttDetail'))$('mqttDetail').textContent=j.mqtt?.status||'Not configured';if($('mqttReannounce'))$('mqttReannounce').disabled=!j.mqtt?.connected;
+ $('statusAge').textContent='Live status • updated '+new Date().toLocaleTimeString();renderMetrics();renderFirmware();renderControllerDiscovery();renderFurnacePower();renderWeather();
+ if($('temperatureRaw'))
+  $('temperatureRaw').textContent='Raw sensor: '+(typeof j.raw_temperature_f==='number'?j.raw_temperature_f.toFixed(1)+' °F':'Waiting for primary sensor');
+ if($('temperaturePreview')&&$('offsetNumber')){
+  const value=$('offsetNumber').value.trim(),offset=Number(value);
+  if(value&&Number.isFinite(offset)&&offset>=-10&&offset<=10){
+   $('temperaturePreview').textContent='Corrected temperature: '+(typeof j.raw_temperature_f==='number'?(j.raw_temperature_f+offset).toFixed(1)+' °F':'Waiting for primary sensor')+'   |   Offset: '+(offset>=0?'+':'')+offset.toFixed(1)+' °F';
+  }
+ }
+if($('mqttDetail'))$('mqttDetail').textContent=j.mqtt?.status||'Not configured';if($('mqttReannounce'))$('mqttReannounce').disabled=!j.mqtt?.connected;
  if(reconnecting&&j.firmware?.boot_id!==reconnectBoot){reconnecting=false;message('Device is back online. Running firmware '+(j.firmware?.version||'?')+'.');try{await loadConfig()}catch{config=null}}
  if(!config&&!reconnecting)await loadConfig();
  }catch(e){$('statusAge').textContent=reconnecting?'Device restarting; reconnecting...':'Device unreachable; retrying...';$('summary').replaceWith(Object.assign(badge('Offline','offline'),{id:'summary'}));}
+ const restart=$('restartThermostat');if(restart)restart.disabled=uploading||reconnecting||restartBusy;
+ const upload=$('uploadFirmware');if(upload)upload.disabled=uploading||reconnecting||restartBusy;
 }
 render();poll();timer=setInterval(poll,3000);
 </script></body></html>
