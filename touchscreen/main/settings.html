@@ -79,6 +79,7 @@ function render(){
   c.insertBefore(el('p','Recommended: automatic discovery. The display uses mDNS to find CottageThermoController.local, verifies identity and tracks IP changes. You can still enter a manual hostname/IP when multicast discovery is unavailable.'),form);
   field(grid,'Controller address (auto, hostname or URL)','controller',config.controller||'auto');
   const discovered=el('p','Checking controller discovery...','full');discovered.id='controllerDiscovery';grid.append(discovered);
+  grid.append(el('small','If mDNS finds the controller but LAN times out, the Waveshare cannot reach its HTTP server even if a computer browser can. Check IoT client isolation/guest Wi-Fi, and compare the controller Wi-Fi channel with the Waveshare channel for ESP-NOW.','full'));
   const row=actions(form,'controller',()=>({controller:$('controller').value.trim()||'auto'}));
   const automatic=el('button','Use automatic discovery');automatic.type='button';automatic.onclick=async()=>{automatic.disabled=true;try{await request({section:'controller',controller:'auto'});reconnecting=true;reconnectBoot=lastStatus?.firmware?.boot_id;config=null;message('Automatic controller discovery saved. Display restarting...');}catch(e){message(e.message)}finally{automatic.disabled=false}};
   row.append(automatic);linkTest(c);renderControllerDiscovery();
@@ -127,7 +128,14 @@ function renderControllerDiscovery(){
    ' | Link URL: '+(d.active_url||'Searching...')+
    ' | Resolved IP: '+(d.resolved_ip||'Not found yet')+
    ' | Source: '+d.source+
-   ' | Identity verified: '+(d.verified?'yes':'not yet');
+   ' | Identity verified: '+(d.verified?'yes':'not yet')+
+   ' | Selected link: '+(d.selected_transport||'?')+
+   ' | Local Wi-Fi channel: '+(d.wifi_channel??'?')+
+   ' | ESP-NOW: '+(d.espnow_online?'recent authenticated reply':d.espnow_configured?'configured, no recent reply':'not configured')+
+   ' | Consecutive ESP-NOW status failures: '+(d.espnow_failed_probes??'?')+
+   ' | Failed LAN discovery checks: '+(d.discovery_failed_checks??'?')+
+   ' | Last LAN HTTP status: '+(d.discovery_http_status??'?')+
+   ' | Last LAN probe error code: '+(d.discovery_http_error??'?');
 }
 function renderFirmware(){const n=$('firmwareInfo');if(!n||!lastStatus)return;const f=lastStatus.firmware||{};n.textContent='Version '+(f.version||'?')+' • '+(f.board||'Waveshare 4B')+' • Slot '+(f.running_slot||'?')+' • OTA '+(f.slot_bytes?Math.round(f.slot_bytes/1048576)+' MiB':'not available');}
 async function loadConfig(){const r=await fetch('/api/settings',{cache:'no-store'});const j=await r.json();if(!r.ok)throw Error(j.message||'Settings unavailable');config=j;render();}
