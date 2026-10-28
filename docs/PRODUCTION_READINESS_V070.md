@@ -1,3 +1,44 @@
+# Cottage Thermostat — v0.7.1 Controller / v0.14.7 Waveshare 4B acceptance
+
+## v0.14.7 — original Design #3 reproduction and acceptance (visual-only)
+
+The initial v0.14.5 refresh used the right palette but retained the old centered
+climate layout and text-only navigation. v0.14.7 corrects those visual mismatches:
+
+- Climate has a left-anchored **heat setpoint** in large type, a separate **current**
+  room reading underneath, and a RIGHT-anchored **blue/orange 248px drag ring**
+  with radial markers. The center hint remains in two lines. All four
+  previously approved buttons **-1 / Set Temp / +1 / Away/Home** remain in one
+  row. Live/Bench/Service status and reason stay visible below the ring.
+- Home has five richer, icon-left/text-right gradient cards in a two-column
+  grid. The sixth slot is empty; Camera is NOT on Home. Buttons and HA command
+  permissions are exactly those of the established firmware.
+- Shared header and bottom navigation use the Design #3 compact online badge,
+  thermometer/home/laundry/camera/ships icons and label captions. The page IDs
+  and all callbacks remain the same. **Ships stays visible and functional**;
+  only its shared chrome inherits the new style.
+- Laundry and Camera share the same visual vocabulary without changes to the
+  equipment notification controls or camera pixel pipeline.
+
+**Firmware:** compile and flash ONLY Waveshare 4B v0.14.7. The already-working
+controller Super Mini v0.7.1 does not need flashing. No NVS erase or
+recalibration. Network, MQTT, HA, Wi-Fi/ESP-NOW failover, temperature logic,
+and camera protocol are unchanged. Host code/layout checks are not a replacement
+for a local ESP-IDF build and actual display acceptance.
+
+```powershell
+cd C:\Users\kperry\Documents\GitHub\CottageThermoESP
+git pull --ff-only
+.\tools\build-room-4b.ps1 -Flash -Monitor -Port COM14
+```
+
+The example uses the most recently observed port, COM14. No GitHub Actions
+build is requested. Check dial touch movement, whether the indicator is
+visually aligned, all Home tile commands, Laundry/Camera, and the Ships tab.
+If the panel shows a geometry or styling mismatch, use an actual photograph
+for the next visual-only correction.
+
+
 # Cottage Thermostat — v0.7.1 Controller / v0.14.5 Waveshare 4B acceptance
 
 ## v0.14.5 Design #3 native LVGL visual polish (no protocol change)
