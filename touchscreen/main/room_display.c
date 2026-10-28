@@ -80,6 +80,7 @@ static lv_obj_t *states[COUNT],*control[COUNT][6],*minus_button,*plus_button,*aw
 static lv_obj_t *settings_modal,*settings_volume,*settings_volume_label,*settings_camera_button,*settings_close_button;
 static lv_obj_t *temperature_ring,*camera_frame,*camera_status,*tile[COUNT],*icon_badge[COUNT];
 static lv_obj_t *bulb_head[COUNT],*bulb_stem[COUNT],*bulb_base[COUNT],*bulb_glow[COUNT],*activity_ring[COUNT];
+static lv_obj_t *laundry_badge[4];
 static lv_obj_t *notify_button[4],*probe_test_label;
 /* Full-screen, touch-to-dismiss clock. The 28 segment widgets and two
  * colons are created once, not allocated on every refresh. */
@@ -1095,10 +1096,31 @@ static void refresh(lv_timer_t *timer)
                 lv_color_hex(glowing?0xffe487:0x60748b),0);
         }
         if(activity_ring[k]){
-            lv_obj_set_style_arc_color(activity_ring[k],lv_color_hex(color),LV_PART_INDICATOR);
-            lv_arc_set_rotation(activity_ring[k],active?(unsigned)(now/3000)%360:0);
-            lv_arc_set_angles(activity_ring[k],0,active?100:360);
-            lv_obj_set_style_arc_opa(activity_ring[k],available?LV_OPA_COVER:LV_OPA_40,LV_PART_INDICATOR);
+            /* The blank circular gauge on each idle appliance looked like
+             * a progress indicator with no actual progress data. Only show
+             * the activity spinner when HA says the machine is running. */
+            if(available&&active){
+                lv_obj_remove_flag(activity_ring[k],LV_OBJ_FLAG_HIDDEN);
+                lv_arc_set_rotation(activity_ring[k],(unsigned)(now/3000)%360);
+                lv_arc_set_angles(activity_ring[k],0,100);
+                lv_obj_set_style_arc_color(activity_ring[k],lv_color_hex(color),LV_PART_INDICATOR);
+                lv_obj_set_style_arc_opa(activity_ring[k],LV_OPA_COVER,LV_PART_INDICATOR);
+            }else lv_obj_add_flag(activity_ring[k],LV_OBJ_FLAG_HIDDEN);
+            if(k>=3&&k<=6&&laundry_badge[k-3]){
+                lv_obj_t *badge=laundry_badge[k-3];
+                if(available&&active)lv_obj_add_flag(badge,LV_OBJ_FLAG_HIDDEN);
+                else{
+                    const char *word=!available?"OFFLINE":
+                        visual==ROOM_VIS_DONE?"DONE":
+                        visual==ROOM_VIS_PAUSED?"PAUSED":
+                        visual==ROOM_VIS_ERROR?"ALERT":
+                        visual==ROOM_VIS_IDLE?"IDLE":"UNKNOWN";
+                    lv_label_set_text(badge,word);
+                    tint(badge,visual==ROOM_VIS_ERROR?0xff7979:
+                        visual==ROOM_VIS_DONE?MINT:MUTED);
+                    lv_obj_remove_flag(badge,LV_OBJ_FLAG_HIDDEN);
+                }
+            }
         }
         for(int a=0;a<6;++a)if(control[k][a]){
             enabled(control[k][a],available&&!(m.pending&(1U<<k))&&(m.items[k].actions&(1U<<a)));
@@ -1413,6 +1435,10 @@ static void build_ui(void)
         lv_obj_set_style_arc_width(activity_ring[key],5,LV_PART_MAIN);
         lv_obj_set_style_arc_width(activity_ring[key],5,LV_PART_INDICATOR);
         lv_obj_set_style_arc_color(activity_ring[key],lv_color_hex(EDGE),LV_PART_MAIN);
+        lv_obj_add_flag(activity_ring[key],LV_OBJ_FLAG_HIDDEN);
+        laundry_badge[n]=label(p,"IDLE",148,27,60,&lv_font_montserrat_14);
+        centered(laundry_badge[n]);
+        tint(laundry_badge[n],MUTED);
         lv_obj_t *line=panel(p,16,69,190,1,EDGE,0);
         lv_obj_set_style_border_width(line,0,0);
         lv_obj_t *device_name=label(p,laundry[n],16,77,190,&lv_font_montserrat_20);
