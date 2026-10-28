@@ -5,7 +5,7 @@
 <section class="card" id="content"></section><section class="card"><p id="message" role="status" aria-live="polite"></p><small>Tokens, keys and passwords are never returned after saving.</small></section></main></div>
 <script>
 'use strict';const $=id=>document.getElementById(id);let config=null,lastStatus=null,page='Overview',timer=null,uploading=false,reconnecting=false,reconnectBoot=null;
-const pages=['Overview','Wi-Fi','Home Assistant','MQTT thermostat','Controller','ESP-NOW','Ship tracking','Sound & display','System'];
+const pages=['Overview','Temperature','Wi-Fi','Home Assistant','MQTT thermostat','Controller','ESP-NOW','Ship tracking','Sound & display','System'];
 function el(tag,text,cls){const n=document.createElement(tag);if(text!==undefined)n.textContent=String(text);if(cls)n.className=cls;return n;}
 function badge(text,kind){return el('span',text,'badge '+(['ok','offline','unconfigured','standby','fallback'].includes(kind)?kind:'standby'));}
 function field(parent,label,id,value='',type='text',placeholder=''){const wrap=el('div');const l=el('label',label);l.htmlFor=id;const i=el('input');i.id=id;i.type=type;i.value=value||'';i.placeholder=placeholder;i.autocomplete=type==='password'?'new-password':'off';if(type==='password'){const secret=el('div',undefined,'secret');const show=el('button','Show');show.type='button';show.onclick=()=>{i.type=i.type==='password'?'text':'password';show.textContent=i.type==='password'?'Show':'Hide'};secret.append(i,show);wrap.append(l,secret);}else wrap.append(l,i);parent.append(wrap);return i;}
@@ -14,7 +14,7 @@ function select(parent,label,id,value,options){const wrap=el('div');const l=el('
 function message(s){$('message').textContent=s;}
 function headers(){return {'Content-Type':'application/json'};}
 async function request(payload){const r=await fetch('/api/settings',{method:'POST',headers:headers(),body:JSON.stringify(payload)});const j=await r.json();if(!r.ok)throw Error(j.message||'Request failed');message(j.message);return j;}
-function actions(form,section,getPayload,caption='Save and restart display'){const row=el('div',undefined,'actions');const save=el('button',caption,'primary');save.type='submit';row.append(save);form.append(row);form.onsubmit=async e=>{e.preventDefault();save.disabled=true;try{await request({section,...getPayload()});if(caption.includes('restart')){reconnecting=true;reconnectBoot=lastStatus?.firmware?.boot_id;message('Saved. Display restarting; reconnecting to live status...');config=null;}}catch(err){message(err.message)}finally{save.disabled=false;}};return row;}
+function actions(form,section,getPayload,caption='Save and restart display'){const row=el('div',undefined,'actions');const save=el('button',caption,'primary');save.type='submit';row.append(save);form.append(row);form.onsubmit=async e=>{e.preventDefault();save.disabled=true;try{await request({section,...getPayload()});if(section==='temperature')await loadConfig();if(caption.includes('restart')){reconnecting=true;reconnectBoot=lastStatus?.firmware?.boot_id;message('Saved. Display restarting; reconnecting to live status...');config=null;}}catch(err){message(err.message)}finally{save.disabled=false;}};return row;}
 function linkTest(parent){const b=el('button','Test Wi-Fi and ESP-NOW');b.type='button';b.onclick=async()=>{b.disabled=true;message('Testing both controller links...');try{await request({section:'controller_test'});}catch(e){message(e.message)}finally{b.disabled=false;}};parent.append(b);}
 function needConfig(){if(config)return false;$('content').append(el('p','Loading device settings...'));return true;}
 function render(){
@@ -24,7 +24,42 @@ function render(){
   const metrics=el('div',undefined,'metrics');metrics.id='metrics';c.append(metrics);renderMetrics();return;}
  if(needConfig())return;const form=el('form');const grid=el('div',undefined,'grid');form.append(grid);c.append(form);
  const keep='Leave blank to keep the saved value.';
- if(page==='Wi-Fi'){
+ if(page==='Temperature'){
+  c.insertBefore(el('p','Calibrate the primary room sensor after installation. If the thermostat reads too warm, use a negative offset. This adjusts the displayed temperature, Home Assistant and the reading sent to the furnace controller; it does not change your target temperature or dial calibration.'),form);
+  const saved=Number(config.temperature_offset_tenths)||0;
+  const current=typeof lastStatus?.raw_temperature_f==='number'?lastStatus.raw_temperature_f:null;
+  const reading=el('p','Raw sensor: '+(current===null?'Waiting for primary sensor':current.toFixed(1)+' °F'),'full');
+  reading.id='temperatureRaw';grid.append(reading);
+  const range=field(grid,'Temperature offset (°F)','offsetRange',saved/10,'range');
+  range.min='-10';range.max='10';range.step='0.1';
+  const numeric=field(grid,'Fine adjustment (°F)','offsetNumber',(saved/10).toFixed(1),'number');
+  numeric.min='-10';numeric.max='10';numeric.step='0.1';
+  const preview=el('p','','full');preview.id='temperaturePreview';grid.append(preview);
+  grid.append(el('small','Range: −10.0 °F through +10.0 °F, adjustable in 0.1 °F increments. Example: a raw reading of 82 °F with a −4 °F offset becomes 78 °F. The new value takes effect on the next 15-second sensor sample. No restart needed.','full'));
+  const previewUpdate=(fromRange)=>{
+   if(fromRange)numeric.value=range.value;
+   else if(numeric.value.trim())range.value=numeric.value;
+   const n=Number(numeric.value);
+   if(!numeric.value.trim()||!Number.isFinite(n)||n<-10||n>10){
+    preview.textContent='Enter an offset between −10.0 °F and +10.0 °F.';
+    return;
+   }
+   const raw=lastStatus?.raw_temperature_f;
+   const corrected=typeof raw==='number'?(raw+n).toFixed(1)+' °F':'Waiting for primary sensor';
+   preview.textContent='Corrected temperature: '+corrected+'   |   Offset: '+(n>=0?'+':'')+n.toFixed(1)+' °F';
+  };
+  range.oninput=()=>previewUpdate(true);
+  numeric.oninput=()=>previewUpdate(false);
+  previewUpdate(false);
+  const row=actions(form,'temperature',()=>{
+    const value=numeric.value.trim(),n=Number(value);
+    if(!value||!Number.isFinite(n)||n<-10||n>10||Math.abs(n*10-Math.round(n*10))>0.00001)
+     throw Error('Use a temperature offset between −10.0 °F and +10.0 °F in 0.1 °F increments.');
+    return {offset_tenths:Math.round(n*10)};
+  },'Save Temperature Offset');
+  const reset=el('button','Reset to 0.0 °F');reset.type='button';
+  reset.onclick=()=>{numeric.value='0.0';previewUpdate(false)};row.append(reset);
+ }else if(page==='Wi-Fi'){
   c.insertBefore(el('p','Test a new network. The previous saved profile is retained if connection fails. The device may change its IP address.'),form);
   field(grid,'Network name (SSID)','ssid','','text','Network name').maxLength=32;field(grid,'Wi-Fi password','wifiPassword','','password').maxLength=64;check(grid,'Open network (no password)','open',false);
   actions(form,'wifi',()=>({ssid:$('ssid').value,password:$('wifiPassword').value,open:$('open').checked}),'Test and save Wi-Fi');
@@ -78,7 +113,10 @@ function render(){
 }
 function metric(parent,title,value){const m=el('div',undefined,'metric');m.append(el('small',title),el('strong',value));parent.append(m);}
 function renderMetrics(){const m=$('metrics');if(!m||!lastStatus)return;m.replaceChildren();const p=lastStatus.performance||{};
- metric(m,'Local temperature',lastStatus.temperature_f===undefined?'No fresh sample':lastStatus.temperature_f.toFixed(1)+' °F');metric(m,'Target',lastStatus.target_f===undefined?'Unavailable':lastStatus.target_f.toFixed(1)+' °F');
+ metric(m,'Corrected room temperature',typeof lastStatus.temperature_f==='number'?lastStatus.temperature_f.toFixed(1)+' °F':'No fresh sample');
+ metric(m,'Raw primary sensor',typeof lastStatus.raw_temperature_f==='number'?lastStatus.raw_temperature_f.toFixed(1)+' °F':'No fresh sample');
+ metric(m,'Temperature offset',typeof lastStatus.temperature_offset_f==='number'?(lastStatus.temperature_offset_f>=0?'+':'')+lastStatus.temperature_offset_f.toFixed(1)+' °F':'0.0 °F');
+ metric(m,'Target',typeof lastStatus.target_f==='number'?lastStatus.target_f.toFixed(1)+' °F':'Unavailable');
  metric(m,'Frame last / peak',(p.frame_ms||0).toFixed(1)+' / '+(p.max_frame_ms||0).toFixed(1)+' ms');metric(m,'LVGL stack minimum free',Math.round((p.lvgl_stack_min_free||0)/1024)+' KiB');metric(m,'Free internal RAM',Math.round((p.free_internal||0)/1024)+' KiB');metric(m,'Largest internal block',Math.round((p.largest_internal||0)/1024)+' KiB');metric(m,'Free PSRAM',((p.free_psram||0)/1048576).toFixed(1)+' MiB');
  metric(m,'Ships shown / nearby',(lastStatus.ships?.count||0)+' / '+(lastStatus.ships?.nearby||0));metric(m,'Ship request',(lastStatus.ships?.request_ms||0)+' ms / '+(lastStatus.ships?.bytes||0)+' B');metric(m,'Ship service / AIS',!lastStatus.ships?.service_online?'Service offline':lastStatus.ships?.feed_online?'Online / online':'Online / AIS offline');metric(m,'Last ship refresh',lastStatus.ships?.last_error||'OK');metric(m,'MQTT',lastStatus.mqtt?.status||'Not configured');metric(m,'Radio pairing sync',lastStatus.integration_sync||'Not managed');
 }
@@ -96,7 +134,16 @@ async function loadConfig(){const r=await fetch('/api/settings',{cache:'no-store
 async function poll(){if(uploading)return;try{const r=await fetch('/api/device/status',{cache:'no-store'});if(!r.ok)throw Error('Status unavailable');const j=await r.json();lastStatus=j;
  $('services').replaceChildren();(j.services||[]).forEach(s=>{const row=el('div',undefined,'status-row');row.append(el('span',s.name),badge(s.state,s.kind));$('services').append(row)});
  const summary=j.summary_kind||'standby';$('summary').replaceWith(Object.assign(badge(j.summary,summary),{id:'summary'}));
- $('statusAge').textContent='Live status • updated '+new Date().toLocaleTimeString();renderMetrics();renderFirmware();renderControllerDiscovery();if($('mqttDetail'))$('mqttDetail').textContent=j.mqtt?.status||'Not configured';if($('mqttReannounce'))$('mqttReannounce').disabled=!j.mqtt?.connected;
+ $('statusAge').textContent='Live status • updated '+new Date().toLocaleTimeString();renderMetrics();renderFirmware();renderControllerDiscovery();
+ if($('temperatureRaw'))
+  $('temperatureRaw').textContent='Raw sensor: '+(typeof j.raw_temperature_f==='number'?j.raw_temperature_f.toFixed(1)+' °F':'Waiting for primary sensor');
+ if($('temperaturePreview')&&$('offsetNumber')){
+  const value=$('offsetNumber').value.trim(),offset=Number(value);
+  if(value&&Number.isFinite(offset)&&offset>=-10&&offset<=10){
+   $('temperaturePreview').textContent='Corrected temperature: '+(typeof j.raw_temperature_f==='number'?(j.raw_temperature_f+offset).toFixed(1)+' °F':'Waiting for primary sensor')+'   |   Offset: '+(offset>=0?'+':'')+offset.toFixed(1)+' °F';
+  }
+ }
+if($('mqttDetail'))$('mqttDetail').textContent=j.mqtt?.status||'Not configured';if($('mqttReannounce'))$('mqttReannounce').disabled=!j.mqtt?.connected;
  if(reconnecting&&j.firmware?.boot_id!==reconnectBoot){reconnecting=false;message('Device is back online. Running firmware '+(j.firmware?.version||'?')+'.');try{await loadConfig()}catch{config=null}}
  if(!config&&!reconnecting)await loadConfig();
  }catch(e){$('statusAge').textContent=reconnecting?'Device restarting; reconnecting...':'Device unreachable; retrying...';$('summary').replaceWith(Object.assign(badge('Offline','offline'),{id:'summary'}));}
