@@ -69,7 +69,7 @@ typedef struct {
     unsigned pending;int64_t notice_until;
     float temp,target; char mode[32],reason[80],notice[128],ha_error[128];
     unsigned page,generation;
-    float probe_f;int64_t probe_at;
+    float probe_f,probe_raw_f;int64_t probe_at;
 } model_t;
 typedef struct { int item,action; float target; int64_t at; } command_t;
 static model_t model;
@@ -111,10 +111,13 @@ static unsigned visible_page;
 /* Copy directly into caller storage: returning this large model by value
  * created nested stack temporaries inside LVGL callbacks. */
 static void copy_model(model_t *out) {xSemaphoreTake(mutex,portMAX_DELAY);*out=model;xSemaphoreGive(mutex);}
-void room_display_probe_sample(float f)
+void room_display_probe_sample(float f,float raw_f)
 {
-    if(!mutex||!isfinite(f))return;
-    xSemaphoreTake(mutex,portMAX_DELAY);model.probe_f=f;model.probe_at=esp_timer_get_time();xSemaphoreGive(mutex);
+    if(!mutex||!isfinite(f)||!isfinite(raw_f))return;
+    xSemaphoreTake(mutex,portMAX_DELAY);
+    model.probe_f=f;model.probe_raw_f=raw_f;
+    model.probe_at=esp_timer_get_time();
+    xSemaphoreGive(mutex);
 }
 static void message(const char *text) { xSemaphoreTake(mutex,portMAX_DELAY);snprintf(model.notice,sizeof(model.notice),"%s",text);model.notice_until=esp_timer_get_time()+7000000;xSemaphoreGive(mutex); }
 static const char *str(cJSON *j,const char *key) { cJSON *v=cJSON_GetObjectItemCaseSensitive(j,key);return cJSON_IsString(v)?v->valuestring:""; }
@@ -754,7 +757,11 @@ cJSON *room_display_status(void)
         !CONFIG_ROOM_SENSOR?"unconfigured":probe?"ok":"offline",!health.ship_configured?"unconfigured":health.ship_online?"ok":"offline",
         mq==2?"ok":mq==0?"unconfigured":"offline"};
     for(unsigned i=0;i<7;++i){cJSON *v=cJSON_CreateObject();cJSON_AddStringToObject(v,"name",names[i]);cJSON_AddStringToObject(v,"state",words[i]);cJSON_AddStringToObject(v,"kind",colors[i]);cJSON_AddItemToArray(a,v);}
-    if(probe)cJSON_AddNumberToObject(j,"temperature_f",m.probe_f);
+    if(probe){
+        cJSON_AddNumberToObject(j,"temperature_f",m.probe_f);
+        cJSON_AddNumberToObject(j,"raw_temperature_f",m.probe_raw_f);
+    }
+    cJSON_AddNumberToObject(j,"temperature_offset_f",room_settings_temp_offset_f());
     if(heat&&m.has_target)cJSON_AddNumberToObject(j,"target_f",m.target);
     cJSON_AddBoolToObject(j,"away",heat&&m.away);
     cJSON_AddBoolToObject(j,"live_active",heat&&m.live_active);
@@ -1527,7 +1534,8 @@ i2c_master_bus_handle_t room_display_probe_bus(int sda,int scl)
     return bsp_i2c_get_handle();
 }
 #else
-void room_display_probe_sample(float temperature_f) {(void)temperature_f;}
+void room_display_probe_sample(float temperature_f,float raw_f)
+{(void)temperature_f;(void)raw_f;}
 void room_display_start(void) {}
 cJSON *room_display_status(void){return cJSON_CreateObject();}
 bool room_display_camera_fill(void){return false;}
