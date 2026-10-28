@@ -1,5 +1,23 @@
 # Cottage room panel — Waveshare ESP32-S3-Touch-LCD-4B
 
+## v0.15.0 — persistent room temperature calibration and link diagnostics
+
+**Primary sensor temperature offset:** Waveshare web settings now include a **Temperature** page with a signed **−10.0°F to +10.0°F** adjustment in **0.1°F** increments. The page displays the raw SHT45/SHT31 sensor reading, proposed corrected reading, a slider and numeric entry, plus Reset (sets preview to zero until saved). If the sensor reads warmer than a trusted room thermometer, enter a **negative** offset. The offset is validated server-side, stored separately as signed tenths under NVS `room_config/temp_offset_t10`, and loaded on boot with a zero default. Changing it **does not restart** the display or overwrite the existing settings profile (credentials, MQTT, ESP-NOW, HA, controller URL, Ships and OTA).
+
+Every 15-second successful sensor sample is corrected exactly once **before** delivery to the screen, Home Assistant MQTT Climate state and the authenticated controller temperature sample. The raw value is retained separately in `/api/device/status` as `raw_temperature_f`; its corrected peer remains `temperature_f`, with `temperature_offset_f` reflecting the saved adjustment. Web Overview shows raw and corrected readings side by side. The correction does **not** change the furnace target setpoint, dial-position mapping or controller firmware. Corrections outside the current controller sample protocol range (32–110°F) are rejected and logged rather than sent out of bounds; this conservative pre-existing protocol range should be revisited before using the system for freeze protection in below-freezing conditions. Recheck the offset after the final enclosure is installed and sensor temperature stabilizes; screen self-heating and room airflow can bias an exposed bench sensor.
+
+**LAN / ESP-NOW diagnostics:** When mDNS returns a controller IP but the Waveshare cannot establish HTTP to it, the link will **remain on ESP-NOW** until an authenticated LAN response succeeds. A browser on a different device being able to open the controller does not prove the Waveshare can open a TCP socket to it. The Controller page now reports selected transport, local Wi-Fi RF channel, recent ESP-NOW authenticated reply state, consecutive ESP-NOW status failures and LAN discovery HTTP error/status values. Use **Test Wi-Fi and ESP-NOW** to check both paths without moving the servo. The radio protocol, link selection, fallback implementation, MQTT, controller and servo controls are unchanged. Investigate AP wireless client isolation, VLAN forwarding and different Wi-Fi channels before attempting controller firmware changes.
+
+**Only update Waveshare:** from the local ESP-IDF PowerShell, run:
+
+```powershell
+cd C:\Users\kperry\Documents\GitHub\CottageThermoESP
+git pull --ff-only
+.\tools\build-room-4b.ps1 -Flash -Monitor -Port COM14
+```
+
+No GitHub Actions build, NVS erase, pairing change or Super Mini controller update. Run local host test `test_room_temp_cal` (registered in `tests/CMakeLists.txt`) and test serial log, web `Temperature` preview and saved value, Home Assistant Climate reading, and Controller transport diagnostics. Keep unattended heating in **Service** until sensor correction and dependable controller link are verified on the installed hardware.
+
 ## v0.14.9 — photographed-display polish (visual-only)
 
 Reviewed five real Waveshare 480×480 photos from the previous Design #3 build. Main fixes:
