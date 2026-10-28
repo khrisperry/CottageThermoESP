@@ -30,7 +30,7 @@ esp_err_t controller_status_led_init(void)
     };
     esp_err_t err=rmt_new_tx_channel(&cfg,&channel);
     if(err!=ESP_OK)return err;
-    const rmt_copy_encoder_config_t encoder_cfg={0};
+    const rmt_copy_encoder_config_t encoder_cfg={};
     err=rmt_new_copy_encoder(&encoder_cfg,&encoder);
     if(err==ESP_OK)err=rmt_enable(channel);
     if(err!=ESP_OK){
