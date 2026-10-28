@@ -1134,15 +1134,20 @@ static void build_ui(void)
      * Only light tiles toggle on touch; other controls stay explicit. */
     for(int key=0;key<2;++key){
         const int x=key==0?0:ROOM_HOME_TILE_W+ROOM_HOME_TILE_GAP;
+        /* Design #3 Home cards: colorful left icon, title/state at right.
+         * Full tile remains the existing guarded On/Off touch target. */
         lv_obj_t *p=tile[key]=panel(body[1],x,0,
-            ROOM_HOME_TILE_W,ROOM_HOME_TILE_H,CARD,18);
+            ROOM_HOME_TILE_W,ROOM_HOME_TILE_H,key==0?0x0d2945:0x0c293b,16);
+        lv_obj_set_style_bg_grad_color(p,lv_color_hex(key==0?0x113d68:0x144741),0);
+        lv_obj_set_style_bg_grad_dir(p,LV_GRAD_DIR_HOR,0);
+        lv_obj_set_style_border_color(p,lv_color_hex(key==0?0x24557d:0x27616d),0);
         lv_obj_add_flag(p,LV_OBJ_FLAG_CLICKABLE);
-        lv_obj_set_style_bg_color(p,lv_color_hex(0x27445a),LV_STATE_PRESSED);
+        lv_obj_set_style_bg_color(p,lv_color_hex(0x244a61),LV_STATE_PRESSED);
         lv_obj_set_style_bg_opa(p,LV_OPA_50,LV_STATE_DISABLED);
         lv_obj_add_event_cb(p,light_tile_event,LV_EVENT_CLICKED,(void*)(intptr_t)key);
-        bulb_glow[key]=panel(p,82,6,60,53,0x1d3547,28);
+        bulb_glow[key]=panel(p,8,24,52,52,0x1d3547,26);
         lv_obj_set_style_border_width(bulb_glow[key],0,0);
-        lv_obj_t *bulb=panel(p,92,10,40,48,CARD,0);
+        lv_obj_t *bulb=panel(p,14,25,40,48,CARD,0);
         lv_obj_set_style_bg_opa(bulb,LV_OPA_TRANSP,0);
         lv_obj_set_style_border_width(bulb,0,0);
         bulb_head[key]=panel(bulb,6,0,28,30,0x45546a,14);
@@ -1150,14 +1155,15 @@ static void build_ui(void)
         lv_obj_set_style_border_width(bulb_stem[key],0,0);
         bulb_base[key]=panel(bulb,11,39,18,4,0x60748b,2);
         lv_obj_set_style_border_width(bulb_base[key],0,0);
-        lv_obj_t *name=label(p,key==0?"Deck Lights":"Breezeway Lights",
-            4,60,ROOM_HOME_TILE_W-8,&lv_font_montserrat_16);
-        centered(name);
-        states[key]=label(p,"Unavailable",4,83,
-            ROOM_HOME_TILE_W-8,&lv_font_montserrat_14);
-        centered(states[key]);
+        lv_obj_t *name=label(p,key==0?"Deck Lights":"Breezeway",
+                             67,27,140,&lv_font_montserrat_16);
+        tint(name,TEXT);
+        states[key]=label(p,"Unavailable",67,55,135,&lv_font_montserrat_14);
+        tint(states[key],MUTED);
         lv_label_set_long_mode(states[key],LV_LABEL_LONG_DOT);
-        lv_obj_set_height(states[key],19);
+        lv_obj_set_height(states[key],20);
+        lv_obj_t *chev=label(p,">",203,39,16,&lv_font_montserrat_16);
+        tint(chev,MUTED);
     }
     const int home_keys[]={2,9,7};
     const char *home_names[]={"Blinds","Vacuum","Kids Heat"};
@@ -1166,13 +1172,20 @@ static void build_ui(void)
     for(int idx=0;idx<3;++idx){
         const int key=home_keys[idx];
         lv_obj_t *p=tile[key]=panel(body[1],home_x[idx],home_y[idx],
-                                   ROOM_HOME_TILE_W,ROOM_HOME_TILE_H,CARD,18);
+                                   ROOM_HOME_TILE_W,ROOM_HOME_TILE_H,
+                                   key==2?0x0a2a40:key==9?0x0a2d3a:0x152939,16);
+        lv_obj_set_style_bg_grad_color(p,lv_color_hex(
+            key==2?0x123b55:key==9?0x183b4c:0x2a3349),0);
+        lv_obj_set_style_bg_grad_dir(p,LV_GRAD_DIR_HOR,0);
+        lv_obj_set_style_border_color(p,lv_color_hex(
+            key==2?0x24587b:key==9?0x254d68:0x5e4851),0);
         if(key==2)blinds_icon(p);
         else if(key==7)heater_icon(p);
         else vacuum_icon(p);
-        label(p,home_names[idx],52,10,ROOM_HOME_TILE_W-58,&lv_font_montserrat_16);
-        states[key]=label(p,"Unavailable",52,37,
-                          key==7?60:ROOM_HOME_TILE_W-58,&lv_font_montserrat_14);
+        lv_obj_t *name=label(p,home_names[idx],62,11,ROOM_HOME_TILE_W-70,&lv_font_montserrat_16);
+        tint(name,TEXT);
+        states[key]=label(p,"Unavailable",62,38,
+                          key==7?52:ROOM_HOME_TILE_W-70,&lv_font_montserrat_14);
         lv_label_set_long_mode(states[key],LV_LABEL_LONG_DOT);
         lv_obj_set_height(states[key],21);
         if(key==2){
