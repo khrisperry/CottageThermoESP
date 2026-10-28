@@ -36,6 +36,10 @@
 #include "network_profile.h"
 #include "controller_wifi_retry.h"
 #include "controller_wifi_recovery.h"
+#ifdef CONFIG_THERMO_SUPERMINI
+#include "controller_status_led.h"
+#include "controller_status_led_driver.h"
+#endif
 
 static const char *TAG="thermostat";
 #define CONFIG_KEY "sim_config"
@@ -62,6 +66,10 @@ static bool mdns_ready;
 static char station_mac[18];
 static unsigned http_link_count;
 static uint64_t last_http_link;
+#ifdef CONFIG_THERMO_SUPERMINI
+static atomic_uint led_reported_mode;
+static atomic_bool led_initialized;
+#endif
 static atomic_uint reconnect_at,connect_at,setup_discovery_until;
 static bool pwm, timer_ready, pwm_channel_ready, armed;
 static uint64_t armed_until;
@@ -778,6 +786,70 @@ static void reconnect_task(void *arg)
         vTaskDelay(pdMS_TO_TICKS(250));
     }
 }
+/* The status LED is independent of servo PWM, and polls only
+ * read-only controller state. A controller fault takes priority, then the
+ * freshest authenticated room link (HTTP vs ESP-NOW).
+ *
+ * The red indicator is power/charging hardware and isn't controlled.
+ * Only the blue channel of the HW-747's addressable RGB on GPIO48 is used.
+ * If the onboard LED differs by board revision, initialization failure is
+ * nonfatal: the controller continues operating without LED feedback. */
+#ifdef CONFIG_THERMO_SUPERMINI
+static void controller_status_led_task(void *arg)
+{
+    (void)arg;
+    bool prior_on=false,first=true;
+    controller_led_mode_t prior_mode=CONTROLLER_LED_OFF;
+    for(;;){
+        uint64_t now=now_ms();
+        uint64_t http_at=0;
+        bool fault=false;
+        xSemaphoreTake(lock,portMAX_DELAY);
+        http_at=last_http_link;
+        fault=live_fault || (state.reason&&!strcmp(state.reason,"pwm_error"));
+        xSemaphoreGive(lock);
+        /* ESP-NOW counter wraps at 2^32 ms (~49 days). Reconstruct its
+         * recent age using unsigned 32-bit monotonic arithmetic. */
+        uint64_t radio_at=0;
+        uint32_t raw=tl_radio_last_reply_ms();
+        if(raw){
+            uint32_t ago=(uint32_t)((uint32_t)now-raw);
+            if(ago<=CONTROLLER_LED_LINK_TTL_MS && now>=ago)
+                radio_at=now-ago;
+        }
+        controller_led_mode_t mode=controller_led_choose(
+            fault,atomic_load(&station_up),http_at,radio_at,now);
+        const bool on=controller_led_illuminated(mode,now);
+        atomic_store(&led_reported_mode,(unsigned)mode);
+        if(first||mode!=prior_mode||on!=prior_on){
+            esp_err_t err=controller_status_led_write(on);
+            if(err!=ESP_OK){
+                ESP_LOGW("controller_status_led",
+                    "Blue indicator failed: %s; thermostat control unaffected",
+                    esp_err_to_name(err));
+            }
+            first=false;prior_mode=mode;prior_on=on;
+        }
+        vTaskDelay(pdMS_TO_TICKS(200));
+    }
+}
+static void controller_status_led_start(void)
+{
+    esp_err_t err=controller_status_led_init();
+    if(err!=ESP_OK){
+        ESP_LOGW("controller_status_led",
+            "LED unavailable: %s; no change to controller operation",
+            esp_err_to_name(err));
+        return;
+    }
+    atomic_store(&led_initialized,true);
+    if(xTaskCreate(controller_status_led_task,"controller_led",3072,NULL,
+                   2,NULL)!=pdPASS)
+        ESP_LOGW("controller_status_led",
+            "LED task failed to start; thermostat will run normally");
+}
+#endif
+
 static void network_start(void)
 {
     ESP_ERROR_CHECK(esp_netif_init());ESP_ERROR_CHECK(esp_event_loop_create_default());
@@ -886,6 +958,10 @@ void app_main(void)
     ESP_ERROR_CHECK(gpio_config(&recovery_button));
 #endif
     network_start();
+#ifdef CONFIG_THERMO_SUPERMINI
+    /* Status-only GPIO48 LED, never a safety/control dependency. */
+    controller_status_led_start();
+#endif
     controller_mqtt_start();
     controller_encoder_start();
 #ifdef CONFIG_THERMO_SUPERMINI
