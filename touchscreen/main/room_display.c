@@ -244,6 +244,11 @@ static void camera_present(void *pixels,unsigned width,unsigned height,unsigned 
     lv_image_set_scale(camera_image,room_camera_scale(width,height,454,306,fill));
     lv_obj_align(camera_image,LV_ALIGN_CENTER,0,0);
     lv_obj_remove_flag(camera_image,LV_OBJ_FLAG_HIDDEN);
+    /* The photo shows a stale black rectangular area inside the video
+     * viewport. Invalidate the WHOLE frame after a rescaled JPEG is
+     * replaced, not only the old/new image bounds, to prevent partial
+     * LVGL dirty-region redraw artifacts. No camera IO or decode changes. */
+    lv_obj_invalidate(camera_frame);
 }
 static void camera_task(void *arg)
 {
