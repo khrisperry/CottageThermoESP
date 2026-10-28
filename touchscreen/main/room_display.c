@@ -299,7 +299,7 @@ static void camera_task(void *arg)
                         camera_present(pixels,info.width,info.height,info.output_len,m.camera_fill);
                         pixels=NULL;
                         lv_label_set_text(camera_note,"Auto-refreshing snapshots");
-                        lv_label_set_text(camera_status,LV_SYMBOL_VIDEO "  LIVE VIEW");
+                        lv_label_set_text(camera_status,LV_SYMBOL_VIDEO "  SNAPSHOTS");
                     } else {
                         lv_label_set_text(camera_note,detail);
                         lv_label_set_text(camera_status,LV_SYMBOL_REFRESH "  RETRYING");
