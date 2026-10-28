@@ -2,7 +2,9 @@
 
 ESP-IDF smart thermostat / mechanical knob actuator project for a **Williams model 1773512 direct-vent cottage furnace**.
 
-> **Current branch: controller v0.7.4; native 4B room panel v0.15.2.** Controller and room client are separate ESP-IDF 6.0.1 projects. Saved Live survives restart and resumes only after fresh thermostat and calibrated AS5600 checks. Service and temporary Bench Go start stopped. Mechanical/appliance validation remains separate from firmware tests.
+> **Current branch: controller v0.7.4; native 4B room panel v0.15.3.** Controller and room client are separate ESP-IDF 6.0.1 projects. Saved Live survives restart and resumes only after fresh thermostat and calibrated AS5600 checks. Service and temporary Bench Go start stopped. Mechanical/appliance validation remains separate from firmware tests.
+
+Room panel v0.15.3 adds persisted **Monitor furnace power** and **Thermostat installed at cottage** flags under **Furnace power**. Monitoring defaults off; leave Installed unchecked for bench/desk testing. When enabled, a source-timestamp-aware state machine identifies standby, startup, likely heating and likely blower cooldown from the supplied power history. It rejects cached/stale evidence, debounces changes, and counts confirmed observed cycles. Settings apply without restart. Neither flag enables automatic dial corrections or calibration learning. See [furnace power monitoring](docs/FURNACE_POWER_MONITORING.md).
 
 Controller v0.7.4 disables automatic temperature-only overshoot trim: solar warmth cannot lower the calibrated nighttime dial setting. Room panel v0.15.2 monitors `sensor.furnace_power_current` (A) and `sensor.furnace_power_power` (W) through its existing HA connection and displays them under **Furnace power**. These are read-only electrical snapshots, not validated burner status; adaptive learning remains disabled while the room sensor is offsite and furnace cycles are unvalidated. See [furnace power monitoring](docs/FURNACE_POWER_MONITORING.md).
 

@@ -22,3 +22,5 @@ bool room_settings_radio_managed(void);
  * Reading the offset is lock-free and safe from the sensor task. */
 int room_settings_temp_offset_tenths(void);
 float room_settings_temp_offset_f(void);
+/* Independent persisted monitor configuration. Default: disabled, bench. */
+unsigned room_settings_furnace_config(void);

@@ -11,6 +11,8 @@ static int writes,selects,aborts,begins,confirms;static bool bad_end,bad_write,b
 static bool fail_reboot_task;
 static int reboot_tasks,reboot_calls,profile_writes;
 static int16_t saved_offset;
+static uint32_t saved_monitor;
+static bool monitor_saved,fail_monitor_save;
 static void (*pending_reboot_task)(void *);
 static esp_partition_t running={"factory",4194304},inactive={"ota_0",4194304};
 static esp_app_desc_t description={.version="test"};
@@ -41,6 +43,8 @@ int nvs_get_blob(unsigned h,const char *key,void *out,size_t *size){if(!stored_s
 int nvs_set_blob(unsigned h,const char *key,const void *in,size_t size){assert(size<=sizeof(stored_profile));++profile_writes;memcpy(stored_profile,in,size);stored_size=size;return 0;}
 int nvs_get_i16(unsigned h,const char *key,int16_t *out){*out=saved_offset;return 0;}
 int nvs_set_i16(unsigned h,const char *key,int16_t value){saved_offset=value;return 0;}
+int nvs_get_u32(unsigned h,const char *key,uint32_t *out){assert(!strcmp(key,"furnace_monitor"));if(!monitor_saved)return -1;*out=saved_monitor;return 0;}
+int nvs_set_u32(unsigned h,const char *key,uint32_t value){assert(!strcmp(key,"furnace_monitor"));if(fail_monitor_save)return -1;saved_monitor=value;monitor_saved=true;return 0;}
 int nvs_get_str(unsigned h,const char *key,char *out,size_t *size){if(!*stored_code)return -1;snprintf(out,*size,"%s",stored_code);*size=strlen(stored_code)+1;return 0;}
 int nvs_set_str(unsigned h,const char *key,const char *s){snprintf(stored_code,sizeof(stored_code),"%s",s);return 0;}
 int nvs_commit(unsigned h){return 0;}
@@ -89,6 +93,20 @@ int main(int argc,char **argv){
  assert(profile_writes==profile_writes_before&&!memcmp(&current,&settings_before,sizeof(current))&&!memcmp(profile_before,stored_profile,sizeof(profile_before)));
  r=req(restart,strlen(restart),"application/json");save(&r);assert(r.code==409&&reboot_tasks==tasks_before+1);
  pending_reboot_task(NULL);assert(reboot_calls==1);reboot_pending=false;
+ /* Monitor flags default disabled/bench and persist independently of the
+  * credential profile, with no restart or controller mutation. */
+ assert(room_settings_furnace_config()==(180U<<8));
+ const char *monitor="{\"section\":\"furnace_monitor\",\"enabled\":true,\"installed\":false,\"max_report_age_seconds\":180}";
+ r=req(monitor,strlen(monitor),"application/json");save(&r);assert(r.code==200&&!reboot_pending);
+ assert(room_settings_furnace_config()==((180U<<8)|1U));
+ assert(profile_writes==profile_writes_before&&!memcmp(&current,&settings_before,sizeof(current)));
+ room_settings_init();assert(room_settings_furnace_config()==((180U<<8)|1U));
+ fail_monitor_save=true;
+ const char *disable_monitor="{\"section\":\"furnace_monitor\",\"enabled\":false,\"installed\":false,\"max_report_age_seconds\":180}";
+ r=req(disable_monitor,strlen(disable_monitor),"application/json");save(&r);assert(r.code==500&&room_settings_furnace_config()==((180U<<8)|1U));fail_monitor_save=false;
+ const char *bad_monitor="{\"section\":\"furnace_monitor\",\"enabled\":true,\"installed\":true,\"max_report_age_seconds\":0}";
+ r=req(bad_monitor,strlen(bad_monitor),"application/json");save(&r);assert(r.code==400);
+ saved_monitor=0xFFFFFFFF;room_settings_init();assert(room_settings_furnace_config()==(180U<<8));
  uint8_t image[4096]={0};esp_image_header_t header={.magic=ESP_IMAGE_HEADER_MAGIC,.chip_id=ESP_CHIP_ID_ESP32S3};esp_app_desc_t desc={.magic_word=ESP_APP_DESC_MAGIC_WORD,.project_name="cottage_thermo_room_4b"};
  memcpy(image,&header,sizeof(header));memcpy(image+sizeof(header)+sizeof(esp_image_segment_header_t),&desc,sizeof(desc));assert(valid_header(image,sizeof(image)));
  if(argc>1){FILE *file=fopen(argv[1],"rb");assert(file);uint8_t actual[1024];assert(fread(actual,1,sizeof(actual),file)==sizeof(actual));fclose(file);assert(valid_header(actual,sizeof(actual)));}

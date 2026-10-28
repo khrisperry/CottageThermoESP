@@ -36,6 +36,7 @@ static settings_t current;
 /* Separate NVS key preserves the existing (credential-bearing) profile
  * layout and does not require reboot. Sensor task reads atomically. */
 static atomic_int temp_offset_tenths;
+static atomic_uint furnace_config=180U<<8;
 static bool reboot_pending;
 extern const unsigned char settings_start[] asm("_binary_settings_html_start");
 extern const unsigned char settings_end[] asm("_binary_settings_html_end");
@@ -48,6 +49,7 @@ unsigned room_settings_ship_range(void){return current.ship_range;}
 const cottage_integration_t *room_settings_integrations(void){return &current.integrations;}
 bool room_settings_radio_managed(void){return current.radio_managed;}
 int room_settings_temp_offset_tenths(void){return atomic_load(&temp_offset_tenths);}
+unsigned room_settings_furnace_config(void){return atomic_load(&furnace_config);}
 float room_settings_temp_offset_f(void)
 {return (float)room_settings_temp_offset_tenths()/10.0f;}
 static bool printable(const char *s,size_t max)
@@ -91,6 +93,10 @@ void room_settings_init(void)
     if(nvs_get_i16(nvs,"temp_offset_t10",&stored)!=ESP_OK ||
        !room_temp_offset_valid(stored))stored=0;
     atomic_store(&temp_offset_tenths,(int)stored);
+    uint32_t monitor=180U<<8;
+    if(nvs_get_u32(nvs,"furnace_monitor",&monitor)!=ESP_OK ||
+       (monitor&0xFCU) || (monitor>>8)<30 || (monitor>>8)>900)monitor=180U<<8;
+    atomic_store(&furnace_config,monitor);
     nvs_close(nvs);
 }
 bool room_web_authorized(httpd_req_t *r,bool mutation)
@@ -126,6 +132,11 @@ static cJSON *sanitized(void)
     cJSON_AddStringToObject(j,"controller",current.controller);
     cJSON_AddNumberToObject(j,"temperature_offset_f",room_settings_temp_offset_f());
     cJSON_AddNumberToObject(j,"temperature_offset_tenths",room_settings_temp_offset_tenths());
+    unsigned monitor=room_settings_furnace_config();
+    cJSON *furnace=cJSON_AddObjectToObject(j,"furnace_monitor");
+    cJSON_AddBoolToObject(furnace,"enabled",(monitor&1U)!=0);
+    cJSON_AddBoolToObject(furnace,"installed",(monitor&2U)!=0);
+    cJSON_AddNumberToObject(furnace,"max_report_age_seconds",monitor>>8);
     cJSON_AddBoolToObject(j,"ships_enabled",current.ships_enabled);cJSON_AddStringToObject(j,"ship_url",current.ship_url);cJSON_AddNumberToObject(j,"ship_range",current.ship_range);
     const cottage_integration_t *p=&current.integrations;cJSON *m=cJSON_AddObjectToObject(j,"mqtt");
     cJSON_AddBoolToObject(m,"enabled",p->mqtt_enabled);cJSON_AddBoolToObject(m,"managed",current.mqtt_managed);
@@ -156,6 +167,22 @@ static esp_err_t save(httpd_req_t *r)
     int at=0;while(at<r->content_len){int n=httpd_req_recv(r,body+at,r->content_len-at);if(n<=0){memset(body,0,r->content_len+1);free(body);return ESP_FAIL;}at+=n;}
     cJSON *j=cJSON_ParseWithLengthOpts(body,at+1,NULL,true);memset(body,0,at+1);free(body);
     cJSON *v=cJSON_GetObjectItemCaseSensitive(j,"section");const char *section=cJSON_IsString(v)?v->valuestring:"";
+    if(!strcmp(section,"furnace_monitor")){
+        cJSON *enabled=cJSON_GetObjectItemCaseSensitive(j,"enabled");
+        cJSON *installed=cJSON_GetObjectItemCaseSensitive(j,"installed");
+        cJSON *age=cJSON_GetObjectItemCaseSensitive(j,"max_report_age_seconds");
+        bool valid=cJSON_IsBool(enabled)&&cJSON_IsBool(installed)&&cJSON_IsNumber(age)&&
+            isfinite(age->valuedouble)&&age->valuedouble==floor(age->valuedouble)&&
+            age->valuedouble>=30&&age->valuedouble<=900;
+        if(!valid){cJSON_Delete(j);return reply(r,400,"Send enabled/installed flags and a whole report age between 30 and 900 seconds.");}
+        unsigned value=((unsigned)age->valueint<<8)|(cJSON_IsTrue(enabled)?1U:0U)|(cJSON_IsTrue(installed)?2U:0U);
+        cJSON_Delete(j);
+        nvs_handle_t nvs;esp_err_t err=nvs_open("room_config",NVS_READWRITE,&nvs);
+        if(err==ESP_OK){err=nvs_set_u32(nvs,"furnace_monitor",value);if(err==ESP_OK)err=nvs_commit(nvs);nvs_close(nvs);}
+        if(err!=ESP_OK)return reply(r,500,"Could not save furnace monitoring; previous settings remain active.");
+        atomic_store(&furnace_config,value);
+        return reply(r,200,"Furnace monitoring saved. No restart needed. Automatic thermal corrections remain disabled.");
+    }
     if(!strcmp(section,"restart")){
         cJSON *confirm=cJSON_GetObjectItemCaseSensitive(j,"confirm");
         bool confirmed=cJSON_IsString(confirm)&&!strcmp(confirm->valuestring,"restart_thermostat");

@@ -12,12 +12,17 @@ static int64_t fake_time=1000000;
 static int gets,posts,frames,fail_code,missing=-1;
 static int completion_calls,reset_calls;
 static const char *washer_state="Running";
+static unsigned monitor_config=(180U<<8)|1U;
+static const char *power_watts="86";
+static bool stale_source,missing_source;
 static int semaphore_count,io_locked;
 static bool uncertain,unsupported,bad_temp,test_fallback,test_wifi=true,bad_power,wrong_power_units;
 static char sent_path[160],sent_body[256];
 #include "../../touchscreen/main/room_ha.c"
 const char *room_settings_ha_url(void){return "https://cottageha.greenledges.net:8123";}
 const char *room_settings_ha_token(void){return COTTAGE_HA_TOKEN;}
+unsigned room_settings_furnace_config(void){return monitor_config;}
+time_t time(time_t *out){time_t value=fp_report_ms("2026-10-28T12:00:00Z")/1000+fake_time/1000000;if(out)*out=value;return value;}
 void room_audio_laundry_done(int key){if(key==3)++completion_calls;}
 bool room_audio_set_notify(int key,bool enabled){assert(!enabled);if(key==3)++reset_calls;return true;}
 int64_t esp_timer_get_time(void){return fake_time;}
@@ -38,8 +43,9 @@ esp_err_t room_http_keepalive(room_http_session_t **session,const char *origin,c
  int key=-1;for(int k=0;k<HA_COUNT;++k)if(!strcmp(path+12,ha_specs[k].entity))key=k;
  assert(key>=0);if(key==missing){*status=404;return 0;}
  if(key>=11){
-  *length=snprintf(out,cap,"{\"entity_id\":\"%s\",\"state\":\"%s\",\"last_reported\":\"2026-10-28T12:00:00+00:00\",\"attributes\":{\"unit_of_measurement\":\"%s\"}}",
-   ha_specs[key].entity,bad_power?"unavailable":key==11?"0.72":"86",wrong_power_units?"V":key==11?"A":"W");return 0;
+  time_t now=time(NULL)-(stale_source?3600:0);struct tm utc;gmtime_r(&now,&utc);char reported[40];strftime(reported,sizeof(reported),"%Y-%m-%dT%H:%M:%SZ",&utc);
+  *length=snprintf(out,cap,"{\"entity_id\":\"%s\",\"state\":\"%s\",\"last_reported\":\"%s\",\"attributes\":{\"unit_of_measurement\":\"%s\"}}",
+   ha_specs[key].entity,bad_power?"unavailable":key==11?"0.72":power_watts,missing_source?"":reported,wrong_power_units?"V":key==11?"A":"W");return 0;
  }
 
  *length=snprintf(out,cap,"{\"entity_id\":\"%s\",\"state\":\"%s\",\"attributes\":{\"supported_features\":%d,\"unit_of_measurement\":\"°F\",\"access_token\":\"never-return-this\",\"current_position\":55}}",ha_specs[key].entity,key==8?(bad_temp?"nan":"65.2"):key==3?washer_state:"off",unsupported?0:8203);
@@ -84,6 +90,21 @@ int main(void)
  assert(!cJSON_GetObjectItem(cJSON_GetObjectItem(power,"current"),"value"));cJSON_Delete(power);wrong_power_units=false;ha_poll_once();
  missing=12;ha_poll_once();power=room_ha_furnace_status();
  assert(cJSON_IsFalse(cJSON_GetObjectItem(cJSON_GetObjectItem(power,"power"),"available")));cJSON_Delete(power);missing=-1;ha_poll_once();
+ power_watts="130";fake_time+=11000000;ha_poll_once();fake_time+=11000000;ha_poll_once();
+ power=room_ha_furnace_status();assert(!strcmp(ha_string(power,"activity"),"likely_heating"));
+ assert(!strcmp(ha_string(power,"mode"),"bench_monitor")&&cJSON_IsFalse(cJSON_GetObjectItem(power,"adjustments_enabled")));cJSON_Delete(power);
+ missing=11;fake_time+=11000000;ha_poll_once();power=room_ha_furnace_status();
+ assert(!strcmp(ha_string(power,"activity"),"likely_heating"));cJSON_Delete(power);missing=-1;
+ stale_source=true;ha_poll_once();power=room_ha_furnace_status();
+ assert(!strcmp(ha_string(power,"activity"),"unknown"));
+ assert(cJSON_IsFalse(cJSON_GetObjectItem(cJSON_GetObjectItem(power,"power"),"source_fresh")));cJSON_Delete(power);stale_source=false;
+ missing_source=true;ha_poll_once();power=room_ha_furnace_status();assert(!strcmp(ha_string(power,"activity"),"unknown"));cJSON_Delete(power);missing_source=false;
+ monitor_config=180U<<8;int disabled_before=gets;ha_poll_once();assert(gets==disabled_before+11);
+ power=room_ha_furnace_status();assert(!strcmp(ha_string(power,"activity"),"disabled"));
+ assert(!cJSON_GetObjectItem(cJSON_GetObjectItem(power,"power"),"value"));cJSON_Delete(power);
+ monitor_config=(180U<<8)|3U;ha_poll_once();power=room_ha_furnace_status();
+ assert(!strcmp(ha_string(power,"mode"),"onsite_monitor")&&cJSON_IsFalse(cJSON_GetObjectItem(power,"adjustments_enabled")));cJSON_Delete(power);
+ monitor_config=(180U<<8)|1U;power_watts="86";ha_poll_once();
  command(7,"on","request-01",true);assert(!strcmp(sent_path,"/api/services/input_boolean/turn_on"));assert(strstr(sent_body,"input_boolean.kids_heat"));assert(!strstr(sent_body,"climate"));int before=posts;command(7,"on","request-01",true);assert(posts==before);
  command(0,"off","request-02",true);assert(!strcmp(sent_path,"/api/services/light/turn_off"));command(2,"stop","request-03",true);assert(!strcmp(sent_path,"/api/services/cover/stop_cover"));command(9,"start","request-04",true);assert(!strcmp(sent_path,"/api/services/vacuum/start"));
  fail_code=503;ha_poll_once();root=room_ha_status();assert(cJSON_IsTrue(cJSON_GetObjectItem(root,"connected")));assert(cJSON_IsTrue(cJSON_GetObjectItem(item(root,0),"available")));cJSON_Delete(root);fail_code=0;

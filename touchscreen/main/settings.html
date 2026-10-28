@@ -14,7 +14,7 @@ function select(parent,label,id,value,options){const wrap=el('div');const l=el('
 function message(s){$('message').textContent=s;}
 function headers(){return {'Content-Type':'application/json'};}
 async function request(payload){const r=await fetch('/api/settings',{method:'POST',headers:headers(),body:JSON.stringify(payload)});const j=await r.json();if(!r.ok)throw Error(j.message||'Request failed');message(j.message);return j;}
-function actions(form,section,getPayload,caption='Save and restart display'){const row=el('div',undefined,'actions');const save=el('button',caption,'primary');save.type='submit';row.append(save);form.append(row);form.onsubmit=async e=>{e.preventDefault();save.disabled=true;try{await request({section,...getPayload()});if(section==='temperature')await loadConfig();if(caption.includes('restart')){reconnecting=true;reconnectBoot=lastStatus?.firmware?.boot_id;message('Saved. Display restarting; reconnecting to live status...');config=null;}}catch(err){message(err.message)}finally{save.disabled=false;}};return row;}
+function actions(form,section,getPayload,caption='Save and restart display'){const row=el('div',undefined,'actions');const save=el('button',caption,'primary');save.type='submit';row.append(save);form.append(row);form.onsubmit=async e=>{e.preventDefault();save.disabled=true;try{await request({section,...getPayload()});if(section==='temperature'||section==='furnace_monitor')await loadConfig();if(caption.includes('restart')){reconnecting=true;reconnectBoot=lastStatus?.firmware?.boot_id;message('Saved. Display restarting; reconnecting to live status...');config=null;}}catch(err){message(err.message)}finally{save.disabled=false;}};return row;}
 function linkTest(parent){const b=el('button','Test Wi-Fi and ESP-NOW');b.type='button';b.onclick=async()=>{b.disabled=true;message('Testing both controller links...');try{await request({section:'controller_test'});}catch(e){message(e.message)}finally{b.disabled=false;}};parent.append(b);}
 function needConfig(){if(config)return false;$('content').append(el('p','Loading device settings...'));return true;}
 function render(){
@@ -22,7 +22,21 @@ function render(){
  const c=$('content');c.replaceChildren(el('h2',page));
  if(page==='Overview'){c.append(el('p','The display remains the local thermostat. Ship data and Home Assistant run in background tasks.'));
   const metrics=el('div',undefined,'metrics');metrics.id='metrics';c.append(metrics);renderMetrics();return;}
- if(page==='Furnace power'){const n=el('div');n.id='furnacePower';c.append(n);renderFurnacePower();return;}
+ if(page==='Furnace power'){
+  if(needConfig())return;
+  const f=config.furnace_monitor||{enabled:false,installed:false,max_report_age_seconds:180};
+  const form=el('form'),grid=el('div',undefined,'grid');form.append(grid);c.append(form);
+  check(grid,'Monitor furnace power','monitorFurnace',f.enabled);
+  check(grid,'Thermostat installed at cottage','furnaceInstalled',f.installed);
+  const age=field(grid,'Source report freshness limit (seconds)','furnaceReportAge',f.max_report_age_seconds,'number');age.min=30;age.max=900;age.step=1;
+  grid.append(el('small','Leave Installed at cottage unchecked during bench / desk testing. Monitoring classifies electrical stages only; neither checkbox enables automatic dial corrections or calibration learning.','full'));
+  actions(form,'furnace_monitor',()=>{
+   const age=Number($('furnaceReportAge').value);
+   if(!Number.isInteger(age)||age<30||age>900)throw Error('Use a source report limit from 30 to 900 seconds.');
+   return {enabled:$('monitorFurnace').checked,installed:$('furnaceInstalled').checked,max_report_age_seconds:age};
+  },'Save monitoring settings');
+  const n=el('div');n.id='furnacePower';c.append(n);renderFurnacePower();return;
+ }
  if(needConfig())return;const form=el('form');const grid=el('div',undefined,'grid');form.append(grid);c.append(form);
  const keep='Leave blank to keep the saved value.';
  if(page==='Temperature'){
@@ -129,16 +143,21 @@ function render(){
 function metric(parent,title,value){const m=el('div',undefined,'metric');m.append(el('small',title),el('strong',value));parent.append(m);}
 function renderFurnacePower(){
  const n=$('furnacePower');if(!n)return;const f=lastStatus?.furnace_power;
- n.replaceChildren(el('p','Read-only electrical monitoring. Power can indicate furnace equipment activity; it does not confirm burner operation. Automatic thermal adjustments and calibration learning are disabled.'));
+ n.replaceChildren(el('p','Electrical stages are inferred from the supplied furnace history. They do not verify burner/flame operation. Automatic thermal adjustments and calibration learning remain disabled.'));
  for(const [key,label,unit] of [['power','Power','W'],['current','Current','A']]){
   const r=f?.[key],available=r?.available&&Number.isFinite(r.value);
   const box=el('div',undefined,'metric');box.append(el('small',label),el('strong',available?r.value.toFixed(key==='power'?1:3)+' '+unit:'Unavailable'));
   box.append(el('small',r?.entity_id||(key==='power'?'sensor.furnace_power_power':'sensor.furnace_power_current')));
   box.append(el('small','Last HA read: '+(Number.isFinite(r?.read_age_ms)?(r.read_age_ms/1000).toFixed(0)+' seconds ago':'not received')));
-  box.append(el('small','HA source last reported: '+(r?.last_reported||'not supplied')));n.append(box);
+  box.append(el('small','HA source last reported: '+(r?.last_reported||'not supplied')));
+  box.append(el('small',r?.source_fresh?'Source report within freshness limit':'Source report stale, missing, or monitoring disabled'));n.append(box);
  }
- n.append(el('p','Activity: Unknown — idle, blower and heating-cycle readings have not been validated. A recent HA read can still contain an old device report. Missing readings never mean the furnace is off.'));
- n.append(el('p','While the room thermostat is away from the cottage, its temperature must not be used to learn furnace behavior. First record idle, startup, running and cooldown power at the cottage. Learning also requires confirmed unoccupied operation.'));
+ const labels={disabled:'Disabled',unknown:'Unknown',standby:'Standby',startup:'Startup',likely_heating:'Likely heating',likely_cooldown:'Likely blower cooldown',transition:'Transition',unclassified_load:'Unclassified electrical load'};
+ n.append(el('p','Activity: '+(labels[f?.activity]||'Unknown')+' · Completed observed cycles: '+(f?.completed_cycles||0)));
+ if(f?.pending_activity&&f.pending_activity!==f.activity)n.append(el('small','Confirming: '+(labels[f.pending_activity]||'Unknown')));
+ n.append(el('p',f?.reason||'Monitoring settings unavailable. Automatic thermal corrections remain disabled.'));
+ n.append(el('small','Stage changes require distinct fresh source reports spanning at least 10 seconds. Stale/missing data becomes Unknown. Cooldown requires a preceding likely-heating stage; restarting or changing monitoring settings resets the observation session.'));
+
 }
 function renderMetrics(){const m=$('metrics');if(!m||!lastStatus)return;m.replaceChildren();const p=lastStatus.performance||{};
  metric(m,'Corrected room temperature',typeof lastStatus.temperature_f==='number'?lastStatus.temperature_f.toFixed(1)+' °F':'No fresh sample');

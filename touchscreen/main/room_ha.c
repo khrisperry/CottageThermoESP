@@ -6,6 +6,7 @@
 #include "room_feedback.h"
 #include "room_transport.h"
 #include "room_controller.h"
+#include "room_furnace_power.h"
 #include "wifi_setup.h"
 #include <math.h>
 #include <stdint.h>
@@ -13,6 +14,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include "esp_timer.h"
 #include "esp_log.h"
 #include "esp_heap_caps.h"
@@ -32,6 +34,18 @@ static unsigned ha_next;
 static room_laundry_tracker_t laundry_tracker[4];
 static SemaphoreHandle_t ha_mutex,ha_command_mutex,ha_io_mutex;
 static room_http_session_t *ha_session;
+static fp_tracker_t furnace_tracker;
+static unsigned furnace_config_seen=UINT32_MAX;
+/* Caller holds ha_mutex. A settings change starts a new observation session. */
+static unsigned ha_furnace_sync_locked(void)
+{
+    unsigned config=room_settings_furnace_config();
+    if(config!=furnace_config_seen){
+        furnace_config_seen=config;memset(&furnace_tracker,0,sizeof(furnace_tracker));
+        memset(&ha_states[11],0,2*sizeof(ha_states[0]));
+    }
+    return config;
+}
 static atomic_bool ha_command_waiting;
 static char ha_error[120]="Waiting for Home Assistant";
 static atomic_bool ha_auth_failed;
@@ -130,11 +144,23 @@ static bool ha_read(int key,char *buffer,size_t capacity)
 {
     char path[160];int code,n;snprintf(path,sizeof(path),"/api/states/%s",ha_specs[key].entity);
     esp_err_t err=ha_http(path,NULL,buffer,capacity,&code,&n);
-    if(code==404){if(key>=3&&key<=6)ha_laundry_sample(key,"",false,esp_timer_get_time());xSemaphoreTake(ha_mutex,portMAX_DELAY);memset(&ha_states[key],0,sizeof(ha_states[key]));xSemaphoreGive(ha_mutex);return true;}
-    if(err!=ESP_OK||code!=200){ha_laundry_lost();ha_global_error(code);return false;}
+    if(code==404){if(key>=3&&key<=6)ha_laundry_sample(key,"",false,esp_timer_get_time());xSemaphoreTake(ha_mutex,portMAX_DELAY);memset(&ha_states[key],0,sizeof(ha_states[key]));if(key==12)fp_invalidate(&furnace_tracker);xSemaphoreGive(ha_mutex);return true;}
+    if(err!=ESP_OK||code!=200){
+        xSemaphoreTake(ha_mutex,portMAX_DELAY);if(key==12)fp_invalidate(&furnace_tracker);xSemaphoreGive(ha_mutex);
+        ha_laundry_lost();ha_global_error(code);return false;
+    }
     cJSON *j=cJSON_ParseWithLengthOpts(buffer,n+1,NULL,true);
     bool valid=cJSON_IsObject(j)&&!strcmp(ha_string(j,"entity_id"),ha_specs[key].entity)&&cJSON_IsString(cJSON_GetObjectItemCaseSensitive(j,"state"));
-    if(valid){ha_state_t s=ha_normalize(key,j);xSemaphoreTake(ha_mutex,portMAX_DELAY);ha_states[key]=s;xSemaphoreGive(ha_mutex);
+    if(valid){ha_state_t s=ha_normalize(key,j);xSemaphoreTake(ha_mutex,portMAX_DELAY);ha_states[key]=s;
+        if(key==12){
+            unsigned config=room_settings_furnace_config();
+            if((config&1U)&&config==furnace_config_seen&&s.available&&s.has_value){
+                fp_stage_t previous=furnace_tracker.stage;
+                fp_update(&furnace_tracker,s.value,fp_report_ms(s.reported),(int64_t)time(NULL)*1000,config>>8);
+                if(previous!=furnace_tracker.stage)ESP_LOGI("furnace_power","Electrical stage=%s, watts=%.1f (inferred; no automatic trim)",fp_stage_name(furnace_tracker.stage),s.value);
+            }else fp_invalidate(&furnace_tracker);
+        }
+        xSemaphoreGive(ha_mutex);
         if(key>=3&&key<=6){
             int completion=ha_laundry_sample(key,s.state,s.available,s.at);
             if(completion==2)room_audio_laundry_done(key);
@@ -142,14 +168,16 @@ static bool ha_read(int key,char *buffer,size_t capacity)
             if(completion)ESP_LOGI("room_ha","%s cycle ended: Notify reset to Off%s",ha_specs[key].label,completion==1?" (no stale sound)":"");
         }
     }
-    cJSON_Delete(j);if(!valid){ha_laundry_lost();ha_global_error(0);}return valid;
+    cJSON_Delete(j);if(!valid){xSemaphoreTake(ha_mutex,portMAX_DELAY);if(key==12)fp_invalidate(&furnace_tracker);xSemaphoreGive(ha_mutex);ha_laundry_lost();ha_global_error(0);}return valid;
 }
 static void ha_poll_once(void)
 {
+    xSemaphoreTake(ha_mutex,portMAX_DELAY);unsigned monitor=ha_furnace_sync_locked();xSemaphoreGive(ha_mutex);
     if(!room_wifi_connected()){
         ha_laundry_lost();
         xSemaphoreTake(ha_mutex,portMAX_DELAY);
         for(int k=0;k<HA_COUNT;++k)ha_states[k].available=false;
+        fp_invalidate(&furnace_tracker);
         xSemaphoreGive(ha_mutex);return;
     }
     if(!*room_settings_ha_token()||ha_auth_failed)return;
@@ -160,6 +188,7 @@ static void ha_poll_once(void)
         /* Monitor the furnace first, even if an unrelated HA entity fails.
          * Electrical snapshots never issue commands or authorize motion. */
         int k=(index+11)%HA_COUNT;
+        if(k>=11&&!(monitor&1U))continue;
         /* Release I/O between entities so a user command goes next. */
         if(ha_command_waiting){ok=false;break;}
         if(!ha_read(k,buffer,32768)){ok=false;break;}
@@ -199,19 +228,32 @@ cJSON *room_ha_status(void)
 cJSON *room_ha_furnace_status(void)
 {
     cJSON *root=cJSON_CreateObject();
-    cJSON_AddStringToObject(root,"mode","monitor_only");
-    cJSON_AddStringToObject(root,"activity","unknown");
     cJSON_AddBoolToObject(root,"adjustments_enabled",false);
-    cJSON_AddStringToObject(root,"reason","Awaiting onsite cycle validation and confirmed unoccupied learning setup");
     if(ha_mutex)xSemaphoreTake(ha_mutex,portMAX_DELAY);
+    unsigned config=ha_mutex?ha_furnace_sync_locked():room_settings_furnace_config();
+    bool enabled=(config&1U)!=0,installed=(config&2U)!=0;
+    int64_t now=(int64_t)time(NULL)*1000;
+    if(!enabled||!room_wifi_connected()||ha_auth_failed||!ha_fresh(ha_states[12])||
+       !fp_source_fresh(fp_report_ms(ha_states[12].reported),now,config>>8))fp_invalidate(&furnace_tracker);
+    cJSON_AddBoolToObject(root,"enabled",enabled);
+    cJSON_AddBoolToObject(root,"installed",installed);
+    cJSON_AddNumberToObject(root,"max_report_age_seconds",config>>8);
+    cJSON_AddStringToObject(root,"mode",!enabled?"disabled":installed?"onsite_monitor":"bench_monitor");
+    cJSON_AddStringToObject(root,"activity",enabled?fp_stage_name(furnace_tracker.stage):"disabled");
+    cJSON_AddStringToObject(root,"pending_activity",fp_stage_name(furnace_tracker.candidate));
+    cJSON_AddNumberToObject(root,"completed_cycles",furnace_tracker.completed_cycles);
+    cJSON_AddStringToObject(root,"reason",!enabled?"Furnace power monitoring disabled":
+        installed?"Onsite electrical observation; automatic thermal learning remains disabled":
+        "Bench/desk testing: remote power never adjusts the dial or learns from local temperature");
     for(int k=11;k<13;++k){
-        ha_state_t s=ha_states[k];bool available=ha_mutex&&room_wifi_connected()&&!ha_auth_failed&&ha_fresh(s)&&s.has_value;
+        ha_state_t s=ha_states[k];bool available=enabled&&ha_mutex&&room_wifi_connected()&&!ha_auth_failed&&ha_fresh(s)&&s.has_value;
         cJSON *reading=cJSON_AddObjectToObject(root,k==11?"current":"power");
         cJSON_AddStringToObject(reading,"entity_id",ha_specs[k].entity);
         cJSON_AddStringToObject(reading,"unit",k==11?"A":"W");
         cJSON_AddBoolToObject(reading,"available",available);
         if(available)cJSON_AddNumberToObject(reading,"value",s.value);
         cJSON_AddStringToObject(reading,"last_reported",s.reported);
+        cJSON_AddBoolToObject(reading,"source_fresh",available&&fp_source_fresh(fp_report_ms(s.reported),now,config>>8));
         if(s.at)cJSON_AddNumberToObject(reading,"read_age_ms",(esp_timer_get_time()-s.at)/1000);
     }
     if(ha_mutex)xSemaphoreGive(ha_mutex);
