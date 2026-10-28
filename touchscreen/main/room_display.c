@@ -4,6 +4,7 @@
 #include "sdkconfig.h"
 #if CONFIG_ROOM_NATIVE_DISPLAY
 #include <math.h>
+#include <time.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -36,6 +37,7 @@
 #include "room_mqtt.h"
 #include "room_layout.h"
 #include "room_home_policy.h"
+#include "room_clock.h"
 #include <stdatomic.h>
 
 /* Native styling uses LVGL primitives, so no browser or bitmap UI is required. */
@@ -79,6 +81,12 @@ static lv_obj_t *settings_modal,*settings_volume,*settings_volume_label,*setting
 static lv_obj_t *temperature_ring,*camera_frame,*camera_status,*tile[COUNT],*icon_badge[COUNT];
 static lv_obj_t *bulb_head[COUNT],*bulb_stem[COUNT],*bulb_base[COUNT],*bulb_glow[COUNT],*activity_ring[COUNT];
 static lv_obj_t *notify_button[4],*probe_test_label;
+/* Full-screen, touch-to-dismiss clock. The 28 segment widgets and two
+ * colons are created once, not allocated on every refresh. */
+static lv_obj_t *saver_overlay,*saver_segments[4][7],*saver_colon[2];
+static lv_obj_t *saver_date,*saver_ampm,*saver_sync;
+static bool saver_visible;
+static time_t saver_last_second=(time_t)-1;
 static lv_obj_t *health_button,*health_dot,*diagnostic_modal,*diagnostic_close_button;
 static lv_obj_t *nav_thermo_stem,*nav_thermo_bulb;
 static lv_obj_t *diagnostic_cells[7],*diagnostic_badges[7],*diagnostic_dots[7];
