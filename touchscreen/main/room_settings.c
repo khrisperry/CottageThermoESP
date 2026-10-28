@@ -8,10 +8,13 @@
 #include "room_controller.h"
 #include "room_ota.h"
 #include "room_mqtt.h"
+#include "room_temp_cal.h"
 #include "sdkconfig.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdatomic.h>
+#include <math.h>
 #include "nvs.h"
 #include "esp_random.h"
 #include "esp_system.h"
@@ -29,6 +32,9 @@ typedef struct {
     cottage_integration_t integrations;
 } settings_t;
 static settings_t current;
+/* Separate NVS key preserves the existing (credential-bearing) profile
+ * layout and does not require reboot. Sensor task reads atomically. */
+static atomic_int temp_offset_tenths;
 static bool reboot_pending;
 extern const unsigned char settings_start[] asm("_binary_settings_html_start");
 extern const unsigned char settings_end[] asm("_binary_settings_html_end");
@@ -40,6 +46,9 @@ bool room_settings_ships_enabled(void){return current.ships_enabled;}
 unsigned room_settings_ship_range(void){return current.ship_range;}
 const cottage_integration_t *room_settings_integrations(void){return &current.integrations;}
 bool room_settings_radio_managed(void){return current.radio_managed;}
+int room_settings_temp_offset_tenths(void){return atomic_load(&temp_offset_tenths);}
+float room_settings_temp_offset_f(void)
+{return (float)room_settings_temp_offset_tenths()/10.0f;}
 static bool printable(const char *s,size_t max)
 {
     if(strlen(s)>max)return false;
@@ -77,6 +86,10 @@ void room_settings_init(void)
         }
     }
     if(saved){memset(saved,0,sizeof(*saved));free(saved);}
+    int16_t stored=0;
+    if(nvs_get_i16(nvs,"temp_offset_t10",&stored)!=ESP_OK ||
+       !room_temp_offset_valid(stored))stored=0;
+    atomic_store(&temp_offset_tenths,(int)stored);
     nvs_close(nvs);
 }
 bool room_web_authorized(httpd_req_t *r,bool mutation)
@@ -110,6 +123,8 @@ static cJSON *sanitized(void)
 {
     cJSON *j=cJSON_CreateObject();cJSON_AddStringToObject(j,"ha_url",current.ha);cJSON_AddBoolToObject(j,"token_configured",*current.token!=0);
     cJSON_AddStringToObject(j,"controller",current.controller);
+    cJSON_AddNumberToObject(j,"temperature_offset_f",room_settings_temp_offset_f());
+    cJSON_AddNumberToObject(j,"temperature_offset_tenths",room_settings_temp_offset_tenths());
     cJSON_AddBoolToObject(j,"ships_enabled",current.ships_enabled);cJSON_AddStringToObject(j,"ship_url",current.ship_url);cJSON_AddNumberToObject(j,"ship_range",current.ship_range);
     const cottage_integration_t *p=&current.integrations;cJSON *m=cJSON_AddObjectToObject(j,"mqtt");
     cJSON_AddBoolToObject(m,"enabled",p->mqtt_enabled);cJSON_AddBoolToObject(m,"managed",current.mqtt_managed);
@@ -173,6 +188,33 @@ static esp_err_t save(httpd_req_t *r)
         valid=cJSON_IsNumber(volume)&&volume->valuedouble>=0&&volume->valuedouble<=100&&volume->valueint==volume->valuedouble&&cJSON_IsBool(fill);
         if(valid)valid=room_audio_set_volume(volume->valueint);
         if(valid)room_display_set_camera_fill(cJSON_IsTrue(fill));
+        restart=false;
+    }else if(!strcmp(section,"temperature")){
+        /* Exact tenths, no acceptance of fractional/out-of-range JSON.
+         * NVS commit happens before the sensor task observes the value.
+         * No reboot and no controller command from the settings endpoint. */
+        cJSON *v=cJSON_GetObjectItemCaseSensitive(j,"offset_tenths");
+        valid=cJSON_IsNumber(v)&&isfinite(v->valuedouble)&&
+              v->valuedouble==floor(v->valuedouble)&&
+              v->valuedouble>=ROOM_TEMP_OFFSET_MIN_TENTHS&&
+              v->valuedouble<=ROOM_TEMP_OFFSET_MAX_TENTHS;
+        if(valid){
+            int offset=v->valueint;
+            nvs_handle_t nvs;
+            esp_err_t err=nvs_open("room_config",NVS_READWRITE,&nvs);
+            if(err==ESP_OK){
+                err=nvs_set_i16(nvs,"temp_offset_t10",(int16_t)offset);
+                if(err==ESP_OK)err=nvs_commit(nvs);
+                nvs_close(nvs);
+            }
+            cJSON_Delete(j);
+            memset(next,0,sizeof(*next));free(next);
+            if(err!=ESP_OK)return reply(r,500,
+                "Could not persist the offset; previous temperature calibration remains active.");
+            atomic_store(&temp_offset_tenths,offset);
+            return reply(r,200,
+                "Temperature offset saved. Applied to the next sensor sample (within 15 seconds); no restart needed.");
+        }
         restart=false;
     }else if(!strcmp(section,"sound_test")){valid=room_audio_test();restart=false;
     }else if(!strcmp(section,"wifi")){
