@@ -1,3 +1,33 @@
+# Controller v0.7.4 — trace why persistent Live was not restored after power loss
+
+The controller already restores the *explicitly saved* Live preference from
+NVS, then waits for full calibration, a fresh thermostat reading, and a stable
+AS5600 angle. The reported reboot began in **persistent Service**, so the saved
+Live preference was absent/cleared. This cannot be caused merely by Wi-Fi
+joining late. **Bench Go is an attended 15-minute session and never persists.**
+
+To diagnose a Live-to-Service transition, firmware now atomically records
+the last Live exit reason with the Live preference. A verified Live servo/PWM
+fault retains the conservative behavior of disarming and saving Service, but
+stores its specific reason (for example, a 16-second servo angle verification
+failure) so it survives reboot. Manual Service and Stop commands record their
+own reasons. Re-enabling Live clears the previous reason. Earlier firmware
+can show an unknown reason until the next explicit mode transition.
+
+Look for this boot message:
+
+```
+Persistent Live NVS: read=ESP_OK value=0x... selected=no last_exit=...
+```
+
+The controller `/api/status` field `last_live_exit_reason` and the controller
+webpage's Live safety message also report that reason. **No automatic re-arming
+was added**: if a true servo/encoder fault forced Service, a person must inspect
+and deliberately re-enable Live after physical validation. Wi-Fi startup,
+ESP-NOW, RGB status, temperatures, calibration and normal servo control are
+unchanged. Code requires a local ESP-IDF build/physical power-cycle test.
+
+---
 # Controller v0.7.3 — GPIO48 full-color status indication (HW-747 Super Mini)
 
 The status-only WS2812 LED on GPIO48 now has a low-brightness color protocol:
