@@ -1176,9 +1176,16 @@ static void build_ui(void)
         lv_obj_set_style_border_color(nav[n],lv_color_hex(0x112b41),0);
         nav_icon[n]=lv_obj_get_child(nav[n],0);
         lv_label_set_text(nav_icon[n],nav_glyphs[pos]);
+        /* button() centers its initial label. Setting x/y WITHOUT resetting
+         * that alignment previously offset each icon from the center:
+         * icons appeared on top of, or to the right of, the tab captions. */
+        lv_obj_set_align(nav_icon[n],LV_ALIGN_TOP_LEFT);
         lv_obj_set_style_text_font(nav_icon[n],&lv_font_montserrat_20,0);
-        lv_obj_set_pos(nav_icon[n],32,2);
+        lv_obj_set_size(nav_icon[n],ROOM_NAV_ITEM_W,24);
+        lv_obj_set_pos(nav_icon[n],0,3);
+        lv_obj_set_style_text_align(nav_icon[n],LV_TEXT_ALIGN_CENTER,0);
         nav_caption[n]=label(nav[n],nav_text[pos],0,30,ROOM_NAV_ITEM_W,&lv_font_montserrat_14);
+        lv_obj_set_height(nav_caption[n],20);
         centered(nav_caption[n]);
         if(n==0){
             /* Climate tab gets the real thermometer silhouette from
