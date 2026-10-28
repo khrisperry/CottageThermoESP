@@ -1,6 +1,8 @@
-/* Non-blocking controller status indication: WS2812's blue channel only.
- * HW-747 ESP32-S3 Super Mini typically connects an RGB pixel to GPIO48.
- * GPIO48 LED is different from a C3 Super Mini's GPIO8 binary blue LED.
+/* Non-blocking controller status indication: WS2812 RGB pixel's BLUE
+ * CHANNEL only, on HW-747 GPIO48 near the main chip. The tiny BLUE LED
+ * beside USB-C indicates battery charging, blinks without a battery, and
+ * CANNOT be driven by this code. The tiny RED USB-side LED shares GPIO48
+ * and may turn off or flicker while the WS2812 signal is being driven.
  * No PWM, settings, networking or safety decision is changed here. */
 #include "controller_status_led.h"
 #include "controller_status_led_driver.h"
