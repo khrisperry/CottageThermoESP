@@ -9,6 +9,7 @@
 #include "room_ota.h"
 #include "room_mqtt.h"
 #include "room_temp_cal.h"
+#include "room_ha.h"
 #include "sdkconfig.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -263,6 +264,7 @@ static esp_err_t status(httpd_req_t *r)
     cJSON *j=room_display_status();cJSON_AddItemToObject(j,"wifi",room_wifi_status());cJSON_AddItemToObject(j,"firmware",room_ota_status());
     cJSON *discovery=room_controller_discovery_status();
     if(discovery)cJSON_AddItemToObject(j,"controller_discovery",discovery);
+    cJSON_AddItemToObject(j,"furnace_power",room_ha_furnace_status());
     return json_reply(r,200,j);
 }
 void room_settings_register(httpd_handle_t server)

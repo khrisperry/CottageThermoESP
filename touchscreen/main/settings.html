@@ -5,7 +5,7 @@
 <section class="card" id="content"></section><section class="card"><p id="message" role="status" aria-live="polite"></p><small>Tokens, keys and passwords are never returned after saving.</small></section></main></div>
 <script>
 'use strict';const $=id=>document.getElementById(id);let config=null,lastStatus=null,page='Overview',timer=null,uploading=false,reconnecting=false,reconnectBoot=null,restartBusy=false;
-const pages=['Overview','Temperature','Wi-Fi','Home Assistant','MQTT thermostat','Controller','ESP-NOW','Ship tracking','Sound & display','System'];
+const pages=['Overview','Temperature','Furnace power','Wi-Fi','Home Assistant','MQTT thermostat','Controller','ESP-NOW','Ship tracking','Sound & display','System'];
 function el(tag,text,cls){const n=document.createElement(tag);if(text!==undefined)n.textContent=String(text);if(cls)n.className=cls;return n;}
 function badge(text,kind){return el('span',text,'badge '+(['ok','offline','unconfigured','standby','fallback'].includes(kind)?kind:'standby'));}
 function field(parent,label,id,value='',type='text',placeholder=''){const wrap=el('div');const l=el('label',label);l.htmlFor=id;const i=el('input');i.id=id;i.type=type;i.value=value||'';i.placeholder=placeholder;i.autocomplete=type==='password'?'new-password':'off';if(type==='password'){const secret=el('div',undefined,'secret');const show=el('button','Show');show.type='button';show.onclick=()=>{i.type=i.type==='password'?'text':'password';show.textContent=i.type==='password'?'Show':'Hide'};secret.append(i,show);wrap.append(l,secret);}else wrap.append(l,i);parent.append(wrap);return i;}
@@ -22,6 +22,7 @@ function render(){
  const c=$('content');c.replaceChildren(el('h2',page));
  if(page==='Overview'){c.append(el('p','The display remains the local thermostat. Ship data and Home Assistant run in background tasks.'));
   const metrics=el('div',undefined,'metrics');metrics.id='metrics';c.append(metrics);renderMetrics();return;}
+ if(page==='Furnace power'){const n=el('div');n.id='furnacePower';c.append(n);renderFurnacePower();return;}
  if(needConfig())return;const form=el('form');const grid=el('div',undefined,'grid');form.append(grid);c.append(form);
  const keep='Leave blank to keep the saved value.';
  if(page==='Temperature'){
@@ -126,6 +127,19 @@ function render(){
  }
 }
 function metric(parent,title,value){const m=el('div',undefined,'metric');m.append(el('small',title),el('strong',value));parent.append(m);}
+function renderFurnacePower(){
+ const n=$('furnacePower');if(!n)return;const f=lastStatus?.furnace_power;
+ n.replaceChildren(el('p','Read-only electrical monitoring. Power can indicate furnace equipment activity; it does not confirm burner operation. Automatic thermal adjustments and calibration learning are disabled.'));
+ for(const [key,label,unit] of [['power','Power','W'],['current','Current','A']]){
+  const r=f?.[key],available=r?.available&&Number.isFinite(r.value);
+  const box=el('div',undefined,'metric');box.append(el('small',label),el('strong',available?r.value.toFixed(key==='power'?1:3)+' '+unit:'Unavailable'));
+  box.append(el('small',r?.entity_id||(key==='power'?'sensor.furnace_power_power':'sensor.furnace_power_current')));
+  box.append(el('small','Last HA read: '+(Number.isFinite(r?.read_age_ms)?(r.read_age_ms/1000).toFixed(0)+' seconds ago':'not received')));
+  box.append(el('small','HA source last reported: '+(r?.last_reported||'not supplied')));n.append(box);
+ }
+ n.append(el('p','Activity: Unknown — idle, blower and heating-cycle readings have not been validated. A recent HA read can still contain an old device report. Missing readings never mean the furnace is off.'));
+ n.append(el('p','While the room thermostat is away from the cottage, its temperature must not be used to learn furnace behavior. First record idle, startup, running and cooldown power at the cottage. Learning also requires confirmed unoccupied operation.'));
+}
 function renderMetrics(){const m=$('metrics');if(!m||!lastStatus)return;m.replaceChildren();const p=lastStatus.performance||{};
  metric(m,'Corrected room temperature',typeof lastStatus.temperature_f==='number'?lastStatus.temperature_f.toFixed(1)+' °F':'No fresh sample');
  metric(m,'Raw primary sensor',typeof lastStatus.raw_temperature_f==='number'?lastStatus.raw_temperature_f.toFixed(1)+' °F':'No fresh sample');
@@ -155,7 +169,7 @@ async function loadConfig(){const r=await fetch('/api/settings',{cache:'no-store
 async function poll(){if(uploading)return;try{const r=await fetch('/api/device/status',{cache:'no-store'});if(!r.ok)throw Error('Status unavailable');const j=await r.json();lastStatus=j;
  $('services').replaceChildren();(j.services||[]).forEach(s=>{const row=el('div',undefined,'status-row');row.append(el('span',s.name),badge(s.state,s.kind));$('services').append(row)});
  const summary=j.summary_kind||'standby';$('summary').replaceWith(Object.assign(badge(j.summary,summary),{id:'summary'}));
- $('statusAge').textContent='Live status • updated '+new Date().toLocaleTimeString();renderMetrics();renderFirmware();renderControllerDiscovery();
+ $('statusAge').textContent='Live status • updated '+new Date().toLocaleTimeString();renderMetrics();renderFirmware();renderControllerDiscovery();renderFurnacePower();
  if($('temperatureRaw'))
   $('temperatureRaw').textContent='Raw sensor: '+(typeof j.raw_temperature_f==='number'?j.raw_temperature_f.toFixed(1)+' °F':'Waiting for primary sensor');
  if($('temperaturePreview')&&$('offsetNumber')){

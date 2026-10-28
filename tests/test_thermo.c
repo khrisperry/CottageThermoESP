@@ -64,42 +64,28 @@ int main(void)
     s.away=false;a=th_tick(&s,100000);
     assert(a.move && !s.away_clamped && s.effective_target_f==70);
 
-    /* Heat-only feedback: initial setpoint acts immediately, but a room
-     * spike or unverified warm-up cannot rewrite calibration or trim the dial.
-     * Persistent >=2 F overshoot yields one small downward correction after
-     * 10 minutes observing and 5 minutes continuously above target. */
+    /* Sunshine/deck warmth is not evidence of furnace overshoot: sustained
+     * excess temperature must never lower the calibrated nighttime setting. */
     s=prepared();
+    s.config.target_f=60;
     a=th_tick(&s,100000);assert(a.move&&!a.feedback_adjustment);
+    const float sixty_level=a.level;
     th_commit_move(&s,a,100000);
-    assert(s.feedback_tracking && s.feedback_corrections==0 && s.feedback_trim==0);
-    assert(th_sample(&s,TH_ROOM,72.5f,0,400000));
-    expect_reason(&s,400000,"mapped_setting_reached");
-    assert(s.feedback_reached && s.feedback_over_since_ms==400000);
-    assert(th_sample(&s,TH_ROOM,72.5f,0,699999));
-    expect_reason(&s,699999,"mapped_setting_reached"); /* 1ms early */
-    assert(th_sample(&s,TH_ROOM,72.5f,0,700000));
-    a=th_tick(&s,700000);
-    assert(a.move && a.feedback_adjustment && fabsf(a.level-3.75f)<0.001f);
-    assert(s.feedback_trim==0 && s.feedback_corrections==0);
-    th_commit_move(&s,a,700000);
-    assert(fabsf(s.feedback_trim-0.25f)<0.001f && s.feedback_corrections==1);
-    assert(s.feedback_over_since_ms==0 && s.feedback_last_adjust_ms==700000);
-    assert(th_sample(&s,TH_ROOM,72.6f,0,701000));
-    expect_reason(&s,701000,"mapped_setting_reached");
-    assert(th_sample(&s,TH_ROOM,72.6f,0,1001000));
-    expect_reason(&s,1001000,"mapped_setting_reached"); /* Trim interval 15m */
-    assert(th_sample(&s,TH_ROOM,72.6f,0,1600000));
-    a=th_tick(&s,1600000);
-    assert(a.move && a.feedback_adjustment && fabsf(a.level-3.5f)<0.001f);
-    th_commit_move(&s,a,1600000);
-    assert(s.feedback_corrections==2 && fabsf(s.feedback_trim-0.5f)<0.001f);
-    /* A new requested target clears the transient trim and responds promptly
-     * even while the room is still hot. No previous overshoot overrides it. */
+    for(uint64_t now=115000;now<=3700000;now+=15000){
+        assert(th_sample(&s,TH_ROOM,70,0,now));
+        a=th_tick(&s,now);
+        assert(!a.move&&!a.feedback_adjustment);
+        assert(s.feedback_trim==0&&s.feedback_corrections==0);
+        assert(s.commanded_level==sixty_level);
+    }
+    /* Nighttime cooling leaves the original 60F dial setting in place. */
+    assert(th_sample(&s,TH_ROOM,58,0,3715000));
+    expect_reason(&s,3715000,"mapped_setting_reached");
+    assert(s.commanded_level==sixty_level);
     s.config.target_f=65;
-    a=th_tick(&s,1602000);
-    assert(a.move && !a.feedback_adjustment && a.level==3);
-    assert(s.feedback_corrections==0 && s.feedback_trim==0);
-    th_commit_move(&s,a,1602000);
+    a=th_tick(&s,3717000);
+    assert(a.move&&!a.feedback_adjustment&&a.level==3);
+    th_commit_move(&s,a,3717000);
     /* Short excursion: no trim even after the observation window. */
     s=prepared();
     a=th_tick(&s,100000);th_commit_move(&s,a,100000);

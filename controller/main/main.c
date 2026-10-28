@@ -356,7 +356,7 @@ static esp_err_t get_api(httpd_req_t *r)
         }
     } else {
         j=cJSON_CreateObject();
-        cJSON_AddStringToObject(j,"version","0.7.3");
+        cJSON_AddStringToObject(j,"version","0.7.4");
 #ifdef CONFIG_THERMO_SUPERMINI
         cJSON_AddStringToObject(j,"board","HW-747 Super Mini 4 MB");
 #else
@@ -460,8 +460,9 @@ static esp_err_t get_api(httpd_req_t *r)
         uint64_t remaining=since_move<next_delay ? next_delay-since_move : 0;
         cJSON_AddNumberToObject(j,"dwell_remaining_ms",remaining);
         cJSON_AddNumberToObject(j,"setpoint_guard_ms",THERMO_SETPOINT_GUARD_MS);
-        cJSON_AddStringToObject(j,"dial_move_policy",state.config.mode==TH_AUTO?"prompt_setpoint_with_heat_feedback":"conservative");
+        cJSON_AddStringToObject(j,"dial_move_policy",state.config.mode==TH_AUTO?"calibrated_setpoint_no_thermal_trim":"conservative");
         cJSON *feedback=cJSON_AddObjectToObject(j,"heat_feedback");
+        cJSON_AddBoolToObject(feedback,"automatic_adjustments_enabled",false);
         cJSON_AddNumberToObject(feedback,"overshoot_threshold_f",THERMO_OVERSHOOT_THRESHOLD_F);
         cJSON_AddNumberToObject(feedback,"hold_ms",THERMO_OVERSHOOT_CONFIRM_MS);
         cJSON_AddNumberToObject(feedback,"observation_ms",THERMO_HEAT_OBSERVE_MS);
@@ -481,7 +482,7 @@ static esp_err_t get_api(httpd_req_t *r)
                 now_ms()-state.feedback_over_since_ms : 0);
         }
         cJSON_AddStringToObject(feedback,"policy",
-            "2F sustained 5min after 10min observation; lower by 0.25 dial no more often than 15min; unverified provisional mapping; never overwrites saved calibration");
+            "Observation only; thermal trim disabled pending onsite furnace-cycle validation and confirmed unoccupied learning; holds calibrated target");
         cJSON_AddStringToObject(j,"reason",state.reason);
         cJSON_AddStringToObject(j,"source",th_source_name(state.source));
         cJSON_AddStringToObject(j,"mode",th_mode_name(state.config.mode));

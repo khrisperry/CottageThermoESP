@@ -197,12 +197,8 @@ th_action_t th_tick(th_state_t *s,uint64_t now)
                 break;
             }
         }
-        /* Heat-only observation: a brief spike or an immediate reading above
-         * the new setpoint is not proof of a furnace mapping error. Require
-         * fresh primary sensor data, 2 F sustained overshoot, an initial
-         * observation interval and a separate 15-minute trim dwell.
-         * Only lower the dial, one quarter-setting at a time. We do not
-         * extrapolate beyond dial 1 or modify the user's saved estimates. */
+        /* Observe temperature history without inferring a furnace cycle or
+         * modifying calibration. Warm weather and solar gain are ambiguous. */
         if (room && isfinite(s->room.f)) {
             if (!isfinite(s->feedback_peak_f) || s->room.f>s->feedback_peak_f)
                 s->feedback_peak_f=s->room.f;
@@ -211,22 +207,11 @@ th_action_t th_tick(th_state_t *s,uint64_t now)
                 if(!s->feedback_over_since_ms)s->feedback_over_since_ms=now;
             } else s->feedback_over_since_ms=0;
         } else s->feedback_over_since_ms=0;
-        float base=desired;
-        desired=fmaxf(s->config.map[0].level,base-s->feedback_trim);
-        bool confirmed=s->feedback_over_since_ms &&
-            now>=s->feedback_over_since_ms &&
-            now-s->feedback_over_since_ms>=THERMO_OVERSHOOT_CONFIRM_MS;
-        bool observed=now>=s->feedback_target_since_ms &&
-            now-s->feedback_target_since_ms>=THERMO_HEAT_OBSERVE_MS;
-        bool slow_enough=!s->feedback_last_adjust_ms ||
-            (now>=s->feedback_last_adjust_ms &&
-             now-s->feedback_last_adjust_ms>=THERMO_FEEDBACK_ADJUST_DWELL_MS);
-        if(confirmed && observed && slow_enough && s->feedback_reached &&
-           s->feedback_trim<THERMO_FEEDBACK_MAX_TRIM &&
-           desired>s->config.map[0].level+0.001f) {
-            desired=fmaxf(s->config.map[0].level,desired-THERMO_FEEDBACK_STEP);
-            feedback_adjustment=true;
-        }
+        /* Room heat alone cannot identify furnace overshoot. Solar gains,
+         * deck testing and blower-only power can all be unrelated to burner
+         * heat. Keep the calibrated setpoint until actual cycles and onsite,
+         * unoccupied learning eligibility have been validated. */
+        s->feedback_trim=0;
     }
     int pulse;
     if (!th_map_level(&s->config,desired,&pulse)) { s->reason="level_outside_measured_map"; return a; }

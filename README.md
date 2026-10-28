@@ -2,7 +2,9 @@
 
 ESP-IDF smart thermostat / mechanical knob actuator project for a **Williams model 1773512 direct-vent cottage furnace**.
 
-> **Current branch: controller v0.7.3; native 4B room panel v0.15.1.** Controller and room client are separate ESP-IDF 6.0.1 projects. Saved Live survives restart and resumes only after fresh thermostat and calibrated AS5600 checks. Service and temporary Bench Go start stopped. Mechanical/appliance validation remains separate from firmware tests.
+> **Current branch: controller v0.7.4; native 4B room panel v0.15.2.** Controller and room client are separate ESP-IDF 6.0.1 projects. Saved Live survives restart and resumes only after fresh thermostat and calibrated AS5600 checks. Service and temporary Bench Go start stopped. Mechanical/appliance validation remains separate from firmware tests.
+
+Controller v0.7.4 disables automatic temperature-only overshoot trim: solar warmth cannot lower the calibrated nighttime dial setting. Room panel v0.15.2 monitors `sensor.furnace_power_current` (A) and `sensor.furnace_power_power` (W) through its existing HA connection and displays them under **Furnace power**. These are read-only electrical snapshots, not validated burner status; adaptive learning remains disabled while the room sensor is offsite and furnace cycles are unvalidated. See [furnace power monitoring](docs/FURNACE_POWER_MONITORING.md).
 
 Room panel v0.15.1 adds **System → Restart thermostat** on its webpage. It preserves saved settings, waits for a new boot before reporting reconnection, and rejects restart during a firmware update. It does not change the controller's saved operating mode.
 

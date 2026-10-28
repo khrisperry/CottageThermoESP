@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {Window} from 'happy-dom';
 const window=new Window({url:'http://thermostat.test',settings:{enableJavaScriptEvaluation:true}});
 const posts=[],intervals=[],errors=[];
-let boot=1,fail=false,completeRequest=null,upload;
+let boot=1,fail=false,completeRequest=null,upload,powerAvailable=true;
 window.setInterval=fn=>{intervals.push(fn);return intervals.length;};
 window.confirm=()=>true;
 window.addEventListener('error',e=>errors.push(e.message));
@@ -13,7 +13,7 @@ window.fetch=async(path,opts={})=>{
   if(completeRequest)await completeRequest;
   return {ok:!fail,json:async()=>({message:fail?'A firmware update is in progress.':'Thermostat restarting.'})};
  }
- return {ok:true,json:async()=>path==='/api/settings'?{}:{services:[],summary:'Online',summary_kind:'ok',firmware:{boot_id:boot,version:'0.15.1',slot_bytes:4194304}}};
+ return {ok:true,json:async()=>path==='/api/settings'?{}:{services:[],summary:'Online',summary_kind:'ok',firmware:{boot_id:boot,version:'0.15.2',slot_bytes:4194304},furnace_power:{activity:'unknown',adjustments_enabled:false,power:{entity_id:'sensor.furnace_power_power',available:powerAvailable,value:86,read_age_ms:1000,last_reported:'2026-10-28T12:00:00+00:00'},current:{entity_id:'sensor.furnace_power_current',available:powerAvailable,value:0.72}}}};
 };
 window.XMLHttpRequest=class {
  constructor(){this.upload={};upload=this;}
@@ -25,6 +25,16 @@ window.eval(html.match(/<script>([\s\S]*?)<\/script>/)[1]);
 const id=x=>window.document.getElementById(x);
 const settle=()=>new Promise(r=>setTimeout(r,20));
 await settle();
+[...id('nav').querySelectorAll('button')].find(b=>b.textContent==='Furnace power').click();
+assert(id('furnacePower').textContent.includes('86.0 W'));
+assert(id('furnacePower').textContent.includes('0.720 A'));
+assert(id('furnacePower').textContent.includes('sensor.furnace_power_power'));
+assert(id('furnacePower').textContent.includes('Activity: Unknown'));
+assert(id('furnacePower').textContent.includes('2026-10-28T12:00:00+00:00'));
+assert.equal(id('content').querySelectorAll('button').length,0,'Power is read-only');
+powerAvailable=false;await intervals[0]();
+assert(!id('furnacePower').textContent.includes('86.0 W'));
+assert(id('furnacePower').textContent.includes('Unavailable'));
 [...id('nav').querySelectorAll('button')].find(b=>b.textContent==='System').click();
 assert(id('restartThermostat')&&!id('restartThermostat').disabled);
 assert.equal(posts.length,0,'Rendering must not trigger a restart');

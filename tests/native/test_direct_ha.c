@@ -13,7 +13,7 @@ static int gets,posts,frames,fail_code,missing=-1;
 static int completion_calls,reset_calls;
 static const char *washer_state="Running";
 static int semaphore_count,io_locked;
-static bool uncertain,unsupported,bad_temp,test_fallback,test_wifi=true;
+static bool uncertain,unsupported,bad_temp,test_fallback,test_wifi=true,bad_power,wrong_power_units;
 static char sent_path[160],sent_body[256];
 #include "../../touchscreen/main/room_ha.c"
 const char *room_settings_ha_url(void){return "https://cottageha.greenledges.net:8123";}
@@ -37,6 +37,11 @@ esp_err_t room_http_keepalive(room_http_session_t **session,const char *origin,c
  ++gets;assert(strstr(path,"/api/states/")==path);
  int key=-1;for(int k=0;k<HA_COUNT;++k)if(!strcmp(path+12,ha_specs[k].entity))key=k;
  assert(key>=0);if(key==missing){*status=404;return 0;}
+ if(key>=11){
+  *length=snprintf(out,cap,"{\"entity_id\":\"%s\",\"state\":\"%s\",\"last_reported\":\"2026-10-28T12:00:00+00:00\",\"attributes\":{\"unit_of_measurement\":\"%s\"}}",
+   ha_specs[key].entity,bad_power?"unavailable":key==11?"0.72":"86",wrong_power_units?"V":key==11?"A":"W");return 0;
+ }
+
  *length=snprintf(out,cap,"{\"entity_id\":\"%s\",\"state\":\"%s\",\"attributes\":{\"supported_features\":%d,\"unit_of_measurement\":\"°F\",\"access_token\":\"never-return-this\",\"current_position\":55}}",ha_specs[key].entity,key==8?(bad_temp?"nan":"65.2"):key==3?washer_state:"off",unsupported?0:8203);
  return 0;
 }
@@ -53,10 +58,32 @@ int main(void)
 #ifdef ROOM_HA_EMPTY
  room_ha_start();ha_poll_once();assert(gets==0&&posts==0&&frames==0);cJSON *empty=room_ha_status();assert(cJSON_IsFalse(cJSON_GetObjectItem(empty,"configured")));cJSON_Delete(empty);puts("PASS: missing local HA token sends no requests");return 0;
 #endif
- room_ha_start();ha_poll_once();assert(gets==11&&posts==0&&frames==0);
- cJSON *root=room_ha_status();assert(cJSON_GetArraySize(cJSON_GetObjectItem(root,"items"))==11);assert(cJSON_IsTrue(cJSON_GetObjectItem(root,"connected")));
+ room_ha_start();ha_poll_once();assert(gets==13&&posts==0&&frames==0);
+ cJSON *root=room_ha_status();assert(cJSON_GetArraySize(cJSON_GetObjectItem(root,"items"))==13);assert(cJSON_IsTrue(cJSON_GetObjectItem(root,"connected")));
  assert(!strcmp(ha_string(item(root,3),"state"),"Running"));assert(cJSON_GetObjectItem(item(root,8),"value")->valuedouble==65.2);
  char *json=cJSON_PrintUnformatted(root);assert(!strstr(json,"never-return-this"));assert(!strstr(json,COTTAGE_HA_TOKEN));free(json);cJSON_Delete(root);
+ cJSON *power=room_ha_furnace_status();
+ assert(cJSON_IsFalse(cJSON_GetObjectItem(power,"adjustments_enabled")));
+ assert(!strcmp(ha_string(power,"activity"),"unknown"));
+ assert(cJSON_GetObjectItem(cJSON_GetObjectItem(power,"power"),"value")->valuedouble==86);
+ assert(cJSON_GetObjectItem(cJSON_GetObjectItem(power,"current"),"value")->valuedouble==0.72);
+ assert(strstr(ha_string(cJSON_GetObjectItem(power,"power"),"last_reported"),"2026-10-28"));cJSON_Delete(power);
+ assert(!ha_service(11,0)&&!ha_service(12,1));
+ cJSON *attempt=cJSON_Parse("{\"key\":\"furnace_power\",\"action\":\"on\",\"request_id\":\"power-read-only\"}");int attempt_code;int posts_before=posts;
+ cJSON *attempt_result=room_ha_command(attempt,&attempt_code);
+ assert(attempt_code==400&&posts==posts_before);cJSON_Delete(attempt);cJSON_Delete(attempt_result);
+ const char *bad_values[]={"-1","nan","inf","86oops","unknown",""};
+ for(unsigned i=0;i<sizeof(bad_values)/sizeof(bad_values[0]);++i){
+  cJSON *state=cJSON_CreateObject();cJSON_AddStringToObject(state,"entity_id",ha_specs[12].entity);cJSON_AddStringToObject(state,"state",bad_values[i]);
+  cJSON *attrs=cJSON_AddObjectToObject(state,"attributes");cJSON_AddStringToObject(attrs,"unit_of_measurement","W");
+  assert(!ha_normalize(12,state).available);cJSON_Delete(state);
+ }
+ bad_power=true;ha_poll_once();power=room_ha_furnace_status();
+ assert(cJSON_IsFalse(cJSON_GetObjectItem(cJSON_GetObjectItem(power,"power"),"available")));cJSON_Delete(power);bad_power=false;
+ wrong_power_units=true;ha_poll_once();power=room_ha_furnace_status();
+ assert(!cJSON_GetObjectItem(cJSON_GetObjectItem(power,"current"),"value"));cJSON_Delete(power);wrong_power_units=false;ha_poll_once();
+ missing=12;ha_poll_once();power=room_ha_furnace_status();
+ assert(cJSON_IsFalse(cJSON_GetObjectItem(cJSON_GetObjectItem(power,"power"),"available")));cJSON_Delete(power);missing=-1;ha_poll_once();
  command(7,"on","request-01",true);assert(!strcmp(sent_path,"/api/services/input_boolean/turn_on"));assert(strstr(sent_body,"input_boolean.kids_heat"));assert(!strstr(sent_body,"climate"));int before=posts;command(7,"on","request-01",true);assert(posts==before);
  command(0,"off","request-02",true);assert(!strcmp(sent_path,"/api/services/light/turn_off"));command(2,"stop","request-03",true);assert(!strcmp(sent_path,"/api/services/cover/stop_cover"));command(9,"start","request-04",true);assert(!strcmp(sent_path,"/api/services/vacuum/start"));
  fail_code=503;ha_poll_once();root=room_ha_status();assert(cJSON_IsTrue(cJSON_GetObjectItem(root,"connected")));assert(cJSON_IsTrue(cJSON_GetObjectItem(item(root,0),"available")));cJSON_Delete(root);fail_code=0;
@@ -80,8 +107,10 @@ int main(void)
  ha_poll_once();assert(gets==before_gets);test_wifi=true; /* Services recover even while the controller remains on radio. */
  root=room_ha_status();assert(cJSON_IsFalse(cJSON_GetObjectItem(root,"connected")));cJSON_Delete(root);
  ha_poll_once();root=room_ha_status();assert(cJSON_IsTrue(cJSON_GetObjectItem(root,"connected")));cJSON_Delete(root);
- fake_time+=31000000;root=room_ha_status();assert(cJSON_IsFalse(cJSON_GetObjectItem(root,"connected")));cJSON_Delete(root);
+ fake_time+=31000000;power=room_ha_furnace_status();
+ assert(cJSON_IsFalse(cJSON_GetObjectItem(cJSON_GetObjectItem(power,"power"),"available")));
+ assert(!strcmp(ha_string(power,"activity"),"unknown"));cJSON_Delete(power);root=room_ha_status();assert(cJSON_IsFalse(cJSON_GetObjectItem(root,"connected")));cJSON_Delete(root);
  cJSON *p=cJSON_Parse("{\"key\":\"furnace\",\"action\":\"on\",\"request_id\":\"invalid-01\"}");root=room_ha_command(p,&code);assert(code==400);cJSON_Delete(root);cJSON_Delete(p);
  fail_code=401;ha_poll_once();assert(ha_auth_failed);before=gets;fail_code=0;ha_poll_once();assert(gets==before);root=room_ha_status();assert(cJSON_IsFalse(cJSON_GetObjectItem(root,"connected")));assert(strstr(ha_string(root,"error"),"token rejected"));cJSON_Delete(root);
- puts("PASS: direct HA bearer requests, eleven mappings, services, filtering, deduplication, unknown outcomes, stale/missing/features, camera and auth backoff");
+ puts("PASS: direct HA bearer requests, thirteen mappings, services, filtering, deduplication, unknown outcomes, stale/missing/features, camera and auth backoff");
 }

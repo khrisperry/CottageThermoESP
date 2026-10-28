@@ -34,6 +34,7 @@ bool room_wifi_submit(const char *ssid,const char *pw,bool open){return true;}
 cJSON *room_controller_test(void){cJSON *j=cJSON_CreateObject();cJSON_AddStringToObject(j,"message","Wi-Fi: controller acknowledged. ESP-NOW: controller acknowledged.");return j;}
 cJSON *room_controller_status(void){return cJSON_CreateObject();}
 cJSON *room_controller_discovery_status(void){return cJSON_CreateObject();}
+cJSON *room_ha_furnace_status(void){return cJSON_CreateObject();}
 int nvs_open(const char *name,int mode,unsigned *h){*h=1;return 0;}
 void nvs_close(unsigned h){}
 int nvs_get_blob(unsigned h,const char *key,void *out,size_t *size){if(!stored_size)return -1;if(*size<stored_size)return -1;memcpy(out,stored_profile,stored_size);*size=stored_size;return 0;}

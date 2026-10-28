@@ -10,10 +10,9 @@
 /* Minimum spacing for intentional thermostat setpoint moves. Unlike adaptive
  * corrections, a new requested setpoint must not wait five minutes. */
 #define THERMO_SETPOINT_GUARD_MS 2000U
-/* Provisional heat-only adaptive trim. Require 2 F of sustained overshoot,
- * 10 minutes after a target is selected and 5 minutes continuously above
- * the limit before reducing heat. Further corrections wait 15 minutes.
- * The saved dial/temperature calibration is NEVER rewritten from one cycle. */
+/* Observation-only diagnostics. Automatic thermal trim is disabled until
+ * colocated room/furnace cycles and explicit unoccupied eligibility validate
+ * a model. These thresholds do not authorize any corrective movement. */
 #define THERMO_OVERSHOOT_THRESHOLD_F 2.0f
 #define THERMO_OVERSHOOT_CONFIRM_MS 300000ULL
 #define THERMO_HEAT_OBSERVE_MS 600000ULL

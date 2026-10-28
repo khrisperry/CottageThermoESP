@@ -19,12 +19,12 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/semphr.h"
-#define HA_COUNT 11
+#define HA_COUNT 13
 #define HA_TTL_US 30000000LL
 #define HA_IDS 32
 typedef struct {const char *key,*entity,*label,*kind,*domain;} ha_spec_t;
 #include "room_ha_entities.h"
-typedef struct {char state[128],unit[8];double value,position;unsigned actions;bool available,has_value,has_position;int64_t at;} ha_state_t;
+typedef struct {char state[128],unit[8],reported[40];double value,position;unsigned actions;bool available,has_value,has_position;int64_t at;} ha_state_t;
 typedef struct {char id[81];int key,action;bool accepted;} ha_request_t;
 static ha_state_t ha_states[HA_COUNT];
 static ha_request_t ha_requests[HA_IDS];
@@ -99,6 +99,16 @@ static ha_state_t ha_normalize(int key,cJSON *j)
         const char *unit=ha_string(attrs,"unit_of_measurement");
         if(!strcmp(unit,"°F")||!strcmp(unit,"°C")||!strcmp(unit,"F")||!strcmp(unit,"C"))snprintf(s.unit,sizeof(s.unit),"%s",unit);
     }
+    if(!strcmp(ha_specs[key].kind,"current")||!strcmp(ha_specs[key].kind,"power")){
+        const char *unit=ha_string(attrs,"unit_of_measurement");
+        const char *expected=!strcmp(ha_specs[key].kind,"current")?"A":"W";
+        char *end;double value=strtod(state,&end);
+        s.has_value=*state&&!*end&&isfinite(value)&&value>=0&&!strcmp(unit,expected);
+        s.available&=s.has_value;s.value=value;
+        snprintf(s.unit,sizeof(s.unit),"%s",expected);
+        const char *reported=ha_string(j,"last_reported");
+        if(strlen(reported)<sizeof(s.reported))snprintf(s.reported,sizeof(s.reported),"%s",reported);
+    }
     s.has_position=!strcmp(ha_specs[key].kind,"cover")&&ha_numeric(attrs,"current_position",&s.position)&&s.position>=0&&s.position<=100;
     return s;
 }
@@ -146,7 +156,10 @@ static void ha_poll_once(void)
     char *buffer=heap_caps_malloc(32768,MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT);
     if(!buffer){ha_global_error(0);return;}
     bool ok=true;
-    for(int k=0;k<HA_COUNT;++k){
+    for(int index=0;index<HA_COUNT;++index){
+        /* Monitor the furnace first, even if an unrelated HA entity fails.
+         * Electrical snapshots never issue commands or authorize motion. */
+        int k=(index+11)%HA_COUNT;
         /* Release I/O between entities so a user command goes next. */
         if(ha_command_waiting){ok=false;break;}
         if(!ha_read(k,buffer,32768)){ok=false;break;}
@@ -175,12 +188,34 @@ cJSON *room_ha_status(void)
         cJSON *item=cJSON_CreateObject();cJSON_AddStringToObject(item,"key",spec->key);cJSON_AddStringToObject(item,"label",spec->label);cJSON_AddStringToObject(item,"kind",spec->kind);
         cJSON_AddStringToObject(item,"state",available?s.state:"unavailable");cJSON_AddBoolToObject(item,"available",available);cJSON_AddNumberToObject(item,"sample_us",(double)s.at);cJSON_AddStringToObject(item,"unit",s.unit);
         if(available&&s.has_value)cJSON_AddNumberToObject(item,"value",s.value);
+        if(s.reported[0])cJSON_AddStringToObject(item,"last_reported",s.reported);
         if(available&&s.has_position)cJSON_AddNumberToObject(item,"position",s.position);
         cJSON *a=cJSON_AddArrayToObject(item,"actions");if(available)for(int n=0;n<6;++n)if(s.actions&(1U<<n))cJSON_AddItemToArray(a,cJSON_CreateString(ha_actions[n]));
         cJSON_AddItemToArray(array,item);
     }
     cJSON_AddStringToObject(root,"error",ha_error);xSemaphoreGive(ha_mutex);
     cJSON_AddBoolToObject(root,"configured",*room_settings_ha_token()!=0);cJSON_AddBoolToObject(root,"connected",connected);cJSON_AddBoolToObject(root,"room_client",true);return root;
+}
+cJSON *room_ha_furnace_status(void)
+{
+    cJSON *root=cJSON_CreateObject();
+    cJSON_AddStringToObject(root,"mode","monitor_only");
+    cJSON_AddStringToObject(root,"activity","unknown");
+    cJSON_AddBoolToObject(root,"adjustments_enabled",false);
+    cJSON_AddStringToObject(root,"reason","Awaiting onsite cycle validation and confirmed unoccupied learning setup");
+    if(ha_mutex)xSemaphoreTake(ha_mutex,portMAX_DELAY);
+    for(int k=11;k<13;++k){
+        ha_state_t s=ha_states[k];bool available=ha_mutex&&room_wifi_connected()&&!ha_auth_failed&&ha_fresh(s)&&s.has_value;
+        cJSON *reading=cJSON_AddObjectToObject(root,k==11?"current":"power");
+        cJSON_AddStringToObject(reading,"entity_id",ha_specs[k].entity);
+        cJSON_AddStringToObject(reading,"unit",k==11?"A":"W");
+        cJSON_AddBoolToObject(reading,"available",available);
+        if(available)cJSON_AddNumberToObject(reading,"value",s.value);
+        cJSON_AddStringToObject(reading,"last_reported",s.reported);
+        if(s.at)cJSON_AddNumberToObject(reading,"read_age_ms",(esp_timer_get_time()-s.at)/1000);
+    }
+    if(ha_mutex)xSemaphoreGive(ha_mutex);
+    return root;
 }
 static cJSON *ha_result(const char *message){cJSON *j=cJSON_CreateObject();cJSON_AddStringToObject(j,"error",message);return j;}
 cJSON *room_ha_command(cJSON *p,int *code)
