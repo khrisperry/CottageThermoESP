@@ -70,6 +70,15 @@ if(NOT MSVC)
 endif()
 add_test(NAME controller_wifi_retry COMMAND test_controller_wifi_retry)
 
+# Compile the *exact* controller LED status policy on the local host.
+# This test does not drive RMT hardware or flash a device.
+add_executable(test_controller_status_led test_controller_status_led.c)
+target_include_directories(test_controller_status_led PRIVATE ../controller/main)
+if(NOT MSVC)
+    target_compile_options(test_controller_status_led PRIVATE -Wall -Wextra -Werror)
+endif()
+add_test(NAME controller_status_led COMMAND test_controller_status_led)
+
 add_executable(test_controller_encoder test_controller_encoder.c ../controller/main/controller_encoder.c)
 target_include_directories(test_controller_encoder PRIVATE encoder_stubs)
 if(NOT MSVC)
