@@ -1,7 +1,12 @@
 # Controller v0.7.2 — blue status LED on HW-747 Super Mini
 
-The Super Mini's **onboard blue RGB LED** is used for connection and fault
-status, leaving the board's red power/charging indicator alone. This
+The Super Mini's **blue channel of the WS2812 RGB pixel near the main chip**
+is used for connection and fault status. **This is NOT the small blue LED
+beside USB-C**: that is a battery-charging indicator, and on common HW-747
+boards it flashes continually with no battery attached. The tiny red LED
+beside USB-C shares GPIO48 with the RGB data signal, so it can also go dark
+or flicker when our firmware runs. These two USB-side lights do NOT indicate
+Wi-Fi/ESP-NOW status. This
 applies only to the `CONFIG_THERMO_SUPERMINI` build; no LED pins are taken
 from the servo GPIO5 or AS5600 GPIO6/GPIO7.
 
