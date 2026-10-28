@@ -5,10 +5,12 @@
  * arc knob above the dial. Values are deliberately usable in host tests. */
 enum {
     ROOM_PAGE_W=456, ROOM_PAGE_H=364,
-    ROOM_CLIMATE_RING_X=102,
-    ROOM_CLIMATE_RING_Y=13,
-    ROOM_CLIMATE_RING_SIZE=252,
-    ROOM_CLIMATE_MODE_Y=267,
+    /* Design #3: headline target and current reading on the LEFT,
+     * a large blue/orange interactive dial on the RIGHT. */
+    ROOM_CLIMATE_RING_X=198,
+    ROOM_CLIMATE_RING_Y=18,
+    ROOM_CLIMATE_RING_SIZE=248,
+    ROOM_CLIMATE_MODE_Y=270,
     ROOM_CLIMATE_REASON_Y=292,
     ROOM_CLIMATE_STATUS_W=456,
     /* One bottom row: -1 | Set Temp | +1 | Away/Home.
@@ -33,7 +35,9 @@ enum {
     ROOM_HOME_ACTION_GAP=6
 };
 _Static_assert(ROOM_CLIMATE_RING_Y>=12,"Leave clearance for arc knob above dial");
-_Static_assert(ROOM_CLIMATE_RING_X*2+ROOM_CLIMATE_RING_SIZE==ROOM_PAGE_W,"Center ring");
+_Static_assert(ROOM_CLIMATE_RING_X>=190,"Keep dial to right of temperature headline");
+_Static_assert(ROOM_CLIMATE_RING_X+ROOM_CLIMATE_RING_SIZE<=ROOM_PAGE_W,
+               "Right-aligned dial must stay within the page");
 _Static_assert(ROOM_CLIMATE_RING_Y+ROOM_CLIMATE_RING_SIZE<=ROOM_CLIMATE_MODE_Y,
                "Dial must not overlap status text");
 _Static_assert(ROOM_CLIMATE_STATUS_W<=ROOM_PAGE_W,
