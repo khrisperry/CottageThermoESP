@@ -22,11 +22,17 @@ int main(void)
     assert(within(10,100,ROOM_HOME_TILE_W));
     assert(within(114,100,ROOM_HOME_TILE_W));
     assert(10+100<114);
-    /* The dial is centered, clear of header/status and bottom nav. */
-    assert(ROOM_CLIMATE_RING_X*2+ROOM_CLIMATE_RING_SIZE==ROOM_PAGE_W);
-    assert(ROOM_CLIMATE_RING_Y>0);
+    /* Design #3 places the big target headline left and the blue/orange
+     * dial to the RIGHT; not centered as earlier UI versions were. */
+    assert(ROOM_CLIMATE_LEFT_X+ROOM_CLIMATE_LEFT_W<ROOM_CLIMATE_RING_X);
+    assert(ROOM_CLIMATE_RING_X+ROOM_CLIMATE_RING_SIZE<=ROOM_PAGE_W);
+    assert(ROOM_CLIMATE_RING_Y>=12);
     assert(ROOM_CLIMATE_RING_Y+ROOM_CLIMATE_RING_SIZE<=ROOM_CLIMATE_MODE_Y);
     assert(ROOM_CLIMATE_BUTTON_Y+ROOM_CLIMATE_BUTTON_H<=ROOM_PAGE_H);
+    /* Five visible nav buttons, including unchanged Ships, fit exactly. */
+    assert(ROOM_NAV_ITEM_W*5+ROOM_NAV_ITEM_GAP*4==ROOM_PAGE_W);
+    assert(ROOM_NAV_Y>=57+ROOM_PAGE_H);
+    assert(ROOM_NAV_Y+ROOM_NAV_ITEM_H<=480);
     /* Four climate actions all fit on ONE bottom row, with nonzero
      * 8px gutters: -1 | Set Temp | +1 | Away/Home. */
     assert(within(ROOM_CLIMATE_MINUS_X,ROOM_CLIMATE_MINUS_W,ROOM_PAGE_W));
