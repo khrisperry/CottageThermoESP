@@ -292,6 +292,7 @@ static esp_err_t status(httpd_req_t *r)
     cJSON *discovery=room_controller_discovery_status();
     if(discovery)cJSON_AddItemToObject(j,"controller_discovery",discovery);
     cJSON_AddItemToObject(j,"furnace_power",room_ha_furnace_status());
+    cJSON_AddItemToObject(j,"weather",room_ha_weather_status());
     return json_reply(r,200,j);
 }
 void room_settings_register(httpd_handle_t server)

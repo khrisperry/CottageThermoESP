@@ -70,6 +70,7 @@ typedef struct {
     float temp,target; char mode[32],reason[80],notice[128],ha_error[128];
     unsigned page,generation;
     float probe_f,probe_raw_f;int64_t probe_at;
+    bool has_outside;float outside_f;int64_t weather_at;
 } model_t;
 typedef struct { int item,action; float target; int64_t at; } command_t;
 static model_t model;
@@ -79,6 +80,7 @@ static lv_obj_t *body[5],*nav[5],*nav_marker[5],*nav_icon[5],*nav_caption[5],*co
 static lv_obj_t *states[COUNT],*control[COUNT][6],*minus_button,*plus_button,*away_button,*apply_button,*camera_image,*camera_note,*settings_button;
 static lv_obj_t *settings_modal,*settings_volume,*settings_volume_label,*settings_camera_button,*settings_close_button;
 static lv_obj_t *temperature_ring,*camera_frame,*camera_status,*tile[COUNT],*icon_badge[COUNT];
+static lv_obj_t *outside_label;
 static lv_obj_t *bulb_head[COUNT],*bulb_stem[COUNT],*bulb_base[COUNT],*bulb_glow[COUNT],*activity_ring[COUNT];
 static lv_obj_t *laundry_badge[4];
 static lv_obj_t *notify_button[4],*probe_test_label;
@@ -159,11 +161,16 @@ static void poll_ha(void)
             break;
         }
     }
+    /* Cached weather snapshot only: no network call or LVGL lock during I/O. */
+    cJSON *weather=room_ha_weather_status();float outside=0;
+    bool has_outside=yes(weather,"available")&&number(weather,"temperature_f",&outside);
     xSemaphoreTake(mutex,portMAX_DELAY);
+    model.has_outside=has_outside;model.outside_f=outside;
+    model.weather_at=has_outside?esp_timer_get_time():0;
     snprintf(model.ha_error,sizeof(model.ha_error),"%s",str(j,"error"));
     for(int k=0;k<COUNT;++k)room_optimistic_update(&model.optimistic[k],items[k].state,items[k].sampled,esp_timer_get_time());
     memcpy(model.items,items,sizeof(items));model.ha_ok=valid&&yes(j,"connected");model.ha_at=valid?esp_timer_get_time():0;
-    xSemaphoreGive(mutex);cJSON_Delete(j);
+    xSemaphoreGive(mutex);cJSON_Delete(j);cJSON_Delete(weather);
 }
 static void poll_climate(void)
 {
@@ -981,6 +988,10 @@ static void refresh(lv_timer_t *timer)
         snprintf(text,sizeof(text),"Current %.1f F",room_f);
         lv_label_set_text(temp_label,text);
     } else lv_label_set_text(temp_label,"Current -- F");
+    if(wifi&&m.has_outside&&current(m.weather_at)){
+        snprintf(text,sizeof(text),"Outside %.1f F",m.outside_f);
+        lv_label_set_text(outside_label,text);
+    }else lv_label_set_text(outside_label,"Outside -- F");
     /* Design #3 displays the SETPOINT as the large white number on the
      * left, with the ACTUAL room reading beneath it. The source and data
      * sent to the controller remain unchanged. */
@@ -1248,18 +1259,20 @@ static void build_ui(void)
     lv_obj_set_style_bg_grad_color(climate_surface,lv_color_hex(0x06111f),0);
     lv_obj_set_style_bg_grad_dir(climate_surface,LV_GRAD_DIR_VER,0);
     lv_obj_set_style_border_color(climate_surface,lv_color_hex(0x16344c),0);
-    lv_obj_t *heat_flame=panel(body[0],20,67,13,19,AMBER,9);
+    lv_obj_t *heat_flame=panel(body[0],20,57,13,19,AMBER,9);
     lv_obj_set_style_border_width(heat_flame,0,0);
     lv_obj_t *flame_inner=panel(heat_flame,4,8,6,9,0xd66b21,5);
     lv_obj_set_style_border_width(flame_inner,0,0);
-    lv_obj_t *heat_tag=label(body[0],"HEAT",42,66,132,&lv_font_montserrat_20);
+    lv_obj_t *heat_tag=label(body[0],"HEAT",42,56,132,&lv_font_montserrat_20);
     tint(heat_tag,TEXT);
-    target_label=label(body[0],"--",ROOM_CLIMATE_LEFT_X,113,ROOM_CLIMATE_LEFT_W,&lv_font_montserrat_48);
+    target_label=label(body[0],"--",ROOM_CLIMATE_LEFT_X,ROOM_CLIMATE_TARGET_Y,ROOM_CLIMATE_LEFT_W,&lv_font_montserrat_48);
     tint(target_label,TEXT);
-    temp_label=label(body[0],"Current --",ROOM_CLIMATE_LEFT_X+1,187,ROOM_CLIMATE_LEFT_W,&lv_font_montserrat_16);
+    temp_label=label(body[0],"Current -- F",ROOM_CLIMATE_LEFT_X+1,ROOM_CLIMATE_CURRENT_Y,ROOM_CLIMATE_LEFT_W,&lv_font_montserrat_16);
     tint(temp_label,MUTED);
+    outside_label=label(body[0],"Outside -- F",ROOM_CLIMATE_LEFT_X+1,ROOM_CLIMATE_OUTSIDE_Y,ROOM_CLIMATE_LEFT_W,&lv_font_montserrat_16);
+    tint(outside_label,BLUE);
     /* A little visual breathing room below the two left-side figures. */
-    lv_obj_t *target_accent=panel(body[0],21,221,42,3,AMBER,2);
+    lv_obj_t *target_accent=panel(body[0],21,224,42,3,AMBER,2);
     lv_obj_set_style_border_width(target_accent,0,0);
 
     /* Blue cool side / amber heat side, like the concept rendering.

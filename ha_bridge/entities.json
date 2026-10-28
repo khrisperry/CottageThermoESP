@@ -16,5 +16,8 @@
   "furnace_monitor": {
     "furnace_current": {"entity_id": "sensor.furnace_power_current", "label": "Furnace current", "kind": "current"},
     "furnace_power": {"entity_id": "sensor.furnace_power_power", "label": "Furnace electrical power", "kind": "power"}
+  },
+  "weather_monitor": {
+    "home_weather": {"entity_id": "weather.forecast_home", "label": "Home weather", "kind": "weather"}
   }
 }

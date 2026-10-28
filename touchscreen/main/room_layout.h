@@ -9,6 +9,9 @@ enum {
      * a large blue/orange interactive dial on the RIGHT. */
     ROOM_CLIMATE_LEFT_X=18,
     ROOM_CLIMATE_LEFT_W=172,
+    ROOM_CLIMATE_TARGET_Y=103,
+    ROOM_CLIMATE_CURRENT_Y=171,
+    ROOM_CLIMATE_OUTSIDE_Y=195,
     ROOM_CLIMATE_RING_X=198,
     ROOM_CLIMATE_RING_Y=18,
     ROOM_CLIMATE_RING_SIZE=248,
@@ -41,6 +44,9 @@ enum {
     ROOM_NAV_ITEM_GAP=4
 };
 _Static_assert(ROOM_CLIMATE_RING_Y>=12,"Leave clearance for arc knob above dial");
+_Static_assert(ROOM_CLIMATE_TARGET_Y+60<ROOM_CLIMATE_CURRENT_Y,"Target and room temperature overlap");
+_Static_assert(ROOM_CLIMATE_CURRENT_Y+22<=ROOM_CLIMATE_OUTSIDE_Y,"Room/outside temperature overlap");
+_Static_assert(ROOM_CLIMATE_OUTSIDE_Y+22<ROOM_CLIMATE_MODE_Y,"Outside temperature overlaps status");
 _Static_assert(ROOM_CLIMATE_LEFT_X+ROOM_CLIMATE_LEFT_W<ROOM_CLIMATE_RING_X,
                "Headline must not overlap the right-hand dial");
 _Static_assert(ROOM_CLIMATE_RING_X>=190,"Keep dial to right of temperature headline");

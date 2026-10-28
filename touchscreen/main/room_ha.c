@@ -7,6 +7,7 @@
 #include "room_transport.h"
 #include "room_controller.h"
 #include "room_furnace_power.h"
+#include "room_weather.h"
 #include "wifi_setup.h"
 #include <math.h>
 #include <stdint.h>
@@ -21,8 +22,9 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/semphr.h"
-#define HA_COUNT 13
+#define HA_COUNT 14
 #define HA_TTL_US 30000000LL
+#define WEATHER_TTL_US 900000000LL
 #define HA_IDS 32
 typedef struct {const char *key,*entity,*label,*kind,*domain;} ha_spec_t;
 #include "room_ha_entities.h"
@@ -36,6 +38,11 @@ static SemaphoreHandle_t ha_mutex,ha_command_mutex,ha_io_mutex;
 static room_http_session_t *ha_session;
 static fp_tracker_t furnace_tracker;
 static unsigned furnace_config_seen=UINT32_MAX;
+static room_weather_t weather_cache;
+static atomic_bool weather_refresh_needed=true;
+static int64_t weather_next_read;
+static int weather_http_status;
+static char weather_error[96]="Waiting for weather.forecast_home";
 /* Caller holds ha_mutex. A settings change starts a new observation session. */
 static unsigned ha_furnace_sync_locked(void)
 {
@@ -170,14 +177,40 @@ static bool ha_read(int key,char *buffer,size_t capacity)
     }
     cJSON_Delete(j);if(!valid){xSemaphoreTake(ha_mutex,portMAX_DELAY);if(key==12)fp_invalidate(&furnace_tracker);xSemaphoreGive(ha_mutex);ha_laundry_lost();ha_global_error(0);}return valid;
 }
+static bool ha_read_weather(char *buffer,size_t capacity)
+{
+    char path[160];int code=0,length=0;
+    snprintf(path,sizeof(path),"/api/states/%s",ha_specs[13].entity);
+    esp_err_t err=ha_http(path,NULL,buffer,capacity,&code,&length);
+    room_weather_t weather={0};
+    if(err==ESP_OK&&code==200){
+        cJSON *j=cJSON_ParseWithLengthOpts(buffer,length+1,NULL,true);
+        weather=room_weather_parse(j,ha_specs[13].entity);cJSON_Delete(j);
+    }
+    xSemaphoreTake(ha_mutex,portMAX_DELAY);
+    weather_cache=weather;weather_http_status=code;
+    ha_states[13]=(ha_state_t){.available=weather.available,.at=esp_timer_get_time()};
+    snprintf(ha_states[13].state,sizeof(ha_states[13].state),"%s",weather.condition);
+    if(weather.available){
+        weather_error[0]=0;
+        ESP_LOGI("room_weather","Home weather=%s outside=%.1f F clouds=%.0f%% wind=%.1f mph (observation only)",
+            weather.condition,(weather.fields&RW_TEMP)?weather.temperature_f:NAN,
+            (weather.fields&RW_CLOUD)?weather.cloud_coverage:NAN,(weather.fields&RW_WIND)?weather.wind_mph:NAN);
+    }else snprintf(weather_error,sizeof(weather_error),"Weather unavailable: HTTP %d; provider state or transport not ready",code);
+    xSemaphoreGive(ha_mutex);
+    return weather.available;
+}
 static void ha_poll_once(void)
 {
+    if(atomic_exchange(&weather_refresh_needed,false))weather_next_read=0;
     xSemaphoreTake(ha_mutex,portMAX_DELAY);unsigned monitor=ha_furnace_sync_locked();xSemaphoreGive(ha_mutex);
     if(!room_wifi_connected()){
         ha_laundry_lost();
         xSemaphoreTake(ha_mutex,portMAX_DELAY);
         for(int k=0;k<HA_COUNT;++k)ha_states[k].available=false;
         fp_invalidate(&furnace_tracker);
+        weather_next_read=0;
+        weather_refresh_needed=true;
         xSemaphoreGive(ha_mutex);return;
     }
     if(!*room_settings_ha_token()||ha_auth_failed)return;
@@ -188,9 +221,17 @@ static void ha_poll_once(void)
         /* Monitor the furnace first, even if an unrelated HA entity fails.
          * Electrical snapshots never issue commands or authorize motion. */
         int k=(index+11)%HA_COUNT;
-        if(k>=11&&!(monitor&1U))continue;
+        if((k==11||k==12)&&!(monitor&1U))continue;
         /* Release I/O between entities so a user command goes next. */
         if(ha_command_waiting){ok=false;break;}
+        if(k==13){
+            int64_t now=esp_timer_get_time();
+            if(now>=weather_next_read){
+                bool good=ha_read_weather(buffer,32768);
+                weather_next_read=esp_timer_get_time()+(good?300000000LL:30000000LL);
+            }
+            continue; /* Optional weather failure never gates other HA polling. */
+        }
         if(!ha_read(k,buffer,32768)){ok=false;break;}
     }
     free(buffer);
@@ -211,9 +252,10 @@ void room_ha_start(void)
 }
 cJSON *room_ha_status(void)
 {
+    if(!room_wifi_connected())weather_refresh_needed=true;
     cJSON *root=cJSON_CreateObject(),*array=cJSON_AddArrayToObject(root,"items");bool connected=false;
     xSemaphoreTake(ha_mutex,portMAX_DELAY);
-    for(int k=0;k<HA_COUNT;++k){if(!room_wifi_connected())ha_states[k].available=false;ha_state_t s=ha_states[k];const ha_spec_t *spec=&ha_specs[k];bool available=room_wifi_connected()&&ha_fresh(s);connected|=available;
+    for(int k=0;k<HA_COUNT;++k){if(!room_wifi_connected())ha_states[k].available=false;ha_state_t s=ha_states[k];const ha_spec_t *spec=&ha_specs[k];bool available=room_wifi_connected()&&(k==13?(s.available&&s.at>0&&esp_timer_get_time()-s.at<=WEATHER_TTL_US&&fp_source_fresh(fp_report_ms(weather_cache.reported),(int64_t)time(NULL)*1000,7200)):ha_fresh(s));connected|=available&&ha_fresh(s);
         cJSON *item=cJSON_CreateObject();cJSON_AddStringToObject(item,"key",spec->key);cJSON_AddStringToObject(item,"label",spec->label);cJSON_AddStringToObject(item,"kind",spec->kind);
         cJSON_AddStringToObject(item,"state",available?s.state:"unavailable");cJSON_AddBoolToObject(item,"available",available);cJSON_AddNumberToObject(item,"sample_us",(double)s.at);cJSON_AddStringToObject(item,"unit",s.unit);
         if(available&&s.has_value)cJSON_AddNumberToObject(item,"value",s.value);
@@ -258,6 +300,36 @@ cJSON *room_ha_furnace_status(void)
     }
     if(ha_mutex)xSemaphoreGive(ha_mutex);
     return root;
+}
+cJSON *room_ha_weather_status(void)
+{
+    if(!room_wifi_connected())weather_refresh_needed=true;
+    cJSON *j=cJSON_CreateObject();
+    cJSON_AddStringToObject(j,"entity_id",ha_specs[13].entity);
+    cJSON_AddStringToObject(j,"mode","observation_only");
+    cJSON_AddBoolToObject(j,"adjustments_enabled",false);
+    if(ha_mutex)xSemaphoreTake(ha_mutex,portMAX_DELAY);
+    room_weather_t w=weather_cache;ha_state_t read=ha_states[13];
+    bool recent=read.at>0&&esp_timer_get_time()>=read.at&&esp_timer_get_time()-read.at<=WEATHER_TTL_US;
+    bool source=fp_source_fresh(fp_report_ms(w.reported),(int64_t)time(NULL)*1000,7200);
+    bool available=ha_mutex&&room_wifi_connected()&&!ha_auth_failed&&w.available&&read.available&&recent&&source;
+    cJSON_AddBoolToObject(j,"available",available);
+    cJSON_AddBoolToObject(j,"source_fresh",source);
+    cJSON_AddStringToObject(j,"condition",available?w.condition:"unknown");
+    cJSON_AddStringToObject(j,"last_reported",w.reported);
+    cJSON_AddStringToObject(j,"error",weather_error[0]?weather_error:available?"":!source?"Weather source time missing or older than two hours":"Weather unavailable; waiting for a fresh read");
+    cJSON_AddNumberToObject(j,"http_status",weather_http_status);
+    if(read.at)cJSON_AddNumberToObject(j,"read_age_ms",(esp_timer_get_time()-read.at)/1000);
+    if(available){
+        if(w.fields&RW_TEMP)cJSON_AddNumberToObject(j,"temperature_f",w.temperature_f);
+        if(w.fields&RW_APPARENT)cJSON_AddNumberToObject(j,"apparent_temperature_f",w.apparent_f);
+        if(w.fields&RW_HUMIDITY)cJSON_AddNumberToObject(j,"humidity_percent",w.humidity);
+        if(w.fields&RW_CLOUD)cJSON_AddNumberToObject(j,"cloud_coverage_percent",w.cloud_coverage);
+        if(w.fields&RW_WIND)cJSON_AddNumberToObject(j,"wind_mph",w.wind_mph);
+        if(w.fields&RW_GUST)cJSON_AddNumberToObject(j,"wind_gust_mph",w.gust_mph);
+    }
+    if(ha_mutex)xSemaphoreGive(ha_mutex);
+    return j;
 }
 static cJSON *ha_result(const char *message){cJSON *j=cJSON_CreateObject();cJSON_AddStringToObject(j,"error",message);return j;}
 cJSON *room_ha_command(cJSON *p,int *code)

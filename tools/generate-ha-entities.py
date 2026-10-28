@@ -11,9 +11,12 @@ lines = ['/* Generated entity mapping, no credentials. */', 'static const ha_spe
 monitors = data.get('furnace_monitor', {})
 if list(monitors) != ['furnace_current', 'furnace_power']:
     raise ValueError('Unexpected furnace monitor keys/order')
-for key, item in {**data['entities'], **monitors}.items():
+weather = data.get('weather_monitor', {})
+if list(weather) != ['home_weather']:
+    raise ValueError('Unexpected weather monitor keys/order')
+for key, item in {**data['entities'], **monitors, **weather}.items():
     domain, name = item['entity_id'].split('.', 1)
-    required = {'light':'light', 'switch':'input_boolean', 'cover':'cover', 'laundry':'sensor', 'temperature':'sensor', 'vacuum':'vacuum', 'camera':'camera', 'current':'sensor', 'power':'sensor'}
+    required = {'light':'light', 'switch':'input_boolean', 'cover':'cover', 'laundry':'sensor', 'temperature':'sensor', 'vacuum':'vacuum', 'camera':'camera', 'current':'sensor', 'power':'sensor', 'weather':'weather'}
     if domain != required[item['kind']] or not all(c in 'abcdefghijklmnopqrstuvwxyz0123456789_' for c in name):
         raise ValueError('Invalid entity mapping')
     lines.append('    {' + ','.join(json.dumps(s, ensure_ascii=True) for s in [key, item['entity_id'], item['label'], item['kind'], domain]) + '},')

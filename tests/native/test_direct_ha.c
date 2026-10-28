@@ -9,7 +9,8 @@
 #include <stdio.h>
 #include <string.h>
 static int64_t fake_time=1000000;
-static int gets,posts,frames,fail_code,missing=-1;
+static int gets,posts,frames,fail_code,missing=-1,weather_gets,weather_fail;
+static bool weather_old;
 static int completion_calls,reset_calls;
 static const char *washer_state="Running";
 static unsigned monitor_config=(180U<<8)|1U;
@@ -42,6 +43,11 @@ esp_err_t room_http_keepalive(room_http_session_t **session,const char *origin,c
  ++gets;assert(strstr(path,"/api/states/")==path);
  int key=-1;for(int k=0;k<HA_COUNT;++k)if(!strcmp(path+12,ha_specs[k].entity))key=k;
  assert(key>=0);if(key==missing){*status=404;return 0;}
+ if(key==13){
+  ++weather_gets;if(weather_fail){*status=weather_fail;return 0;}
+  time_t now=time(NULL)-(weather_old?10800:0);struct tm utc;gmtime_r(&now,&utc);char reported[40];strftime(reported,sizeof(reported),"%Y-%m-%dT%H:%M:%SZ",&utc);
+  *length=snprintf(out,cap,"{\"entity_id\":\"weather.forecast_home\",\"state\":\"partlycloudy\",\"last_updated\":\"%s\",\"attributes\":{\"temperature\":12.5,\"temperature_unit\":\"°C\",\"humidity\":63,\"cloud_coverage\":25,\"wind_speed\":18,\"wind_speed_unit\":\"km/h\",\"access_token\":\"never-copy-weather-secret\"}}",reported);return 0;
+ }
  if(key>=11){
   time_t now=time(NULL)-(stale_source?3600:0);struct tm utc;gmtime_r(&now,&utc);char reported[40];strftime(reported,sizeof(reported),"%Y-%m-%dT%H:%M:%SZ",&utc);
   *length=snprintf(out,cap,"{\"entity_id\":\"%s\",\"state\":\"%s\",\"last_reported\":\"%s\",\"attributes\":{\"unit_of_measurement\":\"%s\"}}",
@@ -64,10 +70,21 @@ int main(void)
 #ifdef ROOM_HA_EMPTY
  room_ha_start();ha_poll_once();assert(gets==0&&posts==0&&frames==0);cJSON *empty=room_ha_status();assert(cJSON_IsFalse(cJSON_GetObjectItem(empty,"configured")));cJSON_Delete(empty);puts("PASS: missing local HA token sends no requests");return 0;
 #endif
- room_ha_start();ha_poll_once();assert(gets==13&&posts==0&&frames==0);
- cJSON *root=room_ha_status();assert(cJSON_GetArraySize(cJSON_GetObjectItem(root,"items"))==13);assert(cJSON_IsTrue(cJSON_GetObjectItem(root,"connected")));
+ room_ha_start();ha_poll_once();assert(gets==14&&posts==0&&frames==0);
+ cJSON *root=room_ha_status();assert(cJSON_GetArraySize(cJSON_GetObjectItem(root,"items"))==14);assert(cJSON_IsTrue(cJSON_GetObjectItem(root,"connected")));
  assert(!strcmp(ha_string(item(root,3),"state"),"Running"));assert(cJSON_GetObjectItem(item(root,8),"value")->valuedouble==65.2);
  char *json=cJSON_PrintUnformatted(root);assert(!strstr(json,"never-return-this"));assert(!strstr(json,COTTAGE_HA_TOKEN));free(json);cJSON_Delete(root);
+ cJSON *weather=room_ha_weather_status();
+ assert(cJSON_IsTrue(cJSON_GetObjectItem(weather,"available")));
+ assert(cJSON_GetObjectItem(weather,"temperature_f")->valuedouble==54.5);
+ assert(cJSON_GetObjectItem(weather,"cloud_coverage_percent")->valuedouble==25);
+ assert(!ha_service(13,0));char *weather_json=cJSON_PrintUnformatted(weather);assert(!strstr(weather_json,"never-copy-weather-secret"));free(weather_json);cJSON_Delete(weather);
+ int weather_before=weather_gets;ha_poll_once();assert(weather_gets==weather_before);
+ weather_fail=404;weather_next_read=0;ha_poll_once();weather=room_ha_weather_status();
+ assert(cJSON_IsFalse(cJSON_GetObjectItem(weather,"available")));cJSON_Delete(weather);
+ assert(ha_states[0].available&&!ha_auth_failed);weather_fail=0;
+ weather_old=true;weather_next_read=0;ha_poll_once();weather=room_ha_weather_status();assert(cJSON_IsFalse(cJSON_GetObjectItem(weather,"available")));cJSON_Delete(weather);
+ weather_old=false;weather_next_read=0;ha_poll_once();
  cJSON *power=room_ha_furnace_status();
  assert(cJSON_IsFalse(cJSON_GetObjectItem(power,"adjustments_enabled")));
  assert(!strcmp(ha_string(power,"activity"),"unknown"));
@@ -99,7 +116,7 @@ int main(void)
  assert(!strcmp(ha_string(power,"activity"),"unknown"));
  assert(cJSON_IsFalse(cJSON_GetObjectItem(cJSON_GetObjectItem(power,"power"),"source_fresh")));cJSON_Delete(power);stale_source=false;
  missing_source=true;ha_poll_once();power=room_ha_furnace_status();assert(!strcmp(ha_string(power,"activity"),"unknown"));cJSON_Delete(power);missing_source=false;
- monitor_config=180U<<8;int disabled_before=gets;ha_poll_once();assert(gets==disabled_before+11);
+ monitor_config=180U<<8;int disabled_before=gets;weather_next_read=0;ha_poll_once();assert(gets==disabled_before+12);
  power=room_ha_furnace_status();assert(!strcmp(ha_string(power,"activity"),"disabled"));
  assert(!cJSON_GetObjectItem(cJSON_GetObjectItem(power,"power"),"value"));cJSON_Delete(power);
  monitor_config=(180U<<8)|3U;ha_poll_once();power=room_ha_furnace_status();
@@ -133,5 +150,5 @@ int main(void)
  assert(!strcmp(ha_string(power,"activity"),"unknown"));cJSON_Delete(power);root=room_ha_status();assert(cJSON_IsFalse(cJSON_GetObjectItem(root,"connected")));cJSON_Delete(root);
  cJSON *p=cJSON_Parse("{\"key\":\"furnace\",\"action\":\"on\",\"request_id\":\"invalid-01\"}");root=room_ha_command(p,&code);assert(code==400);cJSON_Delete(root);cJSON_Delete(p);
  fail_code=401;ha_poll_once();assert(ha_auth_failed);before=gets;fail_code=0;ha_poll_once();assert(gets==before);root=room_ha_status();assert(cJSON_IsFalse(cJSON_GetObjectItem(root,"connected")));assert(strstr(ha_string(root,"error"),"token rejected"));cJSON_Delete(root);
- puts("PASS: direct HA bearer requests, thirteen mappings, services, filtering, deduplication, unknown outcomes, stale/missing/features, camera and auth backoff");
+ puts("PASS: direct HA bearer requests, fourteen mappings, services, filtering, deduplication, unknown outcomes, stale/missing/features, camera and auth backoff");
 }

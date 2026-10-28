@@ -5,7 +5,7 @@
 <section class="card" id="content"></section><section class="card"><p id="message" role="status" aria-live="polite"></p><small>Tokens, keys and passwords are never returned after saving.</small></section></main></div>
 <script>
 'use strict';const $=id=>document.getElementById(id);let config=null,lastStatus=null,page='Overview',timer=null,uploading=false,reconnecting=false,reconnectBoot=null,restartBusy=false;
-const pages=['Overview','Temperature','Furnace power','Wi-Fi','Home Assistant','MQTT thermostat','Controller','ESP-NOW','Ship tracking','Sound & display','System'];
+const pages=['Overview','Temperature','Furnace power','Weather','Wi-Fi','Home Assistant','MQTT thermostat','Controller','ESP-NOW','Ship tracking','Sound & display','System'];
 function el(tag,text,cls){const n=document.createElement(tag);if(text!==undefined)n.textContent=String(text);if(cls)n.className=cls;return n;}
 function badge(text,kind){return el('span',text,'badge '+(['ok','offline','unconfigured','standby','fallback'].includes(kind)?kind:'standby'));}
 function field(parent,label,id,value='',type='text',placeholder=''){const wrap=el('div');const l=el('label',label);l.htmlFor=id;const i=el('input');i.id=id;i.type=type;i.value=value||'';i.placeholder=placeholder;i.autocomplete=type==='password'?'new-password':'off';if(type==='password'){const secret=el('div',undefined,'secret');const show=el('button','Show');show.type='button';show.onclick=()=>{i.type=i.type==='password'?'text':'password';show.textContent=i.type==='password'?'Show':'Hide'};secret.append(i,show);wrap.append(l,secret);}else wrap.append(l,i);parent.append(wrap);return i;}
@@ -22,6 +22,7 @@ function render(){
  const c=$('content');c.replaceChildren(el('h2',page));
  if(page==='Overview'){c.append(el('p','The display remains the local thermostat. Ship data and Home Assistant run in background tasks.'));
   const metrics=el('div',undefined,'metrics');metrics.id='metrics';c.append(metrics);renderMetrics();return;}
+ if(page==='Weather'){const n=el('div');n.id='weatherStatus';c.append(n);renderWeather();return;}
  if(page==='Furnace power'){
   if(needConfig())return;
   const f=config.furnace_monitor||{enabled:false,installed:false,max_report_age_seconds:180};
@@ -141,6 +142,19 @@ function render(){
  }
 }
 function metric(parent,title,value){const m=el('div',undefined,'metric');m.append(el('small',title),el('strong',value));parent.append(m);}
+function renderWeather(){
+ const n=$('weatherStatus');if(!n)return;const w=lastStatus?.weather;
+ n.replaceChildren(el('p','Current conditions from weather.forecast_home. Observational context only; weather does not change the dial or enable thermal learning.'));
+ const available=!!w?.available;
+ n.append(badge(available?(w.condition||'Unknown').replaceAll('-',' '):'Weather unavailable',available?'ok':'offline'));
+ const grid=el('div',undefined,'metrics');n.append(grid);
+ for(const [key,label,unit] of [['temperature_f','Outdoor temperature',' °F'],['apparent_temperature_f','Feels like',' °F'],['humidity_percent','Humidity','%'],['cloud_coverage_percent','Cloud cover','%'],['wind_mph','Wind',' mph'],['wind_gust_mph','Wind gust',' mph']]){
+  const value=w?.[key];metric(grid,label,available&&Number.isFinite(value)?value.toFixed(1)+unit:'Unavailable');
+ }
+ n.append(el('p','Last HA read: '+(Number.isFinite(w?.read_age_ms)?Math.floor(w.read_age_ms/1000)+' seconds ago':'not received')+' · Source reported: '+(w?.last_reported||'not supplied')));
+ if(w?.error)n.append(el('p',w.error));
+ n.append(el('small','Refreshes every five minutes while HA/Wi-Fi are available. Forecasts are not fetched by this page. Cloud cover and sunny conditions provide context; they do not measure solar heat inside the cottage.'));
+}
 function renderFurnacePower(){
  const n=$('furnacePower');if(!n)return;const f=lastStatus?.furnace_power;
  n.replaceChildren(el('p','Electrical stages are inferred from the supplied furnace history. They do not verify burner/flame operation. Automatic thermal adjustments and calibration learning remain disabled.'));
@@ -163,6 +177,10 @@ function renderMetrics(){const m=$('metrics');if(!m||!lastStatus)return;m.replac
  metric(m,'Corrected room temperature',typeof lastStatus.temperature_f==='number'?lastStatus.temperature_f.toFixed(1)+' °F':'No fresh sample');
  metric(m,'Raw primary sensor',typeof lastStatus.raw_temperature_f==='number'?lastStatus.raw_temperature_f.toFixed(1)+' °F':'No fresh sample');
  metric(m,'Temperature offset',typeof lastStatus.temperature_offset_f==='number'?(lastStatus.temperature_offset_f>=0?'+':'')+lastStatus.temperature_offset_f.toFixed(1)+' °F':'0.0 °F');
+ const weather=lastStatus.weather;
+ metric(m,'Outdoor weather',weather?.available?(weather.condition||'Unknown').replaceAll('-',' '):'Unavailable');
+ metric(m,'Outdoor temperature',weather?.available&&Number.isFinite(weather.temperature_f)?weather.temperature_f.toFixed(1)+' °F':'Unavailable');
+ metric(m,'Cloud cover',weather?.available&&Number.isFinite(weather.cloud_coverage_percent)?weather.cloud_coverage_percent.toFixed(0)+'%':'Unavailable');
  metric(m,'Target',typeof lastStatus.target_f==='number'?lastStatus.target_f.toFixed(1)+' °F':'Unavailable');
  metric(m,'Frame last / peak',(p.frame_ms||0).toFixed(1)+' / '+(p.max_frame_ms||0).toFixed(1)+' ms');metric(m,'LVGL stack minimum free',Math.round((p.lvgl_stack_min_free||0)/1024)+' KiB');metric(m,'Free internal RAM',Math.round((p.free_internal||0)/1024)+' KiB');metric(m,'Largest internal block',Math.round((p.largest_internal||0)/1024)+' KiB');metric(m,'Free PSRAM',((p.free_psram||0)/1048576).toFixed(1)+' MiB');
  metric(m,'Ships shown / nearby',(lastStatus.ships?.count||0)+' / '+(lastStatus.ships?.nearby||0));metric(m,'Ship request',(lastStatus.ships?.request_ms||0)+' ms / '+(lastStatus.ships?.bytes||0)+' B');metric(m,'Ship service / AIS',!lastStatus.ships?.service_online?'Service offline':lastStatus.ships?.feed_online?'Online / online':'Online / AIS offline');metric(m,'Last ship refresh',lastStatus.ships?.last_error||'OK');metric(m,'MQTT',lastStatus.mqtt?.status||'Not configured');metric(m,'Radio pairing sync',lastStatus.integration_sync||'Not managed');
@@ -188,7 +206,7 @@ async function loadConfig(){const r=await fetch('/api/settings',{cache:'no-store
 async function poll(){if(uploading)return;try{const r=await fetch('/api/device/status',{cache:'no-store'});if(!r.ok)throw Error('Status unavailable');const j=await r.json();lastStatus=j;
  $('services').replaceChildren();(j.services||[]).forEach(s=>{const row=el('div',undefined,'status-row');row.append(el('span',s.name),badge(s.state,s.kind));$('services').append(row)});
  const summary=j.summary_kind||'standby';$('summary').replaceWith(Object.assign(badge(j.summary,summary),{id:'summary'}));
- $('statusAge').textContent='Live status • updated '+new Date().toLocaleTimeString();renderMetrics();renderFirmware();renderControllerDiscovery();renderFurnacePower();
+ $('statusAge').textContent='Live status • updated '+new Date().toLocaleTimeString();renderMetrics();renderFirmware();renderControllerDiscovery();renderFurnacePower();renderWeather();
  if($('temperatureRaw'))
   $('temperatureRaw').textContent='Raw sensor: '+(typeof j.raw_temperature_f==='number'?j.raw_temperature_f.toFixed(1)+' °F':'Waiting for primary sensor');
  if($('temperaturePreview')&&$('offsetNumber')){

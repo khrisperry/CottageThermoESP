@@ -8,7 +8,7 @@ static int64_t now=1000000;
 static int posts=0,queue_count=0;
 static char last_path[80],last_post[256];
 static bool unknown=false,test_wifi=true,test_fallback=false,controller_missing=false;
-static bool ship_showing,test_ships_populated,test_ship_map_pending;
+static bool ship_showing,test_ships_populated,test_ship_map_pending,test_weather_available=true;
 static unsigned test_notify_mask,test_volume=100;
 #include "../../touchscreen/main/room_display.c"
 /* Worker tasks are registered but not run in this deterministic UI fixture. */
@@ -79,6 +79,9 @@ esp_err_t room_http(const char *origin,const char *header,const char *token,cons
 cJSON *room_controller_status(void){if(controller_missing)return NULL;char buffer[1024];int code,n;room_http("http://controller.test","X-Thermo-Token","test","/api/status",NULL,buffer,sizeof(buffer),1000,&code,&n);return cJSON_Parse(buffer);}
 cJSON *room_controller_target(float target,int *code){char buffer[1024],post[80];int n;snprintf(post,sizeof(post),"{\"target_f\":%.1f}",target);room_http("http://controller.test","X-Thermo-Token","test","/api/config",post,buffer,sizeof(buffer),1000,code,&n);return cJSON_Parse(buffer);}
 cJSON *room_ha_status(void){return cJSON_Parse(ha_json);}
+cJSON *room_controller_away(bool enabled,int *code){(void)enabled;++posts;*code=200;return cJSON_Parse("{\"ok\":true}");}
+cJSON *room_ha_weather_status(void){return cJSON_Parse(test_weather_available?"{\"available\":true,\"temperature_f\":54.5}":"{\"available\":false}");}
+float room_settings_temp_offset_f(void){return 0.0f;}
 cJSON *room_ha_command(cJSON *p,int *code){char *post=cJSON_PrintUnformatted(p),buffer[256];int length;room_http("http://ha.test","Authorization","Bearer test","/api/ha/command",post,buffer,sizeof(buffer),1000,code,&length);free(post);return cJSON_Parse(buffer);}
 static uint8_t screen_pixels[480*480*3],draw_pixels[480*480*3];
 static void flush(lv_display_t *d,const lv_area_t *a,uint8_t *pixels)
@@ -107,6 +110,27 @@ static void populate(void)
 }
 int main(void)
 {
+#ifdef ROOM_CLIMATE_WEATHER_TEST
+ {
+ lv_init();lv_display_t *d=lv_display_create(480,480);lv_display_set_color_format(d,LV_COLOR_FORMAT_RGB888);lv_display_set_buffers(d,draw_pixels,NULL,sizeof(draw_pixels),LV_DISPLAY_RENDER_MODE_PARTIAL);lv_display_set_flush_cb(d,flush);
+ room_display_start();populate();room_display_probe_sample(74.3f,79.6f);refresh(NULL);select_page(0);
+ int before=queue_count;render("climate-weather.ppm");
+ assert(!strcmp(lv_label_get_text(temp_label),"Current 74.3 F"));
+ assert(!strcmp(lv_label_get_text(outside_label),"Outside 54.5 F"));
+ lv_area_t inside,outside,target;lv_obj_get_coords(temp_label,&inside);lv_obj_get_coords(outside_label,&outside);lv_obj_get_coords(target_label,&target);
+ assert(target.y2<inside.y1&&inside.y2<outside.y1);
+ assert(outside.x1==inside.x1&&outside.x2<ROOM_CLIMATE_RING_X+12);
+ assert(outside.y2<ROOM_CLIMATE_MODE_Y+57);
+ test_weather_available=false;poll_ha();refresh(NULL);assert(!strcmp(lv_label_get_text(outside_label),"Outside -- F"));
+ render("climate-weather-unavailable.ppm");
+ test_weather_available=true;poll_ha();test_wifi=false;refresh(NULL);assert(!strcmp(lv_label_get_text(outside_label),"Outside -- F"));
+ test_wifi=true;poll_ha();refresh(NULL);assert(!strcmp(lv_label_get_text(outside_label),"Outside 54.5 F"));
+ now+=11000000;refresh(NULL);assert(!strcmp(lv_label_get_text(outside_label),"Outside -- F"));
+ assert(queue_count==before&&posts==0);
+ puts("PASS: native Climate room/outside placement, nonoverlap, unavailable/stale/Wi-Fi handling and no commands");return 0;
+ }
+#endif
+
  /* A missed poll preserves the real timestamp, expires after ten seconds,
   * and cannot keep renewing an offline controller's availability. */
  poll_climate();int64_t acknowledged=model.climate_at;float confirmed_target=model.target;
@@ -136,8 +160,8 @@ int main(void)
  render("fallback.ppm");test_wifi=true;controller_missing=true;model.climate_at=0;populate();refresh(NULL);
  assert(!lv_obj_has_state(control[0][0],LV_STATE_DISABLED)); /* HA recovers independently of controller. */
  test_fallback=false;controller_missing=false;populate();refresh(NULL);
- room_display_probe_sample(65.2f);refresh(NULL);
- assert(!strcmp(lv_label_get_text(temp_label),"65.2 F"));assert(!strcmp(model.items[3].state,"Running")); /* Hidden long-dot labels are laid out when shown. */
+ room_display_probe_sample(65.2f,65.2f);refresh(NULL);
+ assert(!strcmp(lv_label_get_text(temp_label),"Current 65.2 F"));assert(!strcmp(model.items[3].state,"Running")); /* Hidden long-dot labels are laid out when shown. */
  click(notify_button[0]);assert(room_audio_notify_enabled(3));assert(!room_audio_notify_enabled(4));
  click(notify_button[0]);assert(!room_audio_notify_enabled(3));
  int no_commands=queue_count;
@@ -202,14 +226,14 @@ select_page(2);render("laundry.ppm");select_page(3);render("camera.ppm");
  assert(room_display_probe_bus(1,2)==NULL);assert(room_display_probe_bus(47,48)==(void*)47);
  select_page(2);now+=61000000;refresh(NULL);assert(visible_page==0);assert(!camera_current(model.generation));
  /* Local readings remain visible without controller or HA, but stale readings clear. */
- model.climate_ok=false;model.ha_ok=false;room_display_probe_sample(69.4f);refresh(NULL);
- assert(!strcmp(lv_label_get_text(temp_label),"69.4 F"));
+ model.climate_ok=false;model.ha_ok=false;room_display_probe_sample(69.4f,69.4f);refresh(NULL);
+ assert(!strcmp(lv_label_get_text(temp_label),"Current 69.4 F"));
  assert(lv_obj_has_state(apply_button,LV_STATE_DISABLED));
  click(settings_button);refresh(NULL);assert(strstr(lv_label_get_text(probe_test_label),"69.4 F"));render("bmp280-settings.ppm");
- now+=31000000;refresh(NULL);assert(!strcmp(lv_label_get_text(temp_label),"-- F"));
+ now+=31000000;refresh(NULL);assert(!strcmp(lv_label_get_text(temp_label),"Current -- F"));
  assert(strstr(lv_label_get_text(probe_test_label),"no fresh reading"));
  /* HA/MQTT availability cannot gate direct thermostat setpoint changes. */
- model.ha_ok=false;model.climate_ok=true;model.climate_at=now;model.has_target=true;model.target=67;room_display_probe_sample(68);refresh(NULL);
+ model.ha_ok=false;model.climate_ok=true;model.climate_at=now;model.has_target=true;model.target=67;room_display_probe_sample(68,68);refresh(NULL);
  assert(!lv_obj_has_state(apply_button,LV_STATE_DISABLED));click(plus_button);click(apply_button);before=posts;execute(queued);assert(posts==before+1&&!strcmp(last_path,"/api/config"));
  /* HA targets share the touchscreen queue and freshness/pending/expiry rules. */
  assert(!room_display_request_target(NAN)&&!room_display_request_target(81));
