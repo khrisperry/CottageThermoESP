@@ -1,9 +1,5 @@
-/* Non-blocking controller status indication: WS2812 RGB pixel's BLUE
- * CHANNEL only, on HW-747 GPIO48 near the main chip. The tiny BLUE LED
- * beside USB-C indicates battery charging, blinks without a battery, and
- * CANNOT be driven by this code. The tiny RED USB-side LED shares GPIO48
- * and may turn off or flicker while the WS2812 signal is being driven.
- * No PWM, settings, networking or safety decision is changed here. */
+/* Dim GPIO48 WS2812 RGB status indication.
+ * USB-side charging indicators are unrelated hardware. */
 #include "controller_status_led.h"
 #include "controller_status_led_driver.h"
 #include <string.h>
@@ -15,7 +11,6 @@
 
 #define LED_GPIO 48
 #define LED_RMT_HZ 10000000
-#define LED_BLUE_LEVEL 18 /* Modest brightness for an enclosure at night */
 
 static const char *TAG="controller_status_led";
 static rmt_channel_handle_t channel;
@@ -40,17 +35,16 @@ esp_err_t controller_status_led_init(void)
         rmt_del_channel(channel);channel=NULL;
         return err;
     }
-    ESP_LOGI(TAG,"HW-747 status RGB LED configured on GPIO%d, blue only",LED_GPIO);
+    ESP_LOGI(TAG,"HW-747 status RGB LED configured on GPIO%d, RGB",LED_GPIO);
     return ESP_OK;
 }
-esp_err_t controller_status_led_write(bool blue_on)
+esp_err_t controller_status_led_write(controller_led_rgb_t color)
 {
     if(!channel||!encoder)return ESP_ERR_INVALID_STATE;
-    /* WS2812 GRB format: green=0 red=0 blue=18 or 0.
-     * Each bit is 1.2 us; last symbol holds the line low for 60 us.
-     * Fixed stack buffer is valid until rmt_tx_wait_all_done returns. */
+    /* WS2812 GRB bit order, 24 bits plus >=60 us reset. */
     rmt_symbol_word_t sym[25];
-    const uint32_t pixel=blue_on?LED_BLUE_LEVEL:0;
+    const uint32_t pixel=((uint32_t)color.green<<16)|
+                         ((uint32_t)color.red<<8)|color.blue;
     for(int bit=23;bit>=0;--bit){
         const bool one=(pixel>>bit)&1U;
         sym[23-bit]=(rmt_symbol_word_t){
