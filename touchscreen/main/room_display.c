@@ -772,6 +772,123 @@ cJSON *room_display_status(void)
     cJSON_AddItemToObject(j,"mqtt",room_mqtt_status());
     cJSON_AddStringToObject(j,"integration_sync",room_controller_sync_state());return j;
 }
+/* Digital clock screensaver. Purely visual: drawing and brightness only.
+ * No room commands, Wi-Fi, MQTT, pairing, HA or service state is changed. */
+static void clock_draw_digit(int index,int value)
+{
+    /* Seven segments: top, top-right, bottom-right, bottom, bottom-left,
+     * top-left, middle. The blank leading hour is value=-1. */
+    static const uint8_t masks[10]={
+        0x3f,0x06,0x5b,0x4f,0x66,0x6d,0x7d,0x07,0x7f,0x6f
+    };
+    uint8_t mask=value>=0&&value<=9?masks[value]:value==-2?0x40:0;
+    for(int seg=0;seg<7;++seg){
+        if(saver_segments[index][seg])
+            lv_obj_set_style_bg_color(saver_segments[index][seg],
+                lv_color_hex((mask&(1U<<seg))?0x56e4fc:0x1a3548),0);
+    }
+}
+static void clock_render(void)
+{
+    if(!saver_visible)return;
+    time_t wall=time(NULL);
+    if(wall==saver_last_second)return;
+    saver_last_second=wall;
+    if(!room_clock_time_valid(wall)){
+        for(int digit=0;digit<4;++digit)clock_draw_digit(digit,-2);
+        for(int n=0;n<2;++n)
+            lv_obj_set_style_bg_color(saver_colon[n],lv_color_hex(0x1a3548),0);
+        lv_label_set_text(saver_date,"Waiting for network time");
+        lv_label_set_text(saver_ampm,"");
+        lv_label_set_text(saver_sync,"CLOCK SYNC PENDING");
+        return;
+    }
+    struct tm local={0};
+    if(!localtime_r(&wall,&local))return;
+    int digits[4];bool pm=false;
+    room_clock_digits(&local,digits,&pm);
+    for(int digit=0;digit<4;++digit)clock_draw_digit(digit,digits[digit]);
+    /* Blink the colon as a subtle visual indication the clock is live. */
+    for(int n=0;n<2;++n)
+        lv_obj_set_style_bg_color(saver_colon[n],
+            lv_color_hex((local.tm_sec%2)?0x23485c:0x56e4fc),0);
+    char date_text[80];
+    if(strftime(date_text,sizeof(date_text),"%A, %B %d",&local))
+        lv_label_set_text(saver_date,date_text);
+    lv_label_set_text(saver_ampm,pm?"PM":"AM");
+    lv_label_set_text(saver_sync,"COTTAGE LOCAL TIME");
+}
+static void clock_dismiss(lv_event_t *e)
+{
+    /* The overlay owns this initial press. The indev release is consumed
+     * before any underlying thermostat/Home button can receive a click. */
+    if(lv_event_get_code(e)!=LV_EVENT_PRESSED||!saver_visible)return;
+    lv_indev_t *input=lv_indev_active();
+    if(input)lv_indev_wait_release(input);
+    last_touch=esp_timer_get_time();
+    saver_visible=false;
+    lv_obj_add_flag(saver_overlay,LV_OBJ_FLAG_HIDDEN);
+    (void)bsp_display_brightness_set(80);
+}
+static void clock_show(void)
+{
+    if(!saver_overlay||saver_visible)return;
+    saver_visible=true;
+    saver_last_second=(time_t)-1;
+    /* Overlay stays on top of all five pages and existing modals. */
+    lv_obj_move_to_index(saver_overlay,-1);
+    lv_obj_remove_flag(saver_overlay,LV_OBJ_FLAG_HIDDEN);
+    (void)bsp_display_brightness_set(48);
+    clock_render();
+}
+static void clock_build(lv_obj_t *screen)
+{
+    saver_overlay=panel(screen,0,0,480,480,0x061220,0);
+    lv_obj_set_style_border_width(saver_overlay,0,0);
+    lv_obj_set_style_bg_grad_color(saver_overlay,lv_color_hex(0x0c2a3e),0);
+    lv_obj_set_style_bg_grad_dir(saver_overlay,LV_GRAD_DIR_VER,0);
+    lv_obj_add_flag(saver_overlay,LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_remove_flag(saver_overlay,LV_OBJ_FLAG_GESTURE_BUBBLE);
+    lv_obj_add_event_cb(saver_overlay,clock_dismiss,LV_EVENT_PRESSED,NULL);
+
+    lv_obj_t *accent=panel(saver_overlay,206,35,68,3,MINT,2);
+    lv_obj_set_style_border_width(accent,0,0);
+    lv_obj_t *brand=label(saver_overlay,"COTTAGE",0,54,480,&lv_font_montserrat_24);
+    centered(brand);tint(brand,TEXT);
+    saver_sync=label(saver_overlay,"COTTAGE LOCAL TIME",0,96,480,&lv_font_montserrat_14);
+    centered(saver_sync);tint(saver_sync,MUTED);
+
+    lv_obj_t *clock_box=panel(saver_overlay,22,138,436,176,0x0a2031,18);
+    lv_obj_set_style_border_color(clock_box,lv_color_hex(0x1b4058),0);
+    /* 7-segment numerals stay crisp at 480x480 and don't require a new
+     * large font or additional image buffers. */
+    const int digit_x[4]={22,111,242,331};
+    const int seg_x[7]={12,64,64,12,2,2,12};
+    const int seg_y[7]={0,10,68,116,68,10,58};
+    const int seg_w[7]={50,9,9,50,9,9,50};
+    const int seg_h[7]={9,48,48,9,48,48,9};
+    for(int digit=0;digit<4;++digit){
+        for(int seg=0;seg<7;++seg){
+            saver_segments[digit][seg]=panel(clock_box,
+                digit_x[digit]+seg_x[seg],23+seg_y[seg],
+                seg_w[seg],seg_h[seg],0x1a3548,4);
+            lv_obj_set_style_border_width(saver_segments[digit][seg],0,0);
+        }
+    }
+    for(int n=0;n<2;++n){
+        saver_colon[n]=panel(clock_box,218,64+n*40,10,10,0x56e4fc,5);
+        lv_obj_set_style_border_width(saver_colon[n],0,0);
+    }
+    saver_ampm=label(saver_overlay,"",0,320,480,&lv_font_montserrat_16);
+    centered(saver_ampm);tint(saver_ampm,MINT);
+    saver_date=label(saver_overlay,"Waiting for network time",
+                     0,356,480,&lv_font_montserrat_20);
+    centered(saver_date);tint(saver_date,TEXT);
+    lv_obj_t *hint=label(saver_overlay,"Touch anywhere to return",
+                         0,421,480,&lv_font_montserrat_16);
+    centered(hint);tint(hint,MUTED);
+    lv_obj_add_flag(saver_overlay,LV_OBJ_FLAG_HIDDEN);
+}
 static void refresh(lv_timer_t *timer)
 {
     static unsigned monitor_tick;
