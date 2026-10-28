@@ -52,6 +52,8 @@ static bool live_selected,live_fault,live_verifying;
 static uint64_t live_verify_at,live_candidate_since;
 static float live_verify_level,live_candidate_level;
 static char live_issue[120]="Service mode: automatic motion disabled";
+/* NVS diagnostic breadcrumb survives resets; never grants permission to move. */
+static char last_live_exit_reason[120]="unknown";
 #define LIVE_MODE_MAGIC 0x4C495631U
 static th_state_t state;
 static SemaphoreHandle_t lock;
@@ -145,10 +147,17 @@ static bool save_away(bool enabled)
                   "Freeze Hold disabled: comfort target restored");
     return true;
 }
-static bool save_live_mode(bool enabled)
+/* Save Live preference and last exit reason in ONE transaction.
+ * Errors must never silently re-enable the motor. The text is diagnosis,
+ * not a substitute for the guarded persistent Live flag. */
+static bool save_live_mode_reason(bool enabled,const char *reason)
 {
-    uint32_t value=enabled?LIVE_MODE_MAGIC:0;
-    if(nvs_set_u32(store,"live_mode",value)!=ESP_OK || nvs_commit(store)!=ESP_OK)return false;
+    const uint32_t value=enabled?LIVE_MODE_MAGIC:0;
+    const char *record=enabled?"none":(reason&&*reason?reason:"Service selected");
+    if(nvs_set_u32(store,"live_mode",value)!=ESP_OK ||
+       nvs_set_str(store,"live_exit",record)!=ESP_OK ||
+       nvs_commit(store)!=ESP_OK)return false;
+    snprintf(last_live_exit_reason,sizeof(last_live_exit_reason),"%s",record);
     live_selected=enabled;
     live_fault=false;
     live_verifying=false;
@@ -157,6 +166,10 @@ static bool save_live_mode(bool enabled)
         "Waiting for calibrated encoder and fresh room temperature":
         "Service mode: automatic movement disabled");
     return true;
+}
+static bool save_live_mode(bool enabled)
+{
+    return save_live_mode_reason(enabled,enabled?"none":"Service selected manually");
 }
 /* Encoder validation is mandatory before Live starts and after every command.
  * A missing, implausible or stale magnet is NEVER treated as a known position. */
@@ -178,7 +191,7 @@ static void live_fault_stop(const char *reason)
 {
     /* Persist Service before any future reset can attempt Live again. */
     release();
-    bool saved=save_live_mode(false);
+    bool saved=save_live_mode_reason(false,reason);
     live_fault=true;
     snprintf(live_issue,sizeof(live_issue),"%s%s",reason,
              saved?"":"; NVS FAILED: do not rely on automatic recovery");
@@ -350,6 +363,7 @@ static esp_err_t get_api(httpd_req_t *r)
         cJSON_AddBoolToObject(j,"live_fault",live_fault);
         cJSON_AddBoolToObject(j,"live_verifying",live_verifying);
         cJSON_AddStringToObject(j,"live_issue",live_issue);
+        cJSON_AddStringToObject(j,"last_live_exit_reason",last_live_exit_reason);
         cJSON_AddBoolToObject(j,"away",away_active);
         cJSON_AddNumberToObject(j,"comfort_target_f",state.config.target_f);
         cJSON_AddBoolToObject(j,"freeze_below_calibrated_range",state.away_clamped);
@@ -620,7 +634,8 @@ static esp_err_t post_api(httpd_req_t *r)
             if(ok)event("Local clock synchronized by paired client");
         }
     } else if(!strcmp(r->uri,"/api/stop")) {
-        release();state.config.mode=TH_HOLD;ok=save_live_mode(false);
+        release();state.config.mode=TH_HOLD;
+        ok=save_live_mode_reason(false,"Stop command received; persistent Service selected");
         event(ok?"PWM disabled; Service mode selected":"PWM disabled; could not persist Service mode");
     } else if(!strcmp(r->uri,"/api/arm")) {
         if(!live_selected && text_is(j,"confirm","unloaded_bench") && state.config.mode==TH_HOLD && !go_active) {
@@ -939,8 +954,14 @@ void app_main(void)
      * resumes when the primary sensor, complete encoder map and physical
      * AS5600 position validate after this fresh boot. */
     uint32_t saved_live=0,saved_away=0;
-    if(nvs_get_u32(store,"live_mode",&saved_live)==ESP_OK &&
-       saved_live==LIVE_MODE_MAGIC)live_selected=true;
+    const esp_err_t live_read=nvs_get_u32(store,"live_mode",&saved_live);
+    if(live_read==ESP_OK && saved_live==LIVE_MODE_MAGIC)live_selected=true;
+    size_t exit_reason_size=sizeof(last_live_exit_reason);
+    if(nvs_get_str(store,"live_exit",last_live_exit_reason,&exit_reason_size)!=ESP_OK)
+        snprintf(last_live_exit_reason,sizeof(last_live_exit_reason),"unknown (older firmware or no saved reason)");
+    ESP_LOGI(TAG,"Persistent Live NVS: read=%s value=0x%08lx selected=%s last_exit=%s",
+        esp_err_to_name(live_read),(unsigned long)saved_live,
+        live_selected?"yes":"no",last_live_exit_reason);
     if(nvs_get_u32(store,"freeze_away",&saved_away)==ESP_OK &&
        saved_away==1)away_active=true;
     bool simulated=true;c.mode=TH_HOLD;
