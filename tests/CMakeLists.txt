@@ -42,6 +42,16 @@ if(NOT MSVC)
 endif()
 add_test(NAME room_clock COMMAND test_room_clock)
 
+# The primary sensor's Fahrenheit calibration is pure logic; use the same
+# header in ESP-IDF and local host tests without needing LVGL or NVS.
+add_executable(test_room_temp_cal test_room_temp_cal.c)
+target_include_directories(test_room_temp_cal PRIVATE ../touchscreen/main)
+if(NOT MSVC)
+    target_compile_options(test_room_temp_cal PRIVATE -Wall -Wextra -Werror)
+    target_link_libraries(test_room_temp_cal PRIVATE m)
+endif()
+add_test(NAME room_temp_cal COMMAND test_room_temp_cal)
+
 add_executable(test_network test_network.c)
 if(NOT MSVC)
     target_compile_options(test_network PRIVATE -Wall -Wextra -Werror)
