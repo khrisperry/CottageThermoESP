@@ -800,8 +800,11 @@ static void reconnect_task(void *arg)
  * read-only controller state. A controller fault takes priority, then the
  * freshest authenticated room link (HTTP vs ESP-NOW).
  *
- * The red indicator is power/charging hardware and isn't controlled.
- * Only the blue channel of the HW-747's addressable RGB on GPIO48 is used.
+ * The small blue USB-side light is a battery-charge indicator; it can
+ * blink continuously even when Wi-Fi is healthy. The red USB-side LED
+ * shares GPIO48 with the addressable RGB and is therefore affected.
+ * Only the BLUE channel of the separate addressable RGB pixel on GPIO48
+ * is commanded as a software status indicator.
  * If the onboard LED differs by board revision, initialization failure is
  * nonfatal: the controller continues operating without LED feedback. */
 #ifdef CONFIG_THERMO_SUPERMINI
