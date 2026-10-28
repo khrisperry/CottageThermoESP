@@ -7,6 +7,8 @@ enum {
     ROOM_PAGE_W=456, ROOM_PAGE_H=364,
     /* Design #3: headline target and current reading on the LEFT,
      * a large blue/orange interactive dial on the RIGHT. */
+    ROOM_CLIMATE_LEFT_X=18,
+    ROOM_CLIMATE_LEFT_W=172,
     ROOM_CLIMATE_RING_X=198,
     ROOM_CLIMATE_RING_Y=18,
     ROOM_CLIMATE_RING_SIZE=248,
@@ -32,9 +34,15 @@ enum {
     ROOM_HOME_ROW3_Y=236,
     ROOM_HOME_ACTION_Y=70,
     ROOM_HOME_ACTION_H=32,
-    ROOM_HOME_ACTION_GAP=6
+    ROOM_HOME_ACTION_GAP=6,
+    ROOM_NAV_Y=423,
+    ROOM_NAV_ITEM_W=88,
+    ROOM_NAV_ITEM_H=54,
+    ROOM_NAV_ITEM_GAP=4
 };
 _Static_assert(ROOM_CLIMATE_RING_Y>=12,"Leave clearance for arc knob above dial");
+_Static_assert(ROOM_CLIMATE_LEFT_X+ROOM_CLIMATE_LEFT_W<ROOM_CLIMATE_RING_X,
+               "Headline must not overlap the right-hand dial");
 _Static_assert(ROOM_CLIMATE_RING_X>=190,"Keep dial to right of temperature headline");
 _Static_assert(ROOM_CLIMATE_RING_X+ROOM_CLIMATE_RING_SIZE<=ROOM_PAGE_W,
                "Right-aligned dial must stay within the page");
@@ -66,3 +74,9 @@ _Static_assert(ROOM_HOME_ROW3_Y+ROOM_HOME_TILE_H<=ROOM_PAGE_H,
                "Home grid must clear bottom navigation");
 _Static_assert(ROOM_HOME_ACTION_Y+ROOM_HOME_ACTION_H<=ROOM_HOME_TILE_H,
                "Home actions must fit inside tiles");
+_Static_assert(ROOM_NAV_ITEM_W*5+ROOM_NAV_ITEM_GAP*4==ROOM_PAGE_W,
+               "Navigation must fit all five pages including Ships");
+_Static_assert(ROOM_NAV_Y>=57+ROOM_PAGE_H,
+               "Navigation must not overlap page viewport");
+_Static_assert(ROOM_NAV_Y+ROOM_NAV_ITEM_H<=480,
+               "Navigation buttons must clear physical display edge");
