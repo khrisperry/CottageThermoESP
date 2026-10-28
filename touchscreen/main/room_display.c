@@ -1111,9 +1111,10 @@ static void build_ui(void)
     lv_obj_add_flag(temperature_ring,LV_OBJ_FLAG_CLICKABLE);
     lv_obj_remove_flag(temperature_ring,LV_OBJ_FLAG_GESTURE_BUBBLE);
     lv_obj_add_event_cb(temperature_ring,target_ring_event,LV_EVENT_VALUE_CHANGED,NULL);
+    /* Opaque inner disc avoids allocating an alpha framebuffer layer
+     * on the ESP32-S3 while retaining the mockup's concentric dial. */
     lv_obj_t *dial_circle=panel(body[0],center_x-67,center_y-67,134,134,
                                  0x07192b,67);
-    lv_obj_set_style_bg_opa(dial_circle,LV_OPA_20,0);
     lv_obj_set_style_border_color(dial_circle,lv_color_hex(0x244762),0);
     lv_obj_set_style_border_width(dial_circle,1,0);
     lv_obj_t *hint=label(body[0],"DRAG RING\nTO ADJUST",
