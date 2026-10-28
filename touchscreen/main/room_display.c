@@ -80,6 +80,7 @@ static lv_obj_t *temperature_ring,*camera_frame,*camera_status,*tile[COUNT],*ico
 static lv_obj_t *bulb_head[COUNT],*bulb_stem[COUNT],*bulb_base[COUNT],*bulb_glow[COUNT],*activity_ring[COUNT];
 static lv_obj_t *notify_button[4],*probe_test_label;
 static lv_obj_t *health_button,*health_dot,*diagnostic_modal,*diagnostic_close_button;
+static lv_obj_t *nav_thermo_stem,*nav_thermo_bulb;
 static lv_obj_t *diagnostic_cells[7],*diagnostic_badges[7],*diagnostic_dots[7];
 static lv_obj_t *web_access_label,*ship_title,*ship_detail,*ship_note,*ship_map,*ship_markers[ROOM_SHIP_LIMIT],*cottage_marker;
 static lv_obj_t *ship_map_note;
@@ -307,6 +308,12 @@ static void select_page(unsigned p)
         lv_obj_set_style_bg_color(nav[n],lv_color_hex(n==p?0x083857:0x071724),0);
         lv_obj_set_style_border_color(nav[n],lv_color_hex(n==p?BLUE:0x112b41),0);
         if(nav_icon[n])tint(nav_icon[n],n==p?BLUE:MUTED);
+        if(n==0&&nav_thermo_stem&&nav_thermo_bulb){
+            lv_obj_set_style_bg_color(nav_thermo_stem,
+                lv_color_hex(n==p?BLUE:MUTED),0);
+            lv_obj_set_style_bg_color(nav_thermo_bulb,
+                lv_color_hex(n==p?BLUE:MUTED),0);
+        }
         if(nav_caption[n])tint(nav_caption[n],n==p?BLUE:TEXT);
         if(nav_marker[n]){
             if(n==p)lv_obj_remove_flag(nav_marker[n],LV_OBJ_FLAG_HIDDEN);
@@ -1023,8 +1030,17 @@ static void build_ui(void)
         lv_label_set_text(nav_icon[n],nav_glyphs[pos]);
         lv_obj_set_style_text_font(nav_icon[n],&lv_font_montserrat_20,0);
         lv_obj_set_pos(nav_icon[n],32,2);
-        nav_caption[n]=label(nav[n],nav_text[pos],0,28,ROOM_NAV_ITEM_W,&lv_font_montserrat_14);
+        nav_caption[n]=label(nav[n],nav_text[pos],0,30,ROOM_NAV_ITEM_W,&lv_font_montserrat_14);
         centered(nav_caption[n]);
+        if(n==0){
+            /* Climate tab gets the real thermometer silhouette from
+             * Design #3 rather than the unrelated lightning glyph. */
+            lv_label_set_text(nav_icon[n],"");
+            nav_thermo_stem=panel(nav[n],41,5,6,16,BLUE,3);
+            nav_thermo_bulb=panel(nav[n],38,18,12,11,BLUE,6);
+            lv_obj_set_style_border_width(nav_thermo_stem,0,0);
+            lv_obj_set_style_border_width(nav_thermo_bulb,0,0);
+        }
         nav_marker[n]=panel(nav[n],24,0,40,2,BLUE,1);
         lv_obj_set_style_border_width(nav_marker[n],0,0);
         lv_obj_add_flag(nav_marker[n],LV_OBJ_FLAG_HIDDEN);
