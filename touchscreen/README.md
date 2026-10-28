@@ -1,5 +1,26 @@
 # Cottage room panel — Waveshare ESP32-S3-Touch-LCD-4B
 
+## v0.14.7 — faithful Design #3 composition (local build only)
+
+The **original six-panel reference graphic** (selected Design #3, bottom-row Home and Climate concepts) was reviewed side by side with the firmware. Versions 0.14.5–0.14.6 only applied a color treatment; they did not reproduce the asymmetric layout, vivid card illustrations, or icon-led tab navigation. This release corrects those differences.
+
+- **Climate:** the *proposed target* is now the large temperature headline on the **left**, with actual **Current** temperature immediately underneath. A genuine, still draggable **blue/orange 248px split gauge** occupies the right, with radial markers and a small two-line `DRAG RING / TO ADJUST` hint inside. The original controller-facing command flow is unchanged: drag previews, and the four buttons remain `−1 | Set Temp | +1 | Away/Home` on the bottom row. A narrow status strip preserves Live/Service/Bench state and failure reason without filling the gauge. The button styling follows Design #3's blue Set Temp action.
+- **Home:** the same five existing connected HA controls are arranged in a **2-column grid** of icon-left, text-right blue/teal/amber cards. Deck/Breezeway tiles retain safe tap-to-toggle; Blinds retains Open/Stop/Close; Vacuum Start/Stop; Kids Heat On/Off and temperature. **No Camera card** is placed on Home and the sixth tile remains free.
+- **Navigation:** shared across all screens with a compact **Cottage** header, a small tappable online health pill, and five **icon + label** tabs ordered Home / Climate / Laundry / Camera / Ships. The underlying page IDs and callbacks have not changed. Ships stays visible and its page content is not redesigned.
+- **Laundry/Camera:** keep exactly their previous data and actions, with the reference design's layered blue cards and smaller accent treatments.
+
+**Visual-only production file changes**: `touchscreen/main/room_display.c`, `touchscreen/main/room_layout.h`, host-only geometry regression test, version metadata and docs. No `room_controller.c`, `room_mqtt.c`, `wifi_setup.c`, ESP-NOW, temperature mappings, NVS, thermostat motor/servo logic, Home Assistant commands, camera streaming or any other backend behavior was changed.
+
+**Build and flash locally** from your ESP-IDF PowerShell (the recent Waveshare port was COM14):
+
+```powershell
+cd C:\Users\kperry\Documents\GitHub\CottageThermoESP
+git pull --ff-only
+.\tools\build-room-4b.ps1 -Flash -Monitor -Port COM14
+```
+
+**No GitHub Actions build** was triggered. This branch has source-level bounds checks and LVGL 9.2 API verification, but the completed ESP-IDF compile and the actual 480x480 rendering still need to be verified on the user's Windows machine before this is treated as released hardware firmware. No NVS erase, calibration, controller update or pairing changes are needed.
+
 ## v0.14.5 — Design #3 native LVGL visual refresh (local build)
 
 **Visual-only upgrade** of the existing Waveshare ESP32-S3 Touch LCD 4B interface. The new shared **midnight-blue design system** uses brighter electric-blue/teal accents, warm amber for the heat target, high-contrast typography, rounded raised cards, consistent status colors, a unified header and a highlighted bottom navigation tab. No new bitmap assets, fonts, animation engines, web dependencies or LVGL alpha-layer effects were added. Ships is **still present and functional in navigation**; only its common header and navigation adopt the style, and its page contents have not been redesigned.
