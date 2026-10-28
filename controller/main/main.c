@@ -412,6 +412,16 @@ static esp_err_t get_api(httpd_req_t *r)
         cJSON_AddBoolToObject(net,"radio_ready",tl_radio_configured());
         cJSON_AddBoolToObject(net,"radio_online",tl_radio_online());
         cJSON_AddStringToObject(net,"radio_peer",profile->peer);
+#ifdef CONFIG_THERMO_SUPERMINI
+        /* Display status matches the actual blue LED indication. Red power
+         * hardware remains uncontrolled. This is diagnostic output only. */
+        const unsigned led_mode=atomic_load(&led_reported_mode);
+        cJSON_AddStringToObject(net,"blue_led",
+            !atomic_load(&led_initialized)?"unavailable":
+            led_mode==CONTROLLER_LED_ERROR?"solid_error":
+            led_mode==CONTROLLER_LED_ESPNOW?"flashing_espnow":"off_wifi");
+        cJSON_AddNumberToObject(net,"blue_led_gpio",48);
+#endif
         /* Only non-setpoint / future adaptive moves use the five-minute
          * dwell. A changed thermostat target uses the short guard instead. */
         uint64_t since_move=state.last_move_ms && now_ms()>=state.last_move_ms ?
