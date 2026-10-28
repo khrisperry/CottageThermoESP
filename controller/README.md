@@ -1,3 +1,39 @@
+# Controller v0.7.3 — GPIO48 full-color status indication (HW-747 Super Mini)
+
+The status-only WS2812 LED on GPIO48 now has a low-brightness color protocol:
+
+| Status | Indicator |
+|---|---|
+| Initial boot / waiting for authenticated room traffic | Pulsing purple |
+| Newly authenticated LAN connection | Green for 2 seconds |
+| Healthy authenticated LAN traffic | Off |
+| ESP-NOW is the freshest authenticated path | Amber flashing (0.5s on/off) |
+| No authenticated room traffic after 60s startup grace | Red flashing (0.5s on/off) |
+| Persistent Live or PWM fault | Solid red |
+
+Existing 20-second authenticated link freshness, fault priority, servo control,
+13 dBm Wi-Fi configuration, NVS, setup/calibration and paired transport are
+unchanged. LED behavior is advisory only. A LAN IP alone does not establish
+health; the thermostat must make recent authenticated contact. Green is shown
+only on entry/recovery to a healthy LAN link, never continuously. Service mode
+by itself is not an error. The USB-side blue blinking battery-charge indicator
+is **not** GPIO48's addressable RGB status LED and cannot be controlled with
+firmware. Do not remove unidentified parts or cut traces on the board.
+
+The controller webpage Wi-Fi & connection status and `/api/status` now show
+`network.status_led` and `network.status_led_gpio` instead of the previous
+`blue_led` fields. Only the Super Mini controller needs flashing. No NVS erase.
+
+Local ESP-IDF 6.0.1 build/flash from the root:
+```powershell
+git switch feature/controller-mdns-discovery-web
+git pull --ff-only
+.\\tools\\build-controller-supermini.ps1 -Flash -Monitor -Port COM13
+```
+Verify the COM port before flashing. Run host test `controller_status_led`.
+This code change has not been validated on physical hardware yet.
+
+---
 # Controller v0.7.2 — blue status LED on HW-747 Super Mini
 
 The Super Mini's **blue channel of the WS2812 RGB pixel near the main chip**
