@@ -618,7 +618,7 @@ static void heater_icon(lv_obj_t *parent)
     lv_obj_t *p=panel(parent,8,8,36,50,CARD,0);
     lv_obj_set_style_bg_opa(p,LV_OPA_TRANSP,0);lv_obj_set_style_border_width(p,0,0);
     icon_bar(p,2,19,31,3,0x647386,1);icon_bar(p,2,35,31,3,0x647386,1);
-    for(unsigned n=0;n<4;++n)heater_fins[n]=icon_bar(p,2+n*8,14,6,28,0x647386,3);
+    for(unsigned n=0;n<4;++n)heater_fins[n]=icon_bar(p,2+n*8,14,6,28,0xe36e4e,3);
     icon_bar(p,4,40,4,6,0x647386,1);icon_bar(p,28,40,4,6,0x647386,1);
     for(unsigned n=0;n<3;++n){heater_rays[n]=icon_bar(p,7+n*10,2+(n==1?0:3),2,7,AMBER,1);lv_obj_add_flag(heater_rays[n],LV_OBJ_FLAG_HIDDEN);}
 }
@@ -877,7 +877,7 @@ static void refresh(lv_timer_t *timer)
             lv_obj_set_y(blind_rail,11+4*gap);lv_obj_set_style_bg_color(blind_rail,lv_color_hex(shade),0);
         }
         if(k==7&&heater_fins[0]){
-            for(unsigned n=0;n<4;++n)lv_obj_set_style_bg_color(heater_fins[n],lv_color_hex(available&&active?AMBER:0x647386),0);
+            for(unsigned n=0;n<4;++n)lv_obj_set_style_bg_color(heater_fins[n],lv_color_hex(available&&active?AMBER:0xe36e4e),0);
             for(unsigned n=0;n<3;++n){if(available&&active)lv_obj_remove_flag(heater_rays[n],LV_OBJ_FLAG_HIDDEN);else lv_obj_add_flag(heater_rays[n],LV_OBJ_FLAG_HIDDEN);}
         }
         if(states[k]){
@@ -1014,7 +1014,8 @@ static void build_ui(void)
         lv_obj_set_size(body[n],456,364);
         lv_obj_remove_flag(body[n],LV_OBJ_FLAG_SCROLLABLE|LV_OBJ_FLAG_CLICKABLE);
         lv_obj_add_flag(body[n],LV_OBJ_FLAG_GESTURE_BUBBLE);
-        nav[n]=button(screen,"",12+pos*92,423,88,54,nav_event,n);
+        nav[n]=button(screen,"",12+pos*(ROOM_NAV_ITEM_W+ROOM_NAV_ITEM_GAP),
+                      ROOM_NAV_Y,ROOM_NAV_ITEM_W,ROOM_NAV_ITEM_H,nav_event,n);
         lv_obj_set_style_bg_color(nav[n],lv_color_hex(0x071724),0);
         lv_obj_set_style_radius(nav[n],11,0);
         lv_obj_set_style_border_color(nav[n],lv_color_hex(0x112b41),0);
@@ -1022,7 +1023,7 @@ static void build_ui(void)
         lv_label_set_text(nav_icon[n],nav_glyphs[pos]);
         lv_obj_set_style_text_font(nav_icon[n],&lv_font_montserrat_20,0);
         lv_obj_set_pos(nav_icon[n],32,2);
-        nav_caption[n]=label(nav[n],nav_text[pos],0,28,88,&lv_font_montserrat_14);
+        nav_caption[n]=label(nav[n],nav_text[pos],0,28,ROOM_NAV_ITEM_W,&lv_font_montserrat_14);
         centered(nav_caption[n]);
         nav_marker[n]=panel(nav[n],24,0,40,2,BLUE,1);
         lv_obj_set_style_border_width(nav_marker[n],0,0);
@@ -1052,9 +1053,9 @@ static void build_ui(void)
     lv_obj_set_style_border_width(flame_inner,0,0);
     lv_obj_t *heat_tag=label(body[0],"HEAT",42,66,132,&lv_font_montserrat_20);
     tint(heat_tag,TEXT);
-    target_label=label(body[0],"--",18,113,172,&lv_font_montserrat_48);
+    target_label=label(body[0],"--",ROOM_CLIMATE_LEFT_X,113,ROOM_CLIMATE_LEFT_W,&lv_font_montserrat_48);
     tint(target_label,TEXT);
-    temp_label=label(body[0],"Current --",19,187,172,&lv_font_montserrat_16);
+    temp_label=label(body[0],"Current --",ROOM_CLIMATE_LEFT_X+1,187,ROOM_CLIMATE_LEFT_W,&lv_font_montserrat_16);
     tint(temp_label,MUTED);
     /* A little visual breathing room below the two left-side figures. */
     lv_obj_t *target_accent=panel(body[0],21,221,42,3,AMBER,2);
