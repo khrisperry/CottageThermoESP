@@ -909,7 +909,13 @@ static void refresh(lv_timer_t *timer)
         }
         if(room_clock_idle(now,last_touch))clock_show();
     }
-    if(saver_visible)clock_render();
+    if(saver_visible){
+        /* No need to repaint all five hidden page widgets four times a
+         * second. The separate sensor, HA, MQTT, ESP-NOW and camera tasks
+         * continue running normally; on wake the page refreshes at once. */
+        clock_render();
+        return;
+    }
     /* Preserve the current Home, Climate, Laundry, Camera or Ships page
      * beneath the clock; the old 60-second forced Climate jump is removed. */
     if(probe_test_label){
