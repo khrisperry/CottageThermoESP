@@ -813,21 +813,31 @@ static void refresh(lv_timer_t *timer)
     bool room_temp=local?(m.probe_at&&now-m.probe_at<30000000):(climate&&m.has_temp);
     float room_f=local?m.probe_f:m.temp;
     char text[80];
-    if(room_temp){snprintf(text,sizeof(text),"%.1f F",room_f);lv_label_set_text(temp_label,text);}
-    else lv_label_set_text(temp_label,"-- F");
+    if(room_temp){
+        snprintf(text,sizeof(text),"Current %.1f F",room_f);
+        lv_label_set_text(temp_label,text);
+    } else lv_label_set_text(temp_label,"Current -- F");
+    /* Design #3 displays the SETPOINT as the large white number on the
+     * left, with the ACTUAL room reading beneath it. The source and data
+     * sent to the controller remain unchanged. */
     if(climate&&m.has_target){
-        if(m.away)snprintf(text,sizeof(text),"Away");
-        else snprintf(text,sizeof(text),"%s %.1f F",editing?"Set to":"Target",draft);
+        snprintf(text,sizeof(text),"%.0f°",m.away?50.0f:editing?draft:m.target);
         lv_label_set_text(target_label,text);
+        tint(target_label,editing?AMBER:TEXT);
+    } else{
+        lv_label_set_text(target_label,"--°");
+        tint(target_label,MUTED);
     }
-    else lv_label_set_text(target_label,"Target unavailable");
     /* Slider is for the proposed TARGET, not the actual room temperature.
      * No network/servo command is issued until the user presses Set. */
     const int shown_target=(int)lroundf(m.away?50.0f:editing?draft:m.target);
     ring_rendering=true;
     lv_arc_set_value(temperature_ring,climate&&m.has_target?shown_target:45);
     ring_rendering=false;
-    lv_obj_set_style_arc_color(temperature_ring,lv_color_hex(m.away?BLUE:AMBER),LV_PART_INDICATOR);
+    /* The decorative dial's blue/orange tracks are fixed. Only the
+     * genuine interactive knob changes color in Away mode. */
+    lv_obj_set_style_bg_color(temperature_ring,
+        lv_color_hex(m.away?BLUE:AMBER),LV_PART_KNOB);
     const bool bench=climate&&!m.simulation&&!m.live_active&&!strcmp(m.mode,"thermostat");
     if(!climate)lv_label_set_text(mode_label,"Controller Offline");
     else if(m.away)lv_label_set_text(mode_label,m.live_active?"Away - Live Heating":
