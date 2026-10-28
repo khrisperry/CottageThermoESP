@@ -1,5 +1,17 @@
 # Cottage room panel — Waveshare ESP32-S3-Touch-LCD-4B
 
+## v0.14.9 — photographed-display polish (visual-only)
+
+Reviewed five real Waveshare 480×480 photos from the previous Design #3 build. Main fixes:
+
+- **Navigation:** the five icons previously overlapped or sat beside their labels because the button helper centered the LVGL label and subsequent x/y positioning did not reset its alignment. Labels are now explicitly aligned to the top-left coordinate system and centered in dedicated icon rectangles above the captions. The Home, Climate, Laundry, Camera and Ships route mapping remains unchanged.
+- **Laundry:** the four blank white rings looked like progress meters but had no meaningful progress source. Each card now shows a plain, legible status tag (IDLE, DONE, PAUSED, ALERT or OFFLINE) when not active. A rotating indicator is shown **only while the machine is actually active**. Existing HA status, Notify buttons and sound logic remain unchanged.
+- **Camera:** the rectangular black area in the photographed image was confirmed by the user to originate from the camera itself. It is *not* a firmware rendering problem. Camera image presentation, scaling, clipping, request/decode and status behavior remain unchanged; the speculative frame-redraw change was reverted.
+
+This is a visual-only release; the thermostat/controller communication stack, sensor and temperature readings, ESP-NOW fallback, MQTT/Home Assistant commands, blower/servo calibration, clock screensaver and all five pages are unchanged.
+
+**Build only locally, no GitHub Actions:** from your configured ESP-IDF PowerShell, run `git pull --ff-only` followed by `.\tools\build-room-4b.ps1 -Flash -Monitor -Port COM14`. Preserve NVS/pairing and leave controller v0.7.1 untouched.
+
 ## v0.14.8 — full-screen digital clock screensaver
 
 The native Waveshare 4B automatically displays a large **cyan seven-segment
