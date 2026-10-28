@@ -94,9 +94,12 @@ else if(!status.encoder?.angle_valid)liveBlock='AS5600 reading missing/stale or 
 else if(!matches)liveBlock='AS5600 measured '+fmt(actual,1)+'°, expected '+fmt(expected,1)+'° at dial '+fmt(level,2)+'; within 12° required.';
 el('enableLive').disabled=!enabled||status.operating_mode==='live'||!!liveBlock;
 if(status.operating_mode==='live')el('liveSafety').textContent=status.live_issue||'Persistent Live enabled.';
-else el('liveSafety').textContent=liveBlock||('Ready: verified dial '+fmt(level,2)+
-    (isBenchGo?' in Bench Go. Promote without another manual movement.':
-               ' in Test. Select Live when final mounting is verified.'));
+else {
+  const previous=status.last_live_exit_reason;
+  const exitText=previous && previous!=='none' && !previous.startsWith('unknown')?
+      ' Previous Live exit: '+previous+'.':'';
+  el('liveSafety').textContent=(status.live_issue||liveBlock||'Service selected; automatic movement disabled.')+exitText;
+}
 
 el('moveStart').disabled=!enabled||!testing()||!setup?.positions[pos]?.pulse_us;
 if(status.network){const n=status.network;el('networkStatus').textContent='LAN: '+(n.connected?n.ip:'Disconnected')+'\nHostname: '+(n.mdns_hostname||'CottageThermoController.local')+'\nWi-Fi: '+n.ssid+' · channel '+n.channel+'\nTX maximum: '+(n.wifi_max_tx_dbm??'—')+' dBm\nESP-NOW: '+(n.radio_online?'Recent paired contact':n.radio_ready?'Ready':'Not configured')+'\nStatus LED: '+({off_wifi:'Off · healthy LAN',green_connected:'Green · LAN connected',purple_pulsing_startup:'Purple pulse · starting',amber_flashing_espnow:'Amber flash · ESP-NOW',red_flashing_offline:'Red flash · room link lost',red_solid_fault:'Solid red · controller fault',unavailable:'Not available'}[n.status_led]||'Waiting for status')+'\nStation MAC: '+n.station_mac;if(!networkLoaded){el('wifiSsid').value=n.ssid||'';networkLoaded=true;}}el('diagnostics').textContent=JSON.stringify(status,null,2);}
