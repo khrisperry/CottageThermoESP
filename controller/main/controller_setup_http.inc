@@ -40,7 +40,8 @@ static esp_err_t setup_post(httpd_req_t *r)
     if(text_is(j,"action","service")) {
         /* A Service transition always stops PWM before changing NVS. */
         release();
-        if(!save_live_mode(false))error="Motor stopped but could not save Service mode; do not restart unattended.";
+        if(!save_live_mode_reason(false,"Service selected from controller webpage"))
+            error="Motor stopped but could not save Service mode; do not restart unattended.";
         else event("Persistent Service/Calibration selected; PWM off; calibration retained");
     } else if(text_is(j,"action","live")) {
         error=controller_setup_ready(&setup);
