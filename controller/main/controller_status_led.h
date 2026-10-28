@@ -1,8 +1,12 @@
 #pragma once
-/* HW-747 Super Mini, one blue WS2812 channel on GPIO48.
+/* HW-747 Super Mini, the blue channel of the separate WS2812 RGB pixel
+ * on GPIO48 (next to the main chip). The SMALL BLUE LED BESIDE USB-C is a
+ * BATTERY CHARGE indicator, not software controlled, and often blinks
+ * continuously when no battery is connected. The small RED LED beside USB
+ * shares GPIO48 and can change when WS2812 data is sent. Neither of these
+ * small USB-side LEDs represents controller link health.
  * This pure policy is host-testable and never participates in control flow.
- * Priorities: dangerous fault > newest authenticated transport > offline.
- * The red charging/power LED is not GPIO-controlled by this code. */
+ * Priorities: dangerous fault > newest authenticated transport > offline. */
 #include <stdbool.h>
 #include <stdint.h>
 
