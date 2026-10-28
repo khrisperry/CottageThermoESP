@@ -1126,9 +1126,11 @@ static void build_ui(void)
         ROOM_CLIMATE_PLUS_W,ROOM_CLIMATE_BUTTON_H,send_event,-3);
     away_button=button(body[0],"Away",ROOM_CLIMATE_AWAY_X,ROOM_CLIMATE_BUTTON_Y,
         ROOM_CLIMATE_AWAY_W,ROOM_CLIMATE_BUTTON_H,send_event,-10);
-    lv_obj_set_style_bg_color(apply_button,lv_color_hex(AMBER),0);
-    lv_obj_set_style_border_color(apply_button,lv_color_hex(0xffdfaa),0);
-    tint(apply_button,INK);
+    /* Design #3 calls for a bright blue primary action, not the old
+     * yellow CTA. This changes styling only; the callback is untouched. */
+    lv_obj_set_style_bg_color(apply_button,lv_color_hex(0x16b4f6),0);
+    lv_obj_set_style_border_color(apply_button,lv_color_hex(0x65d5ff),0);
+    tint(apply_button,TEXT);
     lv_obj_set_style_bg_color(away_button,lv_color_hex(0x153b59),0);
     /* Home Assistant-style compact 2-column grid, 5 usable tiles:
      * Deck / Breezeway, Blinds / Vacuum, Kids Heat / reserved empty slot.
@@ -1218,8 +1220,12 @@ static void build_ui(void)
     const char *laundry[]={"Washer 1","Washer 2","Dryer 1","Dryer 2"};
     for(int n=0;n<4;++n){
         int key=n+3;
-        tile[key]=panel(body[2],(n%2)*234,(n/2)*184,222,174,CARD,19);
+        tile[key]=panel(body[2],(n%2)*234,(n/2)*184,222,174,
+                        n<2?0x0d2a43:0x14283d,17);
         lv_obj_t *p=tile[key];
+        lv_obj_set_style_bg_grad_color(p,lv_color_hex(
+            n<2?0x174361:0x18384a),0);
+        lv_obj_set_style_bg_grad_dir(p,LV_GRAD_DIR_HOR,0);
         lv_obj_t *icon_back=panel(p,12,12,48,48,LIFT,14);
         lv_obj_set_style_border_width(icon_back,0,0);
         icon_badge[key]=label(p,LV_SYMBOL_LOOP,20,18,36,&lv_font_montserrat_28);
@@ -1248,7 +1254,9 @@ static void build_ui(void)
     }
     /* Camera keeps exactly the same image viewport and decoder. Only
      * its title strip and lightweight frame take on the shared theme. */
-    lv_obj_t *camera_header=panel(body[3],0,0,456,30,CARD,11);
+    lv_obj_t *camera_header=panel(body[3],0,0,456,30,0x10283d,11);
+    lv_obj_set_style_bg_grad_color(camera_header,lv_color_hex(0x1a3b54),0);
+    lv_obj_set_style_bg_grad_dir(camera_header,LV_GRAD_DIR_HOR,0);
     lv_obj_set_style_border_color(camera_header,lv_color_hex(EDGE),0);
     lv_obj_t *camera_accent=panel(body[3],12,8,4,15,BLUE,2);
     lv_obj_set_style_border_width(camera_accent,0,0);
