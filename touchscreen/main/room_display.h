@@ -5,8 +5,10 @@ void room_display_start(void);
 i2c_master_bus_handle_t room_display_probe_bus(int sda, int scl);
 
 
-/* Local test reading only; does not alter controller-reported climate state. */
-void room_display_probe_sample(float temperature_f);
+/* A single sensor sample is corrected before it reaches the controller.
+ * Preserve raw Fahrenheit alongside the corrected display/HA reading for
+ * calibration diagnostics; no extra controller network requests. */
+void room_display_probe_sample(float corrected_f,float raw_f);
 
 #include <stdbool.h>
 #include "cJSON.h"
