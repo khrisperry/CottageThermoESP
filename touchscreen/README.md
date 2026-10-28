@@ -1,5 +1,47 @@
 # Cottage room panel — Waveshare ESP32-S3-Touch-LCD-4B
 
+## v0.14.8 — full-screen digital clock screensaver
+
+The native Waveshare 4B automatically displays a large **cyan seven-segment
+digital clock** after **60 seconds** with no touchscreen activity. It is a full
+480×480 overlay that hides the page and bottom navigation, shows **local
+12-hour time with AM/PM and weekday/date**, and dims display brightness from
+the normal 80% to 48%. The colon blinks each second.
+
+- **Touch anywhere to dismiss:** the overlay consumes the initial finger
+  press and waits for release; waking must not also activate a hidden
+  thermostat, light, blind, or Home Assistant button. Brightness restores
+  immediately and the **same page and existing modal** return.
+- The idle timer now opens the clock rather than automatically returning
+  every screen to Climate after 60 seconds.
+- Time comes from the touchscreen's **existing pool.ntp.org SNTP client**,
+  formatted in the Michigan `America/Detroit` time zone using
+  `EST5EDT,M3.2.0/2,M11.1.0/2` (automatic spring/fall daylight-saving
+  transitions). Wi-Fi/HA are **not needed to continue ticking after a
+  successful sync**. If freshly booted without time sync, the clock displays
+  dashes and `Waiting for network time`, never an incorrect 1970 timestamp.
+- No network, command, controller, thermostat, servo, NVS, MQTT, radio, or
+  camera data flow is changed. Clock widgets are constructed once and
+  updated at most once a second.
+- Pure-C host test `test_room_clock` verifies the 60-second inactivity
+  threshold, unsynchronized time guard, 12-hour formatting and AM/PM.
+
+**Local build only**; no GitHub Actions builds. Flash **only the Waveshare**,
+retaining all local settings and NVS. The Super Mini controller stays at
+v0.7.1.
+
+```powershell
+cd C:\Users\kperry\Documents\GitHub\CottageThermoESP
+git pull --ff-only
+.\tools\build-room-4b.ps1 -Flash -Monitor -Port COM14
+```
+
+After a local flash, leave the screen untouched for one minute, check clock
+and daylight-saving local time, then tap the clock above the temperature
+buttons or Home light tiles and confirm that no underlying action fires. The
+ESP-IDF firmware build and on-device rendering are still to be confirmed
+locally; pure host tests do not certify the hardware.
+
 ## v0.14.7 — faithful Design #3 composition (local build only)
 
 The **original six-panel reference graphic** (selected Design #3, bottom-row Home and Climate concepts) was reviewed side by side with the firmware. Versions 0.14.5–0.14.6 only applied a color treatment; they did not reproduce the asymmetric layout, vivid card illustrations, or icon-led tab navigation. This release corrects those differences.
