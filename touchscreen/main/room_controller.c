@@ -14,6 +14,7 @@
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "esp_netif_ip_addr.h"
+#include "esp_wifi.h"
 #include "mdns.h"
 #include <strings.h>
 #include "freertos/FreeRTOS.h"
@@ -29,6 +30,9 @@ static char discovered_origin[64],discovered_address[16];
 static uint32_t next_discovery_ms;
 static unsigned manual_failures;
 static bool discovery_verified;
+static esp_err_t discovery_last_error;
+static int discovery_last_http_status;
+static unsigned discovery_failed_checks,radio_failed_probes;
 static void sync_task(void *arg);
 static bool fresh(void){return received_at&&esp_timer_get_time()-received_at<4000000;}
 
@@ -64,6 +68,8 @@ static void discover_controller(void)
     esp_ip4_addr_t ip={0};
     esp_err_t err=mdns_query_a("CottageThermoController",1200,&ip);
     if(err!=ESP_OK){
+        discovery_last_error=err;
+        ++discovery_failed_checks;
         ESP_LOGW("controller_discovery","mDNS lookup CottageThermoController.local failed: %s",esp_err_to_name(err));
         return;
     }
@@ -74,6 +80,9 @@ static void discover_controller(void)
     room_discovery_result_t result={0};
     if(!room_discovery_probe_origin(found_origin,pair->radio_enabled,
                                    pair->peer,&result)){
+        discovery_last_error=result.http_error;
+        discovery_last_http_status=result.http_status;
+        ++discovery_failed_checks;
         if(result.identity_mismatch)
             ESP_LOGW("controller_discovery",
                 "Ignored discovered host %s: hostname or configured controller MAC differs",found_ip);
@@ -85,6 +94,9 @@ static void discover_controller(void)
     snprintf(discovered_origin,sizeof(discovered_origin),"%s",found_origin);
     snprintf(discovered_address,sizeof(discovered_address),"%s",found_ip);
     discovery_verified=true;
+    discovery_last_error=ESP_OK;
+    discovery_last_http_status=200;
+    discovery_failed_checks=0;
     ESP_LOGI("controller_discovery","Verified CottageThermoController.local at %s",found_ip);
 }
 cJSON *room_controller_discovery_status(void)
@@ -98,6 +110,16 @@ cJSON *room_controller_discovery_status(void)
     cJSON_AddBoolToObject(j,"verified",discovery_verified&&*discovered_origin);
     cJSON_AddStringToObject(j,"resolved_ip",discovered_address);
     cJSON_AddStringToObject(j,"active_url",controller_origin());
+    uint8_t channel=0;wifi_second_chan_t second=WIFI_SECOND_CHAN_NONE;
+    if(esp_wifi_get_channel(&channel,&second)==ESP_OK)
+        cJSON_AddNumberToObject(j,"wifi_channel",channel);
+    cJSON_AddStringToObject(j,"selected_transport",fallback?"ESP-NOW":"LAN");
+    cJSON_AddBoolToObject(j,"espnow_online",tl_radio_online());
+    cJSON_AddBoolToObject(j,"espnow_configured",tl_radio_configured());
+    cJSON_AddNumberToObject(j,"espnow_failed_probes",radio_failed_probes);
+    cJSON_AddNumberToObject(j,"discovery_failed_checks",discovery_failed_checks);
+    cJSON_AddNumberToObject(j,"discovery_http_error",(int)discovery_last_error);
+    cJSON_AddNumberToObject(j,"discovery_http_status",discovery_last_http_status);
     cJSON_AddStringToObject(j,"source",*discovered_origin&&
         (controller_is_auto()||controller_is_local_name()||manual_failures>=2)?"mDNS":
         controller_is_auto()?"searching":"configured");
@@ -152,7 +174,9 @@ static bool exchange(tl_packet_t p,tl_packet_t *r,bool probe)
         if(http(&p,r)&&matching(&p,r)&&r->result==TL_OK){via_radio=false;ok=true;}
         else {
             start=esp_timer_get_time();
-            if(tl_radio_exchange(&p,r)==ESP_OK&&matching(&p,r)&&r->result==TL_OK){via_radio=true;ok=true;}
+            if(tl_radio_exchange(&p,r)==ESP_OK&&matching(&p,r)&&r->result==TL_OK){
+                via_radio=true;ok=true;radio_failed_probes=0;
+            }else if(radio_failed_probes<1000000U)++radio_failed_probes;
         }
     }else ok=fallback?(tl_radio_exchange(&p,r)==ESP_OK&&matching(&p,r)):(http(&p,r)&&matching(&p,r));
     if(ok&&esp_timer_get_time()-start<3000000){
