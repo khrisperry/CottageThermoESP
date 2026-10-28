@@ -896,7 +896,22 @@ static void refresh(lv_timer_t *timer)
     /* Only LVGL (or locked startup) calls refresh; avoid a multi-KiB task-stack local. */
     static model_t m;copy_model(&m);int64_t now=esp_timer_get_time();
     room_ships_snapshot(&ship_view);if(visible_page==4)refresh_ships();
-    if((visible_page||m.settings_open)&&now-last_touch>60000000){select_page(0);copy_model(&m);}
+    /* Any normal finger activity, including touching an empty panel,
+     * counts against idle time. Never let clock wake generate a control
+     * click: clock_dismiss consumes the input until finger release. */
+    if(!saver_visible){
+        for(lv_indev_t *dev=lv_indev_get_next(NULL);dev;dev=lv_indev_get_next(dev)){
+            if(lv_indev_get_type(dev)==LV_INDEV_TYPE_POINTER &&
+               lv_indev_get_state(dev)==LV_INDEV_STATE_PRESSED){
+                last_touch=now;
+                break;
+            }
+        }
+        if(room_clock_idle(now,last_touch))clock_show();
+    }
+    if(saver_visible)clock_render();
+    /* Preserve the current Home, Climate, Laundry, Camera or Ships page
+     * beneath the clock; the old 60-second forced Climate jump is removed. */
     if(probe_test_label){
         if(m.probe_at&&now-m.probe_at<30000000){
             char reading[64];snprintf(reading,sizeof(reading),"BMP/BME280 test: %.1f F",m.probe_f);
@@ -1437,6 +1452,9 @@ static void build_ui(void)
     button(body[4],"Previous",0,318,132,42,ship_change,-1);
     button(body[4],"Next ship",144,318,132,42,ship_change,1);
     label(body[4],"Map: OpenStreetMap",290,324,166,&lv_font_montserrat_14);
+    /* Build after every page and modal anchor so clock always covers all
+     * controls. Hidden by default until one minute without activity. */
+    clock_build(screen);
     lv_timer_create(refresh,250,NULL);select_page(0);refresh(NULL);
 }
 void room_display_start(void)
