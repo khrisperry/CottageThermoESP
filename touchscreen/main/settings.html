@@ -4,7 +4,7 @@
 <section class="card"><h2>Connections</h2><div class="statuses" id="services"></div><small id="statusAge">Waiting for the device...</small></section>
 <section class="card" id="content"></section><section class="card"><p id="message" role="status" aria-live="polite"></p><small>Tokens, keys and passwords are never returned after saving.</small></section></main></div>
 <script>
-'use strict';const $=id=>document.getElementById(id);let config=null,lastStatus=null,page='Overview',timer=null,uploading=false,reconnecting=false,reconnectBoot=null;
+'use strict';const $=id=>document.getElementById(id);let config=null,lastStatus=null,page='Overview',timer=null,uploading=false,reconnecting=false,reconnectBoot=null,restartBusy=false;
 const pages=['Overview','Temperature','Wi-Fi','Home Assistant','MQTT thermostat','Controller','ESP-NOW','Ship tracking','Sound & display','System'];
 function el(tag,text,cls){const n=document.createElement(tag);if(text!==undefined)n.textContent=String(text);if(cls)n.className=cls;return n;}
 function badge(text,kind){return el('span',text,'badge '+(['ok','offline','unconfigured','standby','fallback'].includes(kind)?kind:'standby'));}
@@ -97,15 +97,28 @@ function render(){
   check(grid,'Camera: Fill (crop edges)','fill',config.camera_fill);const row=actions(form,'sound',()=>({volume:Number($('volume').value),camera_fill:$('fill').checked}),'Apply');
   const test=el('button','Test sound');test.type='button';test.onclick=async()=>{try{await request({section:'sound',volume:Number($('volume').value),camera_fill:$('fill').checked});await request({section:'sound_test'});}catch(e){message(e.message)}};row.append(test);
  }else if(page==='System'){
+  const restartRow=el('div',undefined,'actions');
+  const restart=el('button','Restart thermostat');restart.id='restartThermostat';restart.type='button';restart.disabled=uploading||reconnecting||restartBusy;
+  restart.onclick=async()=>{
+   if(uploading||reconnecting||restartBusy||restart.disabled)return;
+   if(!confirm('Restart the thermostat? Saved settings are preserved. The display and sensor reports will pause briefly while it reconnects.'))return;
+   restartBusy=true;restart.disabled=true;$('uploadFirmware').disabled=true;
+   const previousBoot=lastStatus?.firmware?.boot_id;
+   try{await request({section:'restart',confirm:'restart_thermostat'});reconnecting=true;reconnectBoot=previousBoot;message('Thermostat restarting; reconnecting to live status...');}
+   catch(err){message('Restart could not be confirmed: '+err.message);}
+   finally{restartBusy=false;restart.disabled=reconnecting;$('uploadFirmware').disabled=reconnecting;}
+  };
+  restartRow.append(restart);c.insertBefore(restartRow,form);
+  c.insertBefore(el('p','Restart the thermostat without changing saved settings. The furnace controller keeps its saved operating mode.'),form);
   c.insertBefore(el('p','Upload the application .bin built for this Waveshare 4B display. Do not upload a bootloader, merged flash image, or controller firmware. One initial USB flash installs the OTA partition layout.'),form);
   const details=el('p');details.id='firmwareInfo';c.insertBefore(details,form);renderFirmware();
   const file=field(grid,'Firmware .bin file','firmware','','file');file.accept='.bin,application/octet-stream';
   const progress=el('progress');progress.id='uploadProgress';progress.max=100;progress.value=0;form.append(progress);
-  const row=el('div',undefined,'actions');const b=el('button','Upload firmware','primary');b.type='submit';row.append(b);form.append(row);
-  form.onsubmit=e=>{e.preventDefault();const f=file.files[0];if(!f||!f.name.toLowerCase().endsWith('.bin')){message('Choose an application .bin file.');return;}
+  const row=el('div',undefined,'actions');const b=el('button','Upload firmware','primary');b.type='submit';b.id='uploadFirmware';b.disabled=reconnecting;row.append(b);form.append(row);
+  form.onsubmit=e=>{e.preventDefault();if(uploading||reconnecting||restartBusy)return;const f=file.files[0];if(!f||!f.name.toLowerCase().endsWith('.bin')){message('Choose an application .bin file.');return;}
    const slot=lastStatus?.firmware?.slot_bytes;if(!slot){message('OTA layout unavailable. Flash this version once over USB first.');return;}
    if(f.size>slot){message('The file is larger than the OTA slot.');return;}
-   uploading=true;b.disabled=true;const x=new XMLHttpRequest();x.open('POST','/api/firmware');x.setRequestHeader('Content-Type','application/octet-stream');
+   uploading=true;b.disabled=true;restart.disabled=true;const x=new XMLHttpRequest();x.open('POST','/api/firmware');x.setRequestHeader('Content-Type','application/octet-stream');
    x.upload.onprogress=e=>{if(e.lengthComputable){progress.value=Math.round(e.loaded/e.total*100);message('Uploading '+progress.value+'% — keep power connected.');}};
    x.onload=()=>{uploading=false;b.disabled=false;let j={};try{j=JSON.parse(x.responseText)}catch{}if(x.status===200){progress.value=100;reconnecting=true;reconnectBoot=lastStatus?.firmware?.boot_id;message(j.message||'Image validated. Rebooting...');}else message(j.message||'Upload rejected. Previous firmware remains active.');};
    x.onerror=()=>{uploading=false;b.disabled=false;message('Upload connection interrupted. Check the device status before retrying.');};x.timeout=180000;x.ontimeout=x.onerror;x.send(f);
@@ -155,6 +168,8 @@ if($('mqttDetail'))$('mqttDetail').textContent=j.mqtt?.status||'Not configured';
  if(reconnecting&&j.firmware?.boot_id!==reconnectBoot){reconnecting=false;message('Device is back online. Running firmware '+(j.firmware?.version||'?')+'.');try{await loadConfig()}catch{config=null}}
  if(!config&&!reconnecting)await loadConfig();
  }catch(e){$('statusAge').textContent=reconnecting?'Device restarting; reconnecting...':'Device unreachable; retrying...';$('summary').replaceWith(Object.assign(badge('Offline','offline'),{id:'summary'}));}
+ const restart=$('restartThermostat');if(restart)restart.disabled=uploading||reconnecting||restartBusy;
+ const upload=$('uploadFirmware');if(upload)upload.disabled=uploading||reconnecting||restartBusy;
 }
 render();poll();timer=setInterval(poll,3000);
 </script></body></html>

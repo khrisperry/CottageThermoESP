@@ -1,7 +1,8 @@
 {
   "private": true,
   "scripts": {
-    "test": "node test-controller-workflow.mjs && node test-ha-ui.cjs",
+    "test": "node test-controller-workflow.mjs && node test-thermostat-restart.mjs && node test-ha-ui.cjs",
+    "test:restart": "node test-thermostat-restart.mjs",
     "test:device": "node test-device-web.cjs",
     "test:ha": "node test-ha-ui.cjs",
     "test:encoder": "node test-encoder-ui.cjs",

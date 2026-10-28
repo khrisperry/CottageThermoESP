@@ -47,6 +47,8 @@ static bool save_live_mode(bool enabled){
     snprintf(live_issue,sizeof(live_issue),enabled?"Live selected":"Service selected");
     return true;
 }
+static bool save_live_mode_reason(bool enabled,const char *reason)
+{assert(reason&&*reason);return save_live_mode(enabled);}
 static bool number(cJSON *j,const char *key,double *out){cJSON *v=cJSON_GetObjectItemCaseSensitive(j,key);if(!cJSON_IsNumber(v)||!isfinite(v->valuedouble))return false;*out=v->valuedouble;return true;}
 static bool text_is(cJSON *j,const char *key,const char *s){cJSON *v=cJSON_GetObjectItemCaseSensitive(j,key);return cJSON_IsString(v)&&!strcmp(v->valuestring,s);}
 #include "../controller/main/controller_setup_http.inc"

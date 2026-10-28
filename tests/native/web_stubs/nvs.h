@@ -10,3 +10,5 @@ int nvs_set_blob(nvs_handle_t,const char*,const void*,size_t);
 int nvs_get_str(nvs_handle_t,const char*,char*,size_t*);
 int nvs_set_str(nvs_handle_t,const char*,const char*);
 int nvs_commit(nvs_handle_t);
+int nvs_get_i16(nvs_handle_t,const char*,int16_t*);
+int nvs_set_i16(nvs_handle_t,const char*,int16_t);

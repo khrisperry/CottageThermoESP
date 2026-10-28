@@ -155,6 +155,14 @@ static esp_err_t save(httpd_req_t *r)
     int at=0;while(at<r->content_len){int n=httpd_req_recv(r,body+at,r->content_len-at);if(n<=0){memset(body,0,r->content_len+1);free(body);return ESP_FAIL;}at+=n;}
     cJSON *j=cJSON_ParseWithLengthOpts(body,at+1,NULL,true);memset(body,0,at+1);free(body);
     cJSON *v=cJSON_GetObjectItemCaseSensitive(j,"section");const char *section=cJSON_IsString(v)?v->valuestring:"";
+    if(!strcmp(section,"restart")){
+        cJSON *confirm=cJSON_GetObjectItemCaseSensitive(j,"confirm");
+        bool confirmed=cJSON_IsString(confirm)&&!strcmp(confirm->valuestring,"restart_thermostat");
+        cJSON_Delete(j);
+        if(!confirmed)return reply(r,400,"Confirm thermostat restart.");
+        if(!room_settings_reboot_later())return reply(r,500,"Could not schedule restart. Please retry.");
+        return reply(r,200,"Thermostat restarting. Saved settings are preserved.");
+    }
     settings_t *next=malloc(sizeof(*next));if(!next){cJSON_Delete(j);return ESP_ERR_NO_MEM;}*next=current;
     bool valid=false,restart=true;
     if(!strcmp(section,"ha")){

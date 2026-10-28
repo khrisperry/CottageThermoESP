@@ -29,6 +29,7 @@
 #include "controller_mqtt.h"
 #include "controller_encoder.h"
 #include "controller_live.h"
+#include "controller_recovery.h"
 #include "controller_pwm_duty.h"
 #include "controller_setup.h"
 #include "controller_integrations.h"
@@ -49,6 +50,8 @@ static bool away_active;
 /* NVS-selected intent, not permission to move until all safety prerequisites
  * pass after boot. Service always starts with servo output disabled. */
 static bool live_selected,live_fault,live_verifying;
+static atomic_bool restart_pending;
+static controller_recovery_t recovery;
 static uint64_t live_verify_at,live_candidate_since;
 static float live_verify_level,live_candidate_level;
 static char live_issue[120]="Service mode: automatic motion disabled";
@@ -98,6 +101,7 @@ static void event(const char *text)
 }
 static esp_err_t pulse(int us)
 {
+    if(restart_pending)return ESP_ERR_INVALID_STATE;
     if (!controller_setup_contains(&setup,us)) return ESP_ERR_INVALID_ARG;
     if (!timer_ready) {
         ledc_timer_config_t t={.speed_mode=LEDC_LOW_SPEED_MODE,.duty_resolution=LEDC_TIMER_13_BIT,
@@ -252,6 +256,7 @@ static esp_err_t json_send(httpd_req_t *r,cJSON *j)
 }
 static cJSON *body(httpd_req_t *r)
 {
+    if(restart_pending)return NULL;
     if (r->content_len<=0 || r->content_len>4096) return NULL;
     char *s=calloc(1,r->content_len+1); if (!s) return NULL;
     int at=0;
@@ -273,6 +278,7 @@ static bool text_is(cJSON *j,const char *key,const char *s)
     cJSON *v=cJSON_GetObjectItemCaseSensitive(j,key);
     return cJSON_IsString(v) && strcmp(v->valuestring,s)==0;
 }
+#include "controller_restart.inc"
 static esp_err_t root_get(httpd_req_t *r)
 {
     httpd_resp_set_type(r,"text/html; charset=utf-8");
@@ -350,7 +356,7 @@ static esp_err_t get_api(httpd_req_t *r)
         }
     } else {
         j=cJSON_CreateObject();
-        cJSON_AddStringToObject(j,"version","0.7.2");
+        cJSON_AddStringToObject(j,"version","0.7.3");
 #ifdef CONFIG_THERMO_SUPERMINI
         cJSON_AddStringToObject(j,"board","HW-747 Super Mini 4 MB");
 #else
@@ -364,6 +370,14 @@ static esp_err_t get_api(httpd_req_t *r)
         cJSON_AddBoolToObject(j,"live_verifying",live_verifying);
         cJSON_AddStringToObject(j,"live_issue",live_issue);
         cJSON_AddStringToObject(j,"last_live_exit_reason",last_live_exit_reason);
+        cJSON_AddBoolToObject(j,"restart_pending",restart_pending);
+        cJSON *reconnect=cJSON_AddObjectToObject(j,"link_recovery");
+        cJSON_AddBoolToObject(reconnect,"enabled",live_selected&&!live_fault);
+        cJSON_AddNumberToObject(reconnect,"timeout_ms",CONTROLLER_RECOVERY_MS);
+        if(live_selected&&!live_fault)cJSON_AddNumberToObject(reconnect,"remaining_ms",
+            controller_recovery_remaining(&recovery,now_ms()));
+        if(recovery.sample_received)cJSON_AddNumberToObject(reconnect,"last_sample_age_ms",
+            now_ms()-recovery.last_sample_ms);
         cJSON_AddBoolToObject(j,"away",away_active);
         cJSON_AddNumberToObject(j,"comfort_target_f",state.config.target_f);
         cJSON_AddBoolToObject(j,"freeze_below_calibrated_range",state.away_clamped);
@@ -560,6 +574,7 @@ static void link_handle(const tl_packet_t *p,tl_packet_t *reply)
             result=save_away(p->value==1)?TL_OK:TL_SAVE_FAILED;
         }else if(p->operation==TL_SAMPLE){
             result=th_sample(&state,TH_ROOM,p->value,p->age_ms,now)?TL_OK:TL_INVALID;
+            if(result==TL_OK)controller_recovery_sample(&recovery,now);
         }
     }
     *reply=tl_request(TL_REPLY,p->client,p->sequence);reply->result=result;
@@ -667,6 +682,13 @@ static void control_task(void *unused)
     for(;;) {
         xSemaphoreTake(lock,portMAX_DELAY);
         uint64_t now=now_ms();
+        if(!restart_pending && controller_recovery_due(&recovery,live_selected&&!live_fault,now)){
+            if(!schedule_controller_restart("No valid thermostat sample for 30 minutes; restarting with saved mode"))
+                ESP_LOGE(TAG,"Could not schedule thermostat-link recovery restart");
+        }
+        if(restart_pending){
+            xSemaphoreGive(lock);vTaskDelay(pdMS_TO_TICKS(1000));continue;
+        }
         if(!live_selected && armed && now>=armed_until) {
             release();state.config.mode=TH_HOLD;
             event("Bench session ended after 15 minutes; PWM disabled");
@@ -935,6 +957,7 @@ static void network_start(void)
     for(unsigned i=0;i<5;++i) {httpd_uri_t u={.uri=gets[i],.method=HTTP_GET,.handler=get_api};ESP_ERROR_CHECK(httpd_register_uri_handler(h,&u));}
     httpd_uri_t setup_uri={.uri="/api/setup",.method=HTTP_POST,.handler=setup_post};ESP_ERROR_CHECK(httpd_register_uri_handler(h,&setup_uri));
     httpd_uri_t link={.uri="/api/link",.method=HTTP_POST,.handler=link_post};ESP_ERROR_CHECK(httpd_register_uri_handler(h,&link));
+    httpd_uri_t restart={.uri="/api/restart",.method=HTTP_POST,.handler=restart_post};ESP_ERROR_CHECK(httpd_register_uri_handler(h,&restart));
     httpd_uri_t net={.uri="/api/network",.method=HTTP_POST,.handler=network_post};ESP_ERROR_CHECK(httpd_register_uri_handler(h,&net));
     httpd_uri_t integrations={.uri="/api/integrations",.method=HTTP_POST,.handler=integrations_post};ESP_ERROR_CHECK(httpd_register_uri_handler(h,&integrations));
     const char *posts[]={"/api/config","/api/temperature","/api/stop","/api/arm","/api/sync","/api/pulse","/api/clock"};

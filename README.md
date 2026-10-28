@@ -2,7 +2,11 @@
 
 ESP-IDF smart thermostat / mechanical knob actuator project for a **Williams model 1773512 direct-vent cottage furnace**.
 
-> **Review: controller v0.6.1; native 4B room panel v0.13.8.** Controller and room client are separate ESP-IDF 6.0.1 projects. Restart starts stopped; physical automatic output requires explicit Go after calibration and a known bench starting position. Mechanical travel/torque, encoder feedback and appliance integration remain unverified.
+> **Current branch: controller v0.7.3; native 4B room panel v0.15.1.** Controller and room client are separate ESP-IDF 6.0.1 projects. Saved Live survives restart and resumes only after fresh thermostat and calibrated AS5600 checks. Service and temporary Bench Go start stopped. Mechanical/appliance validation remains separate from firmware tests.
+
+Room panel v0.15.1 adds **System → Restart thermostat** on its webpage. It preserves saved settings, waits for a new boot before reporting reconnection, and rejects restart during a firmware update. It does not change the controller's saved operating mode.
+
+Controller v0.7.3 adds **Restart controller** to its webpage, preserving saved mode, target and calibration. In Live, 30 minutes without an accepted primary thermostat sample (HTTP or encrypted ESP-NOW) schedules a restart, including when no first connection was established. Service/Calibration and encoder/PWM faults are exempt. Browser/status traffic cannot reset this timer. A continued outage can cause another restart after each full 30-minute boot window. The webpage reports the countdown; active Live with PWM off now reads **Monitoring**, rather than **Stopped**. See [restart and recovery testing](docs/CONTROLLER_RESTART_RECOVERY.md).
 
 Controller v0.6.1 restores the Super Mini 13 dBm TX limit for a controlled Wi-Fi comparison after authentication timeouts at the 20 dBm driver default. See [the Wi-Fi comparison notes](docs/CONTROLLER_WIFI_V061.md).
 

@@ -116,6 +116,13 @@ add_test(NAME controller_live COMMAND test_controller_live)
 # Pass -DCJSON_SOURCE_DIR=<checkout of DaveGamble/cJSON> to exercise the actual
 # controller HTTP workflow with fake hardware/NVS boundaries on a host.
 if(CJSON_SOURCE_DIR)
+    add_executable(test_controller_recovery test_controller_recovery.c "${CJSON_SOURCE_DIR}/cJSON.c")
+    target_include_directories(test_controller_recovery PRIVATE ../controller/main "${CJSON_SOURCE_DIR}")
+    if(NOT MSVC)
+        target_compile_options(test_controller_recovery PRIVATE -Wall -Wextra -Werror)
+    endif()
+    add_test(NAME controller_recovery COMMAND test_controller_recovery)
+
     add_executable(test_controller_setup_api test_controller_setup_api.c ../controller/main/controller_setup.c ../controller/main/controller_live.c ../shared/thermo/thermo.c "${CJSON_SOURCE_DIR}/cJSON.c")
     target_include_directories(test_controller_setup_api PRIVATE ../controller/main ../shared/thermo "${CJSON_SOURCE_DIR}")
     if(NOT MSVC)

@@ -13,6 +13,10 @@ window.fetch=async(path,opts={})=>{
   const data=JSON.parse(opts.body);posts.push({path,data});
   if(path==='/api/stop')Object.assign(state,{operation:'stopped',operating_mode:'service',live_active:false,simulation:true,pwm_active:false,bench_armed:false});
   else if(path==='/api/config')state.target_f=data.target_f;
+  else if(path==='/api/restart'){
+   assert.deepEqual(data,{confirm:'restart_controller'});
+   state.restart_pending=true;
+  }
   else if(path==='/api/setup'){
    if(data.action==='test')Object.assign(state,{operation:'test',simulation:true,pwm_active:false,bench_armed:true,arm_remaining_ms:900000,last_command_us:-1});
    else if(data.action==='pulse'){
@@ -105,5 +109,23 @@ assert(!marker.disabled,'captured dial marks are editable while one limit is ope
 marker.click();await settle();
 assert.equal(posts.at(-1).data.action,'capture');
 assert.equal(posts.at(-1).data.index,7);
-offline=true;await intervals.at(-1)();assert(id('testButton').disabled&&id('sendPulse').disabled&&id('goButton').disabled);assert.equal(id('encoderAngle').textContent,'—');assert.deepEqual(errors,[]);
+/* Live can restore at the measured target with PWM off. It remains active,
+ * and the page must distinguish monitoring from a stopped controller. */
+Object.assign(state,{operating_mode:'live',operation:'go',live_active:true,pwm_active:false,
+ reason:'mapped_setting_reached',link_recovery:{enabled:true,remaining_ms:1800000}});
+await intervals.at(-1)();
+assert.equal(id('output').textContent,'Monitoring');
+assert(id('session').textContent.includes('Live active'));
+assert(id('recoveryStatus').textContent.includes('30 min'));
+const beforeRestart=posts.length,calibrationBefore=structuredClone(profile);
+window.confirm=()=>false;id('restartController').click();await settle();
+assert.equal(posts.length,beforeRestart,'Cancelled restart must send nothing');
+window.confirm=()=>true;id('restartController').click();await settle();
+assert.equal(posts.at(-1).path,'/api/restart');
+assert.equal(posts.length,beforeRestart+1,'Restart must never send Stop/Service');
+assert.equal(state.operating_mode,'live');assert.deepEqual(profile,calibrationBefore);
+assert(id('restartController').disabled&&id('testButton').disabled&&id('stopButton').disabled);
+state.restart_pending=false;await intervals.at(-1)();
+assert(!id('restartController').disabled&&id('output').textContent==='Monitoring');
+offline=true;await intervals.at(-1)();assert(id('restartController').disabled&&id('testButton').disabled&&id('sendPulse').disabled&&id('goButton').disabled);assert.equal(id('encoderAngle').textContent,'—');assert.deepEqual(errors,[]);
 window.happyDOM.abort();console.log('PASS: controller page: safe travel-limit correction, preservation, no auto movement, Test/Go/Stop, invalid temperatures and offline controls');
