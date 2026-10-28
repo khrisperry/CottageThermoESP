@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include "driver/i2c_master.h"
 #include "esp_event.h"
 #include "esp_http_client.h"
@@ -85,6 +86,11 @@ void app_main(void)
     cJSON_Hooks hooks={.malloc_fn=json_allocate,.free_fn=free};cJSON_InitHooks(&hooks);
 #endif
     room_settings_init();
+    /* Digital clock follows Michigan local time including automatic DST.
+     * This only affects localtime_r() formatting. Existing SNTP source,
+     * Wi-Fi/ESP-NOW, controller protocol and MQTT are unchanged. */
+    if(setenv("TZ","EST5EDT,M3.2.0/2,M11.1.0/2",1)==0)tzset();
+    else ESP_LOGW(TAG,"Cannot set local clock timezone; time may show UTC");
     room_wifi_start();
     esp_err_t mdns_err=mdns_init();
     if(mdns_err==ESP_OK)ESP_LOGI(TAG,"Controller mDNS lookup available; searching CottageThermoController.local");
