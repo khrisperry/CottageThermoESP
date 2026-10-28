@@ -6,6 +6,9 @@ typedef void (*tl_radio_handler_t)(const tl_packet_t *request,tl_packet_t *reply
 void tl_radio_start(tl_radio_handler_t handler);
 bool tl_radio_configured(void);
 bool tl_radio_online(void);
+/* Last authenticated ESP-NOW reply time in controller monotonic uint32 ms.
+ * Read-only telemetry for a low-priority status LED; no packet changes. */
+uint32_t tl_radio_last_reply_ms(void);
 esp_err_t tl_radio_exchange(const tl_packet_t *request,tl_packet_t *reply);
 /* Wi-Fi owner calls only while disconnected and NOT connecting/scanning.
  * Stops channel hopping while a recent authenticated exchange is healthy. */
