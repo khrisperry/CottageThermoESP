@@ -480,6 +480,24 @@ static lv_obj_t *panel(lv_obj_t *parent,int x,int y,int w,int h,uint32_t color,i
     lv_obj_set_style_border_width(o,1,0);lv_obj_remove_flag(o,LV_OBJ_FLAG_SCROLLABLE|LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_flag(o,LV_OBJ_FLAG_GESTURE_BUBBLE);return o;
 }
+/* Design #3's split-temperature dial. These two visual-only segments
+ * sit below the original interactive arc (which still owns the target).
+ * No new input, timer, data source or network path is introduced. */
+static void climate_arc_segment(lv_obj_t *parent,int start,int end,uint32_t color)
+{
+    lv_obj_t *arc=lv_arc_create(parent);
+    lv_obj_set_pos(arc,ROOM_CLIMATE_RING_X,ROOM_CLIMATE_RING_Y);
+    lv_obj_set_size(arc,ROOM_CLIMATE_RING_SIZE,ROOM_CLIMATE_RING_SIZE);
+    lv_arc_set_rotation(arc,135);
+    lv_arc_set_bg_angles(arc,0,270);
+    lv_arc_set_angles(arc,start,end);
+    lv_obj_set_style_arc_opa(arc,LV_OPA_TRANSP,LV_PART_MAIN);
+    lv_obj_set_style_arc_color(arc,lv_color_hex(color),LV_PART_INDICATOR);
+    lv_obj_set_style_arc_width(arc,16,LV_PART_INDICATOR);
+    lv_obj_remove_style(arc,NULL,LV_PART_KNOB);
+    lv_obj_remove_flag(arc,LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_flag(arc,LV_OBJ_FLAG_GESTURE_BUBBLE);
+}
 static void centered(lv_obj_t *o){lv_obj_set_style_text_align(o,LV_TEXT_ALIGN_CENTER,0);}
 static void tint(lv_obj_t *o,uint32_t color){lv_obj_set_style_text_color(o,lv_color_hex(color),0);}
 static lv_obj_t *button(lv_obj_t *parent,const char *text,int x,int y,int width,int height,lv_event_cb_t cb,intptr_t id)
@@ -1009,48 +1027,86 @@ static void build_ui(void)
     lv_obj_set_style_pad_all(notice,8,0);
     lv_obj_set_style_radius(notice,12,0);
     lv_label_set_long_mode(notice,LV_LABEL_LONG_DOT);lv_obj_set_height(notice,42);lv_obj_add_flag(notice,LV_OBJ_FLAG_HIDDEN);
-    /* Climate inherits the same raised-card language as the other tabs.
-     * The draggable arc and one-commit Set Temp behavior are unchanged. */
-    lv_obj_t *climate_surface=panel(body[0],0,0,456,364,SURFACE,20);
-    lv_obj_set_style_border_color(climate_surface,lv_color_hex(EDGE),0);
-    lv_obj_t *climate_status=panel(body[0],12,266,432,46,CARD,13);
-    lv_obj_set_style_border_width(climate_status,1,0);
+    /* A genuine reproduction of Design #3's asymmetric Climate view:
+     * HEAT and large target on left; blue/orange split dial on right.
+     * The four existing command buttons remain in one bottom row.
+     * Both segments/ticks are purely decorative, while temperature_ring
+     * continues owning the EXACT SAME LVGL drag and Set Temp behavior. */
+    lv_obj_t *climate_surface=panel(body[0],0,0,456,364,0x081b30,18);
+    lv_obj_set_style_bg_grad_color(climate_surface,lv_color_hex(0x06111f),0);
+    lv_obj_set_style_bg_grad_dir(climate_surface,LV_GRAD_DIR_VER,0);
+    lv_obj_set_style_border_color(climate_surface,lv_color_hex(0x16344c),0);
+    lv_obj_t *heat_flame=panel(body[0],20,67,13,19,AMBER,9);
+    lv_obj_set_style_border_width(heat_flame,0,0);
+    lv_obj_t *flame_inner=panel(heat_flame,4,8,6,9,0xd66b21,5);
+    lv_obj_set_style_border_width(flame_inner,0,0);
+    lv_obj_t *heat_tag=label(body[0],"HEAT",42,66,132,&lv_font_montserrat_20);
+    tint(heat_tag,TEXT);
+    target_label=label(body[0],"--",18,113,172,&lv_font_montserrat_48);
+    tint(target_label,TEXT);
+    temp_label=label(body[0],"Current --",19,187,172,&lv_font_montserrat_16);
+    tint(temp_label,MUTED);
+    /* A little visual breathing room below the two left-side figures. */
+    lv_obj_t *target_accent=panel(body[0],21,221,42,3,AMBER,2);
+    lv_obj_set_style_border_width(target_accent,0,0);
+
+    /* Blue cool side / amber heat side, like the concept rendering.
+     * These arcs never intercept a finger and have no servo authority. */
+    climate_arc_segment(body[0],0,144,0x149cff);
+    climate_arc_segment(body[0],144,270,0xff9636);
+    /* Fine radial markers inside the dial are static LVGL primitives. */
+    const int center_x=ROOM_CLIMATE_RING_X+ROOM_CLIMATE_RING_SIZE/2;
+    const int center_y=ROOM_CLIMATE_RING_Y+ROOM_CLIMATE_RING_SIZE/2;
+    for(int t=0;t<=24;++t){
+        const float a=(135.0f+270.0f*(float)t/24.0f)*3.14159265f/180.0f;
+        const int x=(int)lroundf(center_x+83.0f*cosf(a));
+        const int y=(int)lroundf(center_y+83.0f*sinf(a));
+        lv_obj_t *mark=panel(body[0],x-1,y-2,2,4,
+                              t<13?0x205f93:0x8b562a,1);
+        lv_obj_set_style_border_width(mark,0,0);
+    }
     temperature_ring=lv_arc_create(body[0]);
     lv_obj_set_size(temperature_ring,ROOM_CLIMATE_RING_SIZE,ROOM_CLIMATE_RING_SIZE);
     lv_obj_set_pos(temperature_ring,ROOM_CLIMATE_RING_X,ROOM_CLIMATE_RING_Y);
-    lv_arc_set_range(temperature_ring,45,80);lv_arc_set_rotation(temperature_ring,135);
+    lv_arc_set_range(temperature_ring,45,80);
+    lv_arc_set_rotation(temperature_ring,135);
     lv_arc_set_bg_angles(temperature_ring,0,270);
     lv_arc_set_mode(temperature_ring,LV_ARC_MODE_NORMAL);
-    lv_obj_set_style_arc_width(temperature_ring,14,LV_PART_MAIN);
-    lv_obj_set_style_arc_width(temperature_ring,14,LV_PART_INDICATOR);
-    lv_obj_set_style_arc_color(temperature_ring,lv_color_hex(0x274966),LV_PART_MAIN);
+    /* Decorative arcs supply the color. Keep the *real* LVGL slider
+     * invisible except for its movable, outlined temperature knob. */
+    lv_obj_set_style_arc_opa(temperature_ring,LV_OPA_TRANSP,LV_PART_MAIN);
+    lv_obj_set_style_arc_opa(temperature_ring,LV_OPA_TRANSP,LV_PART_INDICATOR);
     lv_obj_set_style_bg_color(temperature_ring,lv_color_hex(AMBER),LV_PART_KNOB);
-    lv_obj_set_style_border_color(temperature_ring,lv_color_hex(0xffe0a2),LV_PART_KNOB);
-    lv_obj_set_style_border_width(temperature_ring,2,LV_PART_KNOB);
-    lv_obj_set_style_pad_all(temperature_ring,8,LV_PART_KNOB);
+    lv_obj_set_style_border_color(temperature_ring,lv_color_hex(0xffe4bb),LV_PART_KNOB);
+    lv_obj_set_style_border_width(temperature_ring,3,LV_PART_KNOB);
+    lv_obj_set_style_pad_all(temperature_ring,9,LV_PART_KNOB);
     lv_obj_set_style_radius(temperature_ring,LV_RADIUS_CIRCLE,LV_PART_KNOB);
     lv_obj_add_flag(temperature_ring,LV_OBJ_FLAG_CLICKABLE);
     lv_obj_remove_flag(temperature_ring,LV_OBJ_FLAG_GESTURE_BUBBLE);
     lv_obj_add_event_cb(temperature_ring,target_ring_event,LV_EVENT_VALUE_CHANGED,NULL);
-    lv_obj_t *room_caption=label(body[0],"ROOM TEMPERATURE",0,72,ROOM_PAGE_W,&lv_font_montserrat_14);
-    centered(room_caption);tint(room_caption,MUTED);
-    temp_label=label(body[0],"-- F",0,101,ROOM_PAGE_W,&lv_font_montserrat_48);
-    centered(temp_label);
-    target_label=label(body[0],"Target unavailable",0,165,ROOM_PAGE_W,&lv_font_montserrat_20);
-    centered(target_label);tint(target_label,AMBER);
-    /* A narrow, two-line hint sits completely inside the ring instead
-     * of crossing the colored arc as the single long label did. */
-    lv_obj_t *hint=label(body[0],"DRAG RING\nTO ADJUST",138,195,180,&lv_font_montserrat_14);
-    centered(hint);tint(hint,MUTED);
-    lv_obj_set_style_text_line_space(hint,3,0);
-    mode_label=label(body[0],"Controller Offline",0,ROOM_CLIMATE_MODE_Y,
-        ROOM_CLIMATE_STATUS_W,&lv_font_montserrat_16);
-    centered(mode_label);tint(mode_label,AMBER);
-    reason_label=label(body[0],"Waiting for status",0,ROOM_CLIMATE_REASON_Y,
-        ROOM_CLIMATE_STATUS_W,&lv_font_montserrat_14);
-    centered(reason_label);tint(reason_label,MUTED);
+    lv_obj_t *dial_circle=panel(body[0],center_x-67,center_y-67,134,134,
+                                 0x07192b,67);
+    lv_obj_set_style_bg_opa(dial_circle,LV_OPA_20,0);
+    lv_obj_set_style_border_color(dial_circle,lv_color_hex(0x244762),0);
+    lv_obj_set_style_border_width(dial_circle,1,0);
+    lv_obj_t *hint=label(body[0],"DRAG RING\nTO ADJUST",
+                         center_x-65,center_y-20,130,&lv_font_montserrat_14);
+    centered(hint);
+    tint(hint,BLUE);
+    lv_obj_set_style_text_line_space(hint,4,0);
+    /* Keep the actual status and reason legible without competing with
+     * the large left-side target or the gauge. */
+    lv_obj_t *climate_status=panel(body[0],12,269,432,44,0x0c2235,11);
+    lv_obj_set_style_bg_grad_color(climate_status,lv_color_hex(0x132c3e),0);
+    lv_obj_set_style_bg_grad_dir(climate_status,LV_GRAD_DIR_HOR,0);
+    lv_obj_set_style_border_color(climate_status,lv_color_hex(0x19374c),0);
+    mode_label=label(body[0],"Controller Offline",20,270,416,&lv_font_montserrat_16);
+    tint(mode_label,AMBER);
+    reason_label=label(body[0],"Waiting for status",20,293,416,&lv_font_montserrat_14);
+    tint(reason_label,MUTED);
     lv_label_set_long_mode(reason_label,LV_LABEL_LONG_DOT);
-    lv_obj_set_height(reason_label,20);
+    lv_obj_set_height(reason_label,18);
+    /* Preserve exact user-approved one-line control order and callbacks. */
     minus_button=button(body[0],"-1",ROOM_CLIMATE_MINUS_X,ROOM_CLIMATE_BUTTON_Y,
         ROOM_CLIMATE_MINUS_W,ROOM_CLIMATE_BUTTON_H,send_event,-2);
     apply_button=button(body[0],"Set Temp",ROOM_CLIMATE_SET_X,ROOM_CLIMATE_BUTTON_Y,
@@ -1060,9 +1116,9 @@ static void build_ui(void)
     away_button=button(body[0],"Away",ROOM_CLIMATE_AWAY_X,ROOM_CLIMATE_BUTTON_Y,
         ROOM_CLIMATE_AWAY_W,ROOM_CLIMATE_BUTTON_H,send_event,-10);
     lv_obj_set_style_bg_color(apply_button,lv_color_hex(AMBER),0);
-    lv_obj_set_style_border_color(apply_button,lv_color_hex(0xffd996),0);
+    lv_obj_set_style_border_color(apply_button,lv_color_hex(0xffdfaa),0);
     tint(apply_button,INK);
-    lv_obj_set_style_bg_color(away_button,lv_color_hex(LIFT),0);
+    lv_obj_set_style_bg_color(away_button,lv_color_hex(0x153b59),0);
     /* Home Assistant-style compact 2-column grid, 5 usable tiles:
      * Deck / Breezeway, Blinds / Vacuum, Kids Heat / reserved empty slot.
      * Only light tiles toggle on touch; other controls stay explicit. */
