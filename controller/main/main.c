@@ -413,14 +413,16 @@ static esp_err_t get_api(httpd_req_t *r)
         cJSON_AddBoolToObject(net,"radio_online",tl_radio_online());
         cJSON_AddStringToObject(net,"radio_peer",profile->peer);
 #ifdef CONFIG_THERMO_SUPERMINI
-        /* Display status matches the actual blue LED indication. Red power
-         * hardware remains uncontrolled. This is diagnostic output only. */
+        /* GPIO48 RGB status only; USB charging indicators unaffected. */
         const unsigned led_mode=atomic_load(&led_reported_mode);
-        cJSON_AddStringToObject(net,"blue_led",
+        cJSON_AddStringToObject(net,"status_led",
             !atomic_load(&led_initialized)?"unavailable":
-            led_mode==CONTROLLER_LED_ERROR?"solid_error":
-            led_mode==CONTROLLER_LED_ESPNOW?"flashing_espnow":"off_wifi");
-        cJSON_AddNumberToObject(net,"blue_led_gpio",48);
+            led_mode==CONTROLLER_LED_FAULT?"red_solid_fault":
+            led_mode==CONTROLLER_LED_OFFLINE?"red_flashing_offline":
+            led_mode==CONTROLLER_LED_ESPNOW?"amber_flashing_espnow":
+            led_mode==CONTROLLER_LED_BOOT?"purple_pulsing_startup":
+            led_mode==CONTROLLER_LED_CONNECTED?"green_connected":"off_wifi");
+        cJSON_AddNumberToObject(net,"status_led_gpio",48);
 #endif
         /* Only non-setpoint / future adaptive moves use the five-minute
          * dwell. A changed thermostat target uses the short guard instead. */
@@ -796,33 +798,24 @@ static void reconnect_task(void *arg)
         vTaskDelay(pdMS_TO_TICKS(250));
     }
 }
-/* The status LED is independent of servo PWM, and polls only
- * read-only controller state. A controller fault takes priority, then the
- * freshest authenticated room link (HTTP vs ESP-NOW).
- *
- * The small blue USB-side light is a battery-charge indicator; it can
- * blink continuously even when Wi-Fi is healthy. The red USB-side LED
- * shares GPIO48 with the addressable RGB and is therefore affected.
- * Only the BLUE channel of the separate addressable RGB pixel on GPIO48
- * is commanded as a software status indicator.
- * If the onboard LED differs by board revision, initialization failure is
- * nonfatal: the controller continues operating without LED feedback. */
+/* Nonblocking, read-only status task; never moves the servo.
+ * Authenticated room activity is required, not just Wi-Fi association. */
 #ifdef CONFIG_THERMO_SUPERMINI
 static void controller_status_led_task(void *arg)
 {
     (void)arg;
-    bool prior_on=false,first=true;
-    controller_led_mode_t prior_mode=CONTROLLER_LED_OFF;
+    bool first=true;
+    controller_led_rgb_t prior={0,0,0};
+    controller_led_mode_t last_link_mode=CONTROLLER_LED_BOOT;
+    uint64_t connected_until=0;
     for(;;){
-        uint64_t now=now_ms();
-        uint64_t http_at=0;
+        uint64_t now=now_ms(),http_at=0;
         bool fault=false;
         xSemaphoreTake(lock,portMAX_DELAY);
         http_at=last_http_link;
         fault=live_fault || (state.reason&&!strcmp(state.reason,"pwm_error"));
         xSemaphoreGive(lock);
-        /* ESP-NOW counter wraps at 2^32 ms (~49 days). Reconstruct its
-         * recent age using unsigned 32-bit monotonic arithmetic. */
+        /* ESP-NOW wraps at 2^32 ms; use the unsigned 32-bit age. */
         uint64_t radio_at=0;
         uint32_t raw=tl_radio_last_reply_ms();
         if(raw){
@@ -830,19 +823,26 @@ static void controller_status_led_task(void *arg)
             if(ago<=CONTROLLER_LED_LINK_TTL_MS && now>=ago)
                 radio_at=now-ago;
         }
-        controller_led_mode_t mode=controller_led_choose(
+        controller_led_mode_t link_mode=controller_led_choose(
             fault,atomic_load(&station_up),http_at,radio_at,now);
-        const bool on=controller_led_illuminated(mode,now);
-        atomic_store(&led_reported_mode,(unsigned)mode);
-        if(first||mode!=prior_mode||on!=prior_on){
-            esp_err_t err=controller_status_led_write(on);
-            if(err!=ESP_OK){
-                ESP_LOGW("controller_status_led",
-                    "Blue indicator failed: %s; thermostat control unaffected",
-                    esp_err_to_name(err));
-            }
-            first=false;prior_mode=mode;prior_on=on;
+        if(link_mode==CONTROLLER_LED_OFF &&
+           last_link_mode!=CONTROLLER_LED_OFF)
+            connected_until=now+CONTROLLER_LED_CONNECTED_MS;
+        if(link_mode!=CONTROLLER_LED_OFF)connected_until=0;
+        controller_led_mode_t show=
+            link_mode==CONTROLLER_LED_OFF && now<connected_until
+                ?CONTROLLER_LED_CONNECTED:link_mode;
+        controller_led_rgb_t color=controller_led_color(show,now);
+        atomic_store(&led_reported_mode,(unsigned)show);
+        if(first||!controller_led_rgb_equal(color,prior)){
+            esp_err_t err=controller_status_led_write(color);
+            if(err!=ESP_OK)ESP_LOGW("controller_status_led",
+                "RGB LED write failed: %s; thermostat unaffected",
+                esp_err_to_name(err));
+            first=false;
+            prior=color;
         }
+        last_link_mode=link_mode;
         vTaskDelay(pdMS_TO_TICKS(200));
     }
 }
