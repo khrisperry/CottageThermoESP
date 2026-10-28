@@ -42,6 +42,7 @@ static atomic_uint last_reply_ms;
 static uint32_t millis(void){return (uint32_t)(esp_timer_get_time()/1000);}
 bool tl_radio_configured(void){return ready;}
 bool tl_radio_online(void){unsigned at=last_reply_ms;return ready&&at&&(uint32_t)(millis()-at)<8000;}
+uint32_t tl_radio_last_reply_ms(void){return ready?atomic_load(&last_reply_ms):0;}
 static void receive(const esp_now_recv_info_t *info,const uint8_t *data,int size)
 {
     if(!ready||!info||!info->src_addr||size!=(int)sizeof(wire_t)||memcmp(info->src_addr,peer_mac,6))return;
