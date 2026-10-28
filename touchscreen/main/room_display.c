@@ -307,14 +307,16 @@ static void select_page(unsigned p)
     for(unsigned n=0;n<5;++n){if(n==p)lv_obj_remove_flag(body[n],LV_OBJ_FLAG_HIDDEN);else lv_obj_add_flag(body[n],LV_OBJ_FLAG_HIDDEN);
         lv_obj_set_style_bg_color(nav[n],lv_color_hex(n==p?0x083857:0x071724),0);
         lv_obj_set_style_border_color(nav[n],lv_color_hex(n==p?BLUE:0x112b41),0);
-        if(nav_icon[n])tint(nav_icon[n],n==p?BLUE:MUTED);
+        if(nav_icon[n])lv_obj_set_style_text_color(nav_icon[n],
+            lv_color_hex(n==p?BLUE:MUTED),0);
         if(n==0&&nav_thermo_stem&&nav_thermo_bulb){
             lv_obj_set_style_bg_color(nav_thermo_stem,
                 lv_color_hex(n==p?BLUE:MUTED),0);
             lv_obj_set_style_bg_color(nav_thermo_bulb,
                 lv_color_hex(n==p?BLUE:MUTED),0);
         }
-        if(nav_caption[n])tint(nav_caption[n],n==p?BLUE:TEXT);
+        if(nav_caption[n])lv_obj_set_style_text_color(nav_caption[n],
+            lv_color_hex(n==p?BLUE:TEXT),0);
         if(nav_marker[n]){
             if(n==p)lv_obj_remove_flag(nav_marker[n],LV_OBJ_FLAG_HIDDEN);
             else lv_obj_add_flag(nav_marker[n],LV_OBJ_FLAG_HIDDEN);
