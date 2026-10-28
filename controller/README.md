@@ -1,4 +1,54 @@
-# Controller v0.7.0 — guarded persistent Live, Service and 50°F Freeze Hold
+# Controller v0.7.2 — blue status LED on HW-747 Super Mini
+
+The Super Mini's **onboard blue RGB LED** is used for connection and fault
+status, leaving the board's red power/charging indicator alone. This
+applies only to the `CONFIG_THERMO_SUPERMINI` build; no LED pins are taken
+from the servo GPIO5 or AS5600 GPIO6/GPIO7.
+
+| Blue LED | Meaning |
+|---|---|
+| **Off** | The Waveshare is currently communicating with the controller through verified LAN/Wi-Fi HTTP; all normal link/fault checks pass |
+| **Flashing (0.5 s on / 0.5 s off)** | ESP-NOW is the freshest paired link (even if the controller still has a Wi-Fi address) |
+| **Solid** | Persistent Live fault/PWM fault, or no recent authenticated room link after a one-minute boot grace period |
+
+**Service/Calibration is NOT itself a fault.** A normal Service page may be
+healthy with the blue LED off when the Waveshare has been communicating via
+LAN. A Live failure always overrides an otherwise healthy connection.
+These LEDs are **indicators only**; they do not arm, move, release or
+otherwise control the furnace. The brightness is intentionally low (blue
+channel 18/255) for nighttime use. The LED runs in a separate low-priority
+task using a single WS2812 RGB pixel on **GPIO48**, as commonly wired on the
+HW-747 ESP32-S3 Super Mini. Generic S3 SuperMini board revisions differ
+(e.g., some share GPIO48 with other LED circuits). **Verify the blue LED
+on the exact physical controller at the bench**, especially that the red
+power light behaves normally. The firmware cannot switch off a hardwired
+red power/charging LED.
+
+After boot, allow up to 60 seconds for Wi-Fi association and ESP-NOW pairing
+before treating solid blue as a communication fault. The room link expires
+after 20 seconds without recent controller traffic. The controller's
+`/api/status` `network.blue_led` field, and the controller webpage
+**Wi-Fi & connection** panel, report the chosen LED status. Note that an
+ESP-NOW reply queued successfully by the controller is not definitive proof
+the remote Waveshare received it; diagnose persistent blue with the
+Waveshare's own transport page and serial logs.
+
+**Local build only**; no GitHub Actions. In ESP-IDF 6.0.1 PowerShell, from
+the repository root:
+
+```powershell
+git pull --ff-only
+.\tools\build-controller-supermini.ps1 -Flash -Monitor -Port COM13
+```
+
+Replace COM13 with the actual controller's USB port. Do not erase NVS.
+**Only the Super Mini needs flashing** for the LED behavior; the Waveshare
+does not. Existing firmware pairing, Wi-Fi 13 dBm power setting, MQTT,
+sensor readings and servo commands are unchanged. The new host-only
+`test_controller_status_led` validates all three states and priority
+without RMT/ESP-IDF hardware.
+
+## Previous controller v0.7.1 — guarded persistent Live, Service and 50°F Freeze Hold
 
 **New persistent modes:** Service/Calibration is the safe default (PWM off on boot). After final mounted calibration, select Test, move to a saved numbered dial position, verify the AS5600, then select **Enable persistent Live**. Controller NVS remembers Live through firmware flashing and power loss, but never moves until startup validates the full dial/angle map, a stable magnetic position, and a fresh primary SHT45 report. Live has no 15-minute bench timeout; every Live movement requires AS5600 follow-up or it stops and attempts to persist Service. **Service** remains the only way to manually calibrate/test. The old 15-minute Go remains available for supervised bench use. Home Assistant cannot arm Live.
 
