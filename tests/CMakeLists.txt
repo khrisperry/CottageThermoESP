@@ -33,6 +33,15 @@ if(NOT MSVC)
 endif()
 add_test(NAME room_home_layout COMMAND test_room_home_layout)
 
+# Digital clock/idle policy is display-only and can be checked without LVGL,
+# hardware, network access or ESP-IDF.
+add_executable(test_room_clock test_room_clock.c)
+target_include_directories(test_room_clock PRIVATE ../touchscreen/main)
+if(NOT MSVC)
+    target_compile_options(test_room_clock PRIVATE -Wall -Wextra -Werror)
+endif()
+add_test(NAME room_clock COMMAND test_room_clock)
+
 add_executable(test_network test_network.c)
 if(NOT MSVC)
     target_compile_options(test_network PRIVATE -Wall -Wextra -Werror)
