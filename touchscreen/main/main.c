@@ -9,6 +9,7 @@
 #include "esp_http_client.h"
 #include "esp_http_server.h"
 #include "esp_log.h"
+#include "esp_app_desc.h"
 #include "esp_netif.h"
 #include "esp_timer.h"
 #include "esp_wifi.h"
@@ -148,6 +149,6 @@ void app_main(void)
         ESP_ERROR_CHECK(xTaskCreate(sensor_task,"room_probe",6144,NULL,3,NULL)==pdPASS?ESP_OK:ESP_ERR_NO_MEM);
     else ESP_LOGW(TAG,"Local probe disabled: configure probe type and pins");
     room_ota_confirm_boot();
-    ESP_LOGI(TAG,"Room client v0.15.4; native display and browser services ready");
+    ESP_LOGI(TAG,"Room client v%s; native display and browser services ready",esp_app_get_description()->version);
 }
 

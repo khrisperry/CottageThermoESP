@@ -35,3 +35,8 @@ CONFIG_LV_USE_SLIDER=y
 CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y
 # A bounded external-RAM LVGL arena avoids exhausting its old 64 KiB pool.
 CONFIG_LV_MEM_SIZE_KILOBYTES=256
+
+# Production primary probe: SHT45/SHT4x on the external I2C connector.
+CONFIG_ROOM_SENSOR=2
+CONFIG_ROOM_SDA=47
+CONFIG_ROOM_SCL=48

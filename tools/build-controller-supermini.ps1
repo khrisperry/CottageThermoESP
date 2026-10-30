@@ -1,5 +1,13 @@
+[CmdletBinding()]
 param([switch]$Flash, [switch]$Monitor, [string]$Port='')
 $ErrorActionPreference='Stop'
+# Avoid needless SDK config timestamps and full CMake reconfiguration.
+function Write-ConfigIfChanged([string]$Path, [string]$Text) {
+    if (-not (Test-Path $Path) -or (Get-Content $Path -Raw) -cne $Text) {
+        [IO.File]::WriteAllText($Path,$Text,[Text.UTF8Encoding]::new($false))
+    }
+}
+
 if (-not (Get-Command idf.py -ErrorAction SilentlyContinue)) {
     throw 'Run from the VSCode ESP-IDF 6.0.1 PowerShell terminal.'
 }
@@ -17,10 +25,11 @@ try {
     if (Test-Path $configPath) {
         $configText=Get-Content $configPath -Raw
         $configText=[regex]::Replace($configText,'(?m)^CONFIG_THERMO_SERVO_GPIO=.*\r?\n?','')
+        $configText=$configText.TrimEnd()
         $configText += [Environment]::NewLine + 'CONFIG_THERMO_SERVO_GPIO=5' + [Environment]::NewLine
-        [IO.File]::WriteAllText($configPath,$configText,[Text.UTF8Encoding]::new($false))
+        Write-ConfigIfChanged $configPath $configText
     }
-    Write-Host 'Super Mini bench: servo signal GPIO5 (outside hole), encoder SDA6/SCL7.'
+    Write-Host 'Super Mini controller: servo signal GPIO5 (outside hole), encoder SDA6/SCL7.'
     & idf.py @idfArgs build
     if ($LASTEXITCODE -ne 0) { throw 'Super Mini controller build failed.' }
     if ($Flash) {

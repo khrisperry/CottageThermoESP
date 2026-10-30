@@ -52,3 +52,9 @@ __pycache__/
 **/build-supermini/
 **/sdkconfig.supermini
 **/sdkconfig.supermini.old
+
+# Release/test output and downloaded test dependencies
+/dist/
+/build-host/
+/.test-deps/
+/tests/playwright-report/

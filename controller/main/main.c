@@ -11,6 +11,7 @@
 #include "driver/ledc.h"
 #include "esp_event.h"
 #include "esp_system.h"
+#include "esp_app_desc.h"
 #include "esp_http_server.h"
 #include "esp_log.h"
 #include "esp_netif.h"
@@ -404,7 +405,7 @@ static esp_err_t get_api(httpd_req_t *r)
         }
     } else {
         j=cJSON_CreateObject();
-        cJSON_AddStringToObject(j,"version","0.7.5");
+        cJSON_AddStringToObject(j,"version",esp_app_get_description()->version);
 #ifdef CONFIG_THERMO_SUPERMINI
         cJSON_AddStringToObject(j,"board","HW-747 Super Mini 4 MB");
 #else

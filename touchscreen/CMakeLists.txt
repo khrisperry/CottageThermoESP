@@ -2,8 +2,9 @@ cmake_minimum_required(VERSION 3.16)
 # Build main and its declared dependencies; omit unused framework drivers.
 set(COMPONENTS main)
 set(EXTRA_COMPONENT_DIRS "${CMAKE_CURRENT_LIST_DIR}/../shared/thermo_link")
+include("${CMAKE_CURRENT_LIST_DIR}/../cmake/release-version.cmake")
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
-project(cottage_thermo_room_4b VERSION 0.15.4)
+project(cottage_thermo_room_4b VERSION ${COTTAGE_THERMO_VERSION})
 
 
 if(NOT CONFIG_ROOM_NATIVE_DISPLAY OR NOT CONFIG_SPIRAM_MODE_OCT OR NOT CONFIG_ESPTOOLPY_FLASHSIZE_16MB)
