@@ -38,7 +38,7 @@ def package(device, build, output, version):
     contents['SHA256SUMS'] = ''.join(f'{digest}  {name}\n' for name, digest in hashes.items()).encode()
     contents['FLASHING.txt'] = (f'CottageThermoESP V{version} / {device}\n'
         'Extract the complete archive. From this directory in an ESP-IDF terminal:\n'
-        'python -m esptool --chip esp32s3 --port COMxx write-flash @flash_args\n'
+        'python -m esptool --chip esp32s3 --port COMxx write-flash "@flash_args"\n'
         'Replace COMxx with this device port. Do not erase flash/NVS.\n'
         'Use the thermostat application .bin only for its webpage OTA update.\n'
         'Controller updates use USB. Local builds can contain private credentials.\n').encode()
