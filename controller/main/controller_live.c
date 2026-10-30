@@ -43,6 +43,12 @@ bool controller_live_matches(const controller_setup_t *s,float level,float angle
         expected_angle(s,level,&expected)&&
         fabsf(wrap_delta(angle_deg-expected))<=CONTROLLER_LIVE_ANGLE_TOLERANCE_DEG;
 }
+bool controller_live_angle_near(float verified_deg,float restored_deg)
+{
+    return isfinite(verified_deg)&&verified_deg>=0&&verified_deg<360 &&
+           isfinite(restored_deg)&&restored_deg>=0&&restored_deg<360 &&
+           fabsf(wrap_delta(restored_deg-verified_deg))<=CONTROLLER_LIVE_REJOIN_TOLERANCE_DEG;
+}
 bool controller_live_recover(const controller_setup_t *s,float angle_deg,float *level)
 {
     if(!level||!isfinite(angle_deg)||angle_deg<0||angle_deg>=360)return false;

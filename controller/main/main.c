@@ -50,6 +50,10 @@ static bool away_active;
 /* NVS-selected intent, not permission to move until all safety prerequisites
  * pass after boot. Service always starts with servo output disabled. */
 static bool live_selected,live_fault,live_verifying;
+/* Magnet removal is a recoverable PAUSE, not a persistent Service fault.
+ * Preserve a measured angle (or an unverified move's target) in RAM only. */
+static bool live_encoder_paused,live_last_angle_valid,live_resume_match_target;
+static float live_last_angle,live_resume_expected_angle,live_resume_expected_level;
 static atomic_bool restart_pending;
 static controller_recovery_t recovery;
 static uint64_t live_verify_at,live_candidate_since;
@@ -165,6 +169,9 @@ static bool save_live_mode_reason(bool enabled,const char *reason)
     live_selected=enabled;
     live_fault=false;
     live_verifying=false;
+    live_encoder_paused=false;
+    live_last_angle_valid=false;
+    live_resume_match_target=false;
     live_candidate_since=0;
     snprintf(live_issue,sizeof(live_issue),"%s",enabled?
         "Waiting for calibrated encoder and fresh room temperature":
@@ -201,6 +208,28 @@ static void live_fault_stop(const char *reason)
              saved?"":"; NVS FAILED: do not rely on automatic recovery");
     event(live_issue);
 }
+static void live_pause_for_encoder_loss(void)
+{
+    /* A current PWM command has not yet been verified: require its target
+     * after reattachment, rather than an earlier measured angle. */
+    if(live_verifying){
+        live_resume_match_target=true;
+        live_resume_expected_level=live_verify_level;
+    } else if(live_last_angle_valid){
+        live_resume_match_target=false;
+        live_resume_expected_angle=live_last_angle;
+    } else {
+        live_fault_stop("Live stopped: AS5600 lost with no verified angle to recover");
+        return;
+    }
+    release(); /* Stop servo PWM on FIRST invalid encoder sample, not after 12 s. */
+    live_verifying=false;
+    live_encoder_paused=true;
+    live_candidate_since=0;
+    snprintf(live_issue,sizeof(live_issue),
+             "Live paused: AS5600 magnet missing/unreadable; PWM off until angle verified");
+    event(live_issue);
+}
 static void live_try_resume(uint64_t now)
 {
     if(!live_selected || live_fault || go_active)return;
@@ -216,10 +245,22 @@ static void live_try_resume(uint64_t now)
     }
     float angle,level=0;
     if(!live_encoder(&angle) || !controller_live_recover(&setup,angle,&level)){
-        snprintf(live_issue,sizeof(live_issue),
+        snprintf(live_issue,sizeof(live_issue),"%s",live_encoder_paused?
+                 "Live paused: waiting for valid calibrated AS5600 magnet angle":
                  "Live blocked: encoder angle or saved 1-6 calibration invalid; enter Service to correct");
         live_candidate_since=0;
         return;
+    }
+    if(live_encoder_paused){
+        bool matches=live_resume_match_target?
+            controller_live_matches(&setup,live_resume_expected_level,angle):
+            controller_live_angle_near(live_resume_expected_angle,angle);
+        if(!matches){
+            snprintf(live_issue,sizeof(live_issue),
+                     "Live paused: restored magnet angle differs from pre-loss position; align knob or enter Service");
+            live_candidate_since=0;
+            return;
+        }
     }
     /* Stable position across repeated encoder samples before startup movement. */
     if(!live_candidate_since ||
@@ -242,9 +283,16 @@ static void live_try_resume(uint64_t now)
         snprintf(live_issue,sizeof(live_issue),"Live waiting: %s",next.reason);
         return;
     }
+    bool resumed_from_loss=live_encoder_paused;
     state=next;go_active=true;armed=false;live_verifying=false;
+    live_encoder_paused=false;
+    live_resume_match_target=false;
+    live_last_angle=angle;
+    live_last_angle_valid=true;
     snprintf(live_issue,sizeof(live_issue),"Live active: encoder position recovered");
-    event("Live restored after validated calibration, stable AS5600 and fresh thermostat sensor");
+    event(resumed_from_loss?
+          "Live resumed automatically: reattached magnet matches verified position":
+          "Live restored after validated calibration, stable AS5600 and fresh thermostat sensor");
 }
 static esp_err_t json_send(httpd_req_t *r,cJSON *j)
 {
@@ -367,14 +415,15 @@ static esp_err_t get_api(httpd_req_t *r)
         cJSON_AddStringToObject(j,"operating_mode",live_selected?"live":"service");
         cJSON_AddBoolToObject(j,"live_active",live_selected&&go_active&&!live_fault);
         cJSON_AddBoolToObject(j,"live_fault",live_fault);
+        cJSON_AddBoolToObject(j,"live_encoder_paused",live_encoder_paused);
         cJSON_AddBoolToObject(j,"live_verifying",live_verifying);
         cJSON_AddStringToObject(j,"live_issue",live_issue);
         cJSON_AddStringToObject(j,"last_live_exit_reason",last_live_exit_reason);
         cJSON_AddBoolToObject(j,"restart_pending",restart_pending);
         cJSON *reconnect=cJSON_AddObjectToObject(j,"link_recovery");
-        cJSON_AddBoolToObject(reconnect,"enabled",live_selected&&!live_fault);
+        cJSON_AddBoolToObject(reconnect,"enabled",live_selected&&!live_fault&&!live_encoder_paused);
         cJSON_AddNumberToObject(reconnect,"timeout_ms",CONTROLLER_RECOVERY_MS);
-        if(live_selected&&!live_fault)cJSON_AddNumberToObject(reconnect,"remaining_ms",
+        if(live_selected&&!live_fault&&!live_encoder_paused)cJSON_AddNumberToObject(reconnect,"remaining_ms",
             controller_recovery_remaining(&recovery,now_ms()));
         if(recovery.sample_received)cJSON_AddNumberToObject(reconnect,"last_sample_age_ms",
             now_ms()-recovery.last_sample_ms);
@@ -679,11 +728,10 @@ static esp_err_t post_api(httpd_req_t *r)
 static void control_task(void *unused)
 {
     unsigned minute=0;
-    uint64_t encoder_bad_since=0;
     for(;;) {
         xSemaphoreTake(lock,portMAX_DELAY);
         uint64_t now=now_ms();
-        if(!restart_pending && controller_recovery_due(&recovery,live_selected&&!live_fault,now)){
+        if(!restart_pending && controller_recovery_due(&recovery,live_selected&&!live_fault&&!live_encoder_paused,now)){
             if(!schedule_controller_restart("No valid thermostat sample for 30 minutes; restarting with saved mode"))
                 ESP_LOGE(TAG,"Could not schedule thermostat-link recovery restart");
         }
@@ -700,20 +748,23 @@ static void control_task(void *unused)
         if(live_selected && go_active) {
             float angle=0;bool encoder_ok=live_encoder(&angle);
             if(!encoder_ok) {
-                if(!encoder_bad_since)encoder_bad_since=now;
-                if(now-encoder_bad_since>=12000)
-                    live_fault_stop("Live stopped: AS5600 unreadable/magnet invalid for 12 seconds");
+                live_pause_for_encoder_loss();
             } else {
-                encoder_bad_since=0;
                 if(live_verifying && now>live_verify_at+1000 &&
                    controller_live_matches(&setup,live_verify_level,angle)){
                     live_verifying=false;
                     snprintf(live_issue,sizeof(live_issue),"Live: measured servo position verified");
                 }
+                /* Never use a pre-move angle as the reattachment reference
+                 * while verification of the commanded movement is pending. */
+                if(!live_verifying){
+                    live_last_angle=angle;
+                    live_last_angle_valid=true;
+                }
             }
-            if(live_selected && live_verifying && now-live_verify_at>16000)
+            if(live_selected && go_active && live_verifying && now-live_verify_at>16000)
                 live_fault_stop("Live stopped: servo did not reach expected calibrated AS5600 angle");
-        } else encoder_bad_since=0;
+        }
         th_action_t a=th_tick(&state,now);
         if(a.move && live_verifying) {
             state.reason="verifying_encoder";
@@ -851,7 +902,7 @@ static void controller_status_led_task(void *arg)
         bool fault=false;
         xSemaphoreTake(lock,portMAX_DELAY);
         http_at=last_http_link;
-        fault=live_fault || (state.reason&&!strcmp(state.reason,"pwm_error"));
+        fault=live_fault || live_encoder_paused || (state.reason&&!strcmp(state.reason,"pwm_error"));
         xSemaphoreGive(lock);
         /* ESP-NOW wraps at 2^32 ms; use the unsigned 32-bit age. */
         uint64_t radio_at=0;

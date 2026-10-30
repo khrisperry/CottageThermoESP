@@ -27,8 +27,20 @@ int main(void)
     assert(controller_live_matches(&s,2.5f,255.5f));
     assert(!controller_live_matches(&s,2.5f,212));
     assert(!controller_live_recover(&s,NAN,&level));
+    /* Recover only to the same last verified angle; tolerate magnet refit
+     * variability and the AS5600 wrap, but reject a shifted knob/cap. */
+    assert(controller_live_angle_near(191,191));
+    assert(controller_live_angle_near(191,198));
+    assert(controller_live_angle_near(358,3));
+    assert(controller_live_angle_near(2,358));
+    assert(!controller_live_angle_near(191,202));
+    assert(!controller_live_angle_near(358,19));
+    assert(!controller_live_angle_near(NAN,191));
+    assert(!controller_live_angle_near(191,NAN));
+    assert(!controller_live_angle_near(-1,359));
+    assert(!controller_live_angle_near(191,360));
     s.angle_mask=0;assert(!controller_live_recover(&s,270,&level));
     s=calibrated();s.angle_deg[4]=s.angle_deg[3];assert(!controller_live_recover(&s,270,&level));
     s=calibrated();s.angle_deg[4]=310;assert(!controller_live_recover(&s,270,&level));
-    puts("PASS: AS5600 wrap, interpolated startup recovery, endpoint rejection, encoder mismatch and invalid saved angles");
+    puts("PASS: AS5600 wrap, startup recovery, reattachment angle guard, mismatch and invalid angles");
 }
