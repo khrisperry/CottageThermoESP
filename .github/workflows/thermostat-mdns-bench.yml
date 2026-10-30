@@ -1,9 +1,10 @@
-name: Controller mDNS and room-panel discovery bench builds
+name: Controller and room-panel firmware bench validation
 
 on:
   push:
     branches:
       - feature/controller-mdns-discovery-web
+      - fix/encoder-magnet-auto-recovery
   pull_request:
     branches:
       - feature/connectivity-climate-review
