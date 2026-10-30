@@ -24,6 +24,10 @@ int main(void)
     assert(controller_live_recover(&s,62,&level)==false);
     assert(controller_live_recover(&s,298.5f,&level)&&fabsf(level-1.5f)<0.001f);
     assert(controller_live_recover(&s,191.0f,&level)&&fabsf(level-4)<0.001f);
+    float expected=0;
+    assert(controller_live_expected(&s,2.5f,&expected)&&fabsf(expected-255.5f)<0.001f);
+    assert(!controller_live_expected(&s,NAN,&expected));
+    assert(!controller_live_expected(&s,3,NULL));
     assert(controller_live_matches(&s,2.5f,255.5f));
     assert(!controller_live_matches(&s,2.5f,212));
     assert(!controller_live_recover(&s,NAN,&level));

@@ -36,6 +36,13 @@ static bool expected_angle(const controller_setup_t *s,float level,float *angle)
     *angle=a[index]+(a[index+1]-a[index])*(level-(index+1));
     return true;
 }
+bool controller_live_expected(const controller_setup_t *s,float level,float *angle)
+{
+    float expected;
+    if(!angle||!expected_angle(s,level,&expected))return false;
+    *angle=fmodf(expected+720.0f,360.0f);
+    return true;
+}
 bool controller_live_matches(const controller_setup_t *s,float level,float angle_deg)
 {
     float expected=0;

@@ -1,3 +1,27 @@
+/* Authoritative diagnostics shared by status and saved-calibration views. */
+static cJSON *live_checks_json(void)
+{
+    cJSON *j=cJSON_CreateObject();
+    float angle=0,level=0,expected=0;
+    bool encoder_ok=live_encoder(&angle);
+    bool recovered=encoder_ok&&controller_live_recover(&setup,angle,&level);
+    cJSON_AddBoolToObject(j,"encoder_valid",encoder_ok);
+    cJSON_AddBoolToObject(j,"room_fresh",live_room_fresh(now_ms()));
+    cJSON_AddBoolToObject(j,"position_recoverable",recovered);
+    cJSON_AddNumberToObject(j,"tolerance_deg",CONTROLLER_LIVE_ANGLE_TOLERANCE_DEG);
+    if(encoder_ok)cJSON_AddNumberToObject(j,"measured_deg",angle);
+    if(recovered)cJSON_AddNumberToObject(j,"measured_level",level);
+    if(state.has_command&&controller_live_expected(&setup,state.commanded_level,&expected)){
+        cJSON_AddNumberToObject(j,"commanded_level",state.commanded_level);
+        cJSON_AddNumberToObject(j,"expected_deg",expected);
+        if(encoder_ok){
+            float delta=remainderf(angle-expected,360.0f);
+            cJSON_AddNumberToObject(j,"error_deg",delta);
+            cJSON_AddBoolToObject(j,"command_matches",controller_live_matches(&setup,state.commanded_level,angle));
+        }
+    }
+    return j;
+}
 /* Included after the local controller helpers. Host tests compile this same
  * handler with fake PWM, NVS and HTTP boundaries. */
 static cJSON *setup_json(void)
@@ -44,55 +68,21 @@ static esp_err_t setup_post(httpd_req_t *r)
             error="Motor stopped but could not save Service mode; do not restart unattended.";
         else event("Persistent Service/Calibration selected; PWM off; calibration retained");
     } else if(text_is(j,"action","live")) {
-        error=controller_setup_ready(&setup);
-        /* Bench Go can be promoted at its commanded level. From Service,
-         * the AS5600 must match the explicitly selected calibrated dial mark;
-         * Test mode and an exact previous PWM pulse are not required.
-         * Always stop PWM before stable position validation. */
-        bool from_bench=!live_selected && go_active && !state.simulated &&
-            state.config.mode==TH_AUTO && state.synchronized &&
-            state.has_command && pwm && isfinite(state.commanded_level) &&
-            state.commanded_level>=1.0f && state.commanded_level<=6.0f;
-        if(!error && !text_is(j,"confirm","enable_live"))
-            error="Confirm that final calibration and mechanical mounting are complete.";
-        if(!error && !from_bench &&
-           (!number(j,"position",&value)||floor(value)!=value||value<1||value>6))
-            error="Select the measured physical dial number 1 through 6.";
-        if(!error && !from_bench &&
-           (live_selected || go_active || state.config.mode!=TH_HOLD))
-            error="Stop Bench Go or switch to Service before enabling Live from a measured dial position.";
-        float level=from_bench?state.commanded_level:(float)value;
-        float angle=0;
-        if(!error && (!live_encoder(&angle) ||
-                       !controller_live_matches(&setup,level,angle)))
-            error="AS5600 angle does not match the current physical dial position. Recalibrate encoder references or wait for movement to finish.";
-        if(!error && !live_room_fresh(now))
-            error="Wait for a fresh primary room temperature report.";
-        th_state_t next=state;
-        if(!error) {
-            next.config.mode=TH_AUTO;next.config.schedule_enabled=false;
-            next.simulated=false;
-            if(!controller_setup_map(&setup,&next.config)||!th_sync(&next,level))
-                error="Final mechanical calibration or dial map invalid.";
-        }
-        if(!error) {
-            th_action_t a=th_tick(&next,now);
-            if(!a.move && strcmp(next.reason,"mapped_setting_reached"))
-                error="Cannot enter Live until the primary sensor and target map are ready.";
-        }
-        if(!error) {
-            /* Do not energize PWM in an HTTP request. The control loop first
-             * checks stable encoder readings and fresh primary temperature. */
+        /* Mode selection records user intent. The control loop owns all
+         * motion prerequisites and recovers the actual fractional position;
+         * the Bench Go selector and previous pulse are irrelevant here. */
+        if(!text_is(j,"confirm","enable_live"))
+            error="Confirm persistent Live operation.";
+        else if(!live_selected) {
             release();
             if(!save_live_mode(true))
                 error="Servo stopped but could not persist Live mode in NVS. Still in Service.";
             else {
                 snprintf(live_issue,sizeof(live_issue),
-                         "Live selected: confirming stable AS5600 position and fresh thermostat");
-                event(from_bench?"Bench Go promoted: awaiting stable encoder verification":
-                                 "Live selected from Service: awaiting stable encoder verification");
+                         "Live selected: checking calibration, measured position and thermostat");
+                event("Persistent Live selected; control loop will recover measured dial position");
             }
-        }
+        } /* Repeated Live requests are idempotent; never reset verification. */
     } else if(text_is(j,"action","test")) {
         if(live_selected)error="Enter Service/Calibration mode before using Test.";
         else if(!text_is(j,"confirm","unloaded_bench"))error="Confirm that this is an attended bench test.";

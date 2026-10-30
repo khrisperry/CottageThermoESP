@@ -47,6 +47,8 @@ const id=x=>window.document.getElementById(x);
 async function settle(){await new Promise(r=>setTimeout(r,25));}
 await settle();assert.equal(posts.length,0,'page load must not command movement');
 const ids=[...window.document.querySelectorAll('[id]')].map(x=>x.id);assert.equal(new Set(ids).size,ids.length,'element IDs must be unique');
+assert(!id('enableLive').disabled,'Live selectable without manual alignment');
+assert.equal(id('calibrationValues').children.length,8);
 assert(id('goButton').disabled);assert(id('sendPulse').disabled);assert(id('jogPlus').disabled);
 id('testButton').click();await settle();assert.equal(posts.at(-1).data.action,'test');assert(!id('sendPulse').disabled);assert(id('jogPlus').disabled);
 id('startingPulse').value='1300';id('sendPulse').click();await settle();assert.equal(posts.at(-1).data.us,1300);assert(!id('jogPlus').disabled);
@@ -60,13 +62,6 @@ assert.equal(posts.at(-1).data.action,'live');assert.equal(state.operating_mode,
 assert(!id('liveSafety').textContent.includes('Test Mode'),'Live promotion must not require returning to Test');
 id('enterService').click();await settle();
 assert.equal(posts.at(-1).data.action,'service');assert.equal(state.operation,'stopped');
-/* Previously grey: Service, aligned encoder, PWM disabled. */
-assert(!id('enableLive').disabled,'Aligned Service should allow Live without Test PWM');
-state.encoder.angle_deg=210;await intervals.at(-1)();
-assert(id('enableLive').disabled,'Misaligned magnet must keep Live disabled');
-assert(id('liveReadiness').textContent.includes('AS5600 measured'),'Display why Live is blocked');
-state.encoder.angle_deg=profile.positions[3].angle_deg;await intervals.at(-1)();
-assert(!id('enableLive').disabled,'Correct angle should restore Live availability');
 id('goTarget').value='68';id('saveTarget').click();await settle();assert.equal(posts.at(-1).data.target_f,68);
 id('stopButton').click();await settle();assert.equal(posts.at(-1).path,'/api/stop');assert.equal(state.operation,'stopped');assert(id('goButton').disabled);
 /* Persistent Live requires confirmed bench position; Service persists and
@@ -76,7 +71,7 @@ id('moveStart').click();await settle();
 assert(!id('enableLive').disabled);
 id('enableLive').click();await settle();
 assert.equal(posts.at(-1).data.action,'live');
-assert.equal(posts.at(-1).data.position,3);
+assert.equal(posts.at(-1).data.confirm,'enable_live');
 assert.equal(state.operating_mode,'live');
 assert(id('testButton').disabled,'Test must require switching back to Service');
 id('enterService').click();await settle();

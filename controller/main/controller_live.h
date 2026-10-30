@@ -22,3 +22,6 @@ bool controller_live_matches(const controller_setup_t *setup,float level,float a
 
 /* Compare a reattached magnet to the last verified physical angle. */
 bool controller_live_angle_near(float verified_deg,float restored_deg);
+
+/* Wrapped expected angle for the same validated map used by motion checks. */
+bool controller_live_expected(const controller_setup_t *setup,float level,float *angle);

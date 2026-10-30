@@ -404,7 +404,7 @@ static esp_err_t get_api(httpd_req_t *r)
         }
     } else {
         j=cJSON_CreateObject();
-        cJSON_AddStringToObject(j,"version","0.7.4");
+        cJSON_AddStringToObject(j,"version","0.7.5");
 #ifdef CONFIG_THERMO_SUPERMINI
         cJSON_AddStringToObject(j,"board","HW-747 Super Mini 4 MB");
 #else
@@ -417,6 +417,7 @@ static esp_err_t get_api(httpd_req_t *r)
         cJSON_AddBoolToObject(j,"live_fault",live_fault);
         cJSON_AddBoolToObject(j,"live_encoder_paused",live_encoder_paused);
         cJSON_AddBoolToObject(j,"live_verifying",live_verifying);
+        cJSON_AddItemToObject(j,"live_checks",live_checks_json());
         cJSON_AddStringToObject(j,"live_issue",live_issue);
         cJSON_AddStringToObject(j,"last_live_exit_reason",last_live_exit_reason);
         cJSON_AddBoolToObject(j,"restart_pending",restart_pending);
@@ -762,8 +763,13 @@ static void control_task(void *unused)
                     live_last_angle_valid=true;
                 }
             }
-            if(live_selected && go_active && live_verifying && now-live_verify_at>16000)
-                live_fault_stop("Live stopped: servo did not reach expected calibrated AS5600 angle");
+            if(live_selected && go_active && live_verifying && now-live_verify_at>16000){
+                float expected=0;controller_live_expected(&setup,live_verify_level,&expected);
+                char reason[120];
+                snprintf(reason,sizeof(reason),"Live stopped: dial %.2f measured %.1f deg expected %.1f deg (+/-12); check calibration/servo",
+                         live_verify_level,angle,expected);
+                live_fault_stop(reason);
+            }
         }
         th_action_t a=th_tick(&state,now);
         if(a.move && live_verifying) {

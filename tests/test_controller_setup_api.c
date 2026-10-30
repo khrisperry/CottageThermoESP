@@ -138,49 +138,37 @@ int main(void)
     a=th_tick(&state,clock_ms+THERMO_SETPOINT_GUARD_MS);
     assert(a.move && fabsf(a.level-(1.0f+5.0f/7.0f))<0.001f && a.pulse_us==1043);
     request("{\"action\":\"test\",\"confirm\":\"unloaded_bench\"}",NULL);assert(!go_active&&!pwm&&state.simulated);
-    /* Live must never be armable over a remote target or with invalid
-     * encoder mapping; switching modes is local, explicit and persistent. */
-    /* Service->Live needs a matching encoder angle, not PWM. */
-    request("{\"action\":\"live\",\"position\":3,\"confirm\":\"enable_live\"}","Recalibrate encoder");
-    request("{\"action\":\"pulse\",\"us\":1300}",NULL);
-    request("{\"action\":\"live\",\"position\":3,\"confirm\":\"enable_live\"}","Recalibrate encoder");
+    /* Explicit Live records intent without a selector, Test PWM, complete
+     * calibration or fresh sample; no HTTP request may energize the motor. */
+    request("{\"action\":\"live\"}","Confirm");
+    count=moves;
+    request("{\"action\":\"live\",\"confirm\":\"enable_live\"}",NULL);
+    assert(live_selected&&!go_active&&!armed&&!pwm&&moves==count);
+    cJSON *checks=live_checks_json();
+    assert(cJSON_IsFalse(cJSON_GetObjectItem(checks,"position_recoverable")));cJSON_Delete(checks);
+    request("{\"action\":\"service\"}",NULL);
     for(int i=1;i<=6;i++)setup.angle_deg[i]=270.0f-(i-1)*45.0f;
-    setup.angle_deg[3]=180.0f;setup.angle_mask=0x7e;
-    /* Verify test profile after making the encoder calibration monotonic. */
-    assert(controller_live_matches(&setup,3.0f,180.0f));
-    request("{\"action\":\"live\",\"position\":3,\"confirm\":\"enable_live\"}",NULL);
-    assert(live_selected&&!go_active&&!armed&&!pwm&&state.simulated);
-    request("{\"action\":\"test\",\"confirm\":\"unloaded_bench\"}","Enter Service");
-    request("{\"action\":\"temperatures\",\"values\":[45,52,59,66,73,80]}","Switch to Service");
-    request("{\"action\":\"service\"}",NULL);
-    assert(!live_selected&&!go_active&&!pwm&&state.config.mode==TH_HOLD);
-    /* Once Bench Go is running and its physical encoder agrees, switching
-     * to persistent Live must NOT require a second Test session or jog.
-     * The supplied Test selector position is ignored in favor of the
-     * actual synchronized commanded fractional dial position. */
-    request("{\"action\":\"test\",\"confirm\":\"unloaded_bench\"}",NULL);
-    request("{\"action\":\"pulse\",\"us\":1300}",NULL);
-    request("{\"action\":\"go\",\"position\":3,\"confirm\":\"start_bench\"}",NULL);
-    assert(go_active && !state.simulated && state.has_command && state.synchronized);
-    int move_count=moves;
+    setup.angle_mask=0x7e;fake_encoder_angle=241.7f;
+    /* The screenshot's non-integer angle must recover without matching 3. */
+    checks=live_checks_json();
+    assert(cJSON_IsTrue(cJSON_GetObjectItem(checks,"position_recoverable")));
+    assert(fabs(cJSON_GetObjectItem(checks,"measured_level")->valuedouble-1.628889)<0.001);cJSON_Delete(checks);
     request("{\"action\":\"live\",\"position\":99,\"confirm\":\"enable_live\"}",NULL);
-    assert(live_selected && !go_active && !armed && !pwm && moves==move_count);
+    assert(live_selected&&!go_active&&!pwm&&moves==count);
+    /* Repeated request preserves active control and in-flight verification. */
+    go_active=true;pwm=true;live_verifying=true;
+    request("{\"action\":\"live\",\"confirm\":\"enable_live\"}",NULL);
+    assert(go_active&&pwm&&live_verifying&&moves==count);
     request("{\"action\":\"service\"}",NULL);
-    assert(!live_selected && !go_active && !pwm);
-    /* Correctly aligned, powered-off servo can enable Live from Service. */
-    request("{\"action\":\"live\",\"position\":3,\"confirm\":\"enable_live\"}",NULL);
-    assert(live_selected && !pwm && !go_active && !armed && moves==move_count);
-    request("{\"action\":\"service\"}",NULL);
-    fake_encoder_angle=260.0f;
-    request("{\"action\":\"live\",\"position\":3,\"confirm\":\"enable_live\"}","AS5600 angle");
-    fake_encoder_angle=180.0f;
     clock_ms+=THERMO_TTL_MS+1;
-    request("{\"action\":\"live\",\"position\":3,\"confirm\":\"enable_live\"}","fresh primary");
+    request("{\"action\":\"live\",\"confirm\":\"enable_live\"}",NULL);
+    assert(live_selected&&!pwm&&!go_active);
+    checks=live_checks_json();assert(cJSON_IsFalse(cJSON_GetObjectItem(checks,"room_fresh")));cJSON_Delete(checks);
+    request("{\"action\":\"service\"}",NULL);
     assert(th_sample(&state,TH_ROOM,63,0,clock_ms));
     fail_save=true;
-    request("{\"action\":\"live\",\"position\":3,\"confirm\":\"enable_live\"}","could not persist Live");
-    assert(!live_selected && !go_active && !pwm);
-    fail_save=false;
+    request("{\"action\":\"live\",\"confirm\":\"enable_live\"}","could not persist Live");
+    assert(!live_selected&&!go_active&&!pwm);fail_save=false;
 
     clock_ms=armed_until;request("{\"action\":\"pulse\",\"us\":1300}","Test Mode");
     request("{\"action\":\"reset\",\"confirm\":\"reset_calibration\"}",NULL);assert(!setup.start_us&&!setup.temperature_mask&&!armed&&!pwm);
