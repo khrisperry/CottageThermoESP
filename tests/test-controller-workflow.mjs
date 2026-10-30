@@ -60,6 +60,13 @@ assert.equal(posts.at(-1).data.action,'live');assert.equal(state.operating_mode,
 assert(!id('liveSafety').textContent.includes('Test Mode'),'Live promotion must not require returning to Test');
 id('enterService').click();await settle();
 assert.equal(posts.at(-1).data.action,'service');assert.equal(state.operation,'stopped');
+/* Previously grey: Service, aligned encoder, PWM disabled. */
+assert(!id('enableLive').disabled,'Aligned Service should allow Live without Test PWM');
+state.encoder.angle_deg=210;await intervals.at(-1)();
+assert(id('enableLive').disabled,'Misaligned magnet must keep Live disabled');
+assert(id('liveReadiness').textContent.includes('AS5600 measured'),'Display why Live is blocked');
+state.encoder.angle_deg=profile.positions[3].angle_deg;await intervals.at(-1)();
+assert(!id('enableLive').disabled,'Correct angle should restore Live availability');
 id('goTarget').value='68';id('saveTarget').click();await settle();assert.equal(posts.at(-1).data.target_f,68);
 id('stopButton').click();await settle();assert.equal(posts.at(-1).path,'/api/stop');assert.equal(state.operation,'stopped');assert(id('goButton').disabled);
 /* Persistent Live requires confirmed bench position; Service persists and

@@ -19,7 +19,7 @@ typedef struct {bool online,magnet_detected,too_weak,too_strong;uint64_t at_ms;i
 typedef struct {const char *request;char response[256];} httpd_req_t;
 static th_state_t state;static controller_setup_t setup,persisted;static bool go_active,pwm,armed;
 static int last_pulse=-1,lock,store,moves;static bool fail_save,live_selected,live_fault,live_verifying;
-static uint64_t armed_until,clock_ms=100000;static char live_issue[120];
+static uint64_t armed_until,clock_ms=100000;static char live_issue[120];static float fake_encoder_angle=180.0f;
 static uint64_t now_ms(void){return clock_ms;}
 static void event(const char *text){(void)text;}
 static int xSemaphoreTake(int x,int y){(void)x;(void)y;return 1;}
@@ -39,7 +39,7 @@ static cJSON *body(httpd_req_t *r){return cJSON_Parse(r->request);}
 static int httpd_resp_send_err(httpd_req_t *r,const char *status,const char *error){(void)status;snprintf(r->response,sizeof(r->response),"%s",error);return 400;}
 static int httpd_resp_sendstr(httpd_req_t *r,const char *text){snprintf(r->response,sizeof(r->response),"%s",text);return 0;}
 static controller_encoder_sample_t controller_encoder_snapshot(void){return (controller_encoder_sample_t){.online=true,.magnet_detected=true,.at_ms=clock_ms,.raw_angle=2048};}
-static bool live_encoder(float *angle){*angle=180;return true;}
+static bool live_encoder(float *angle){*angle=fake_encoder_angle;return true;}
 static bool live_room_fresh(uint64_t now){return state.room.valid && now>=state.room.at_ms && now-state.room.at_ms<=THERMO_TTL_MS;}
 static bool save_live_mode(bool enabled){
     if(fail_save)return false;
@@ -140,7 +140,8 @@ int main(void)
     request("{\"action\":\"test\",\"confirm\":\"unloaded_bench\"}",NULL);assert(!go_active&&!pwm&&state.simulated);
     /* Live must never be armable over a remote target or with invalid
      * encoder mapping; switching modes is local, explicit and persistent. */
-    request("{\"action\":\"live\",\"position\":3,\"confirm\":\"enable_live\"}","Test Mode");
+    /* Service->Live needs a matching encoder angle, not PWM. */
+    request("{\"action\":\"live\",\"position\":3,\"confirm\":\"enable_live\"}","Recalibrate encoder");
     request("{\"action\":\"pulse\",\"us\":1300}",NULL);
     request("{\"action\":\"live\",\"position\":3,\"confirm\":\"enable_live\"}","Recalibrate encoder");
     for(int i=1;i<=6;i++)setup.angle_deg[i]=270.0f-(i-1)*45.0f;
@@ -148,7 +149,7 @@ int main(void)
     /* Verify test profile after making the encoder calibration monotonic. */
     assert(controller_live_matches(&setup,3.0f,180.0f));
     request("{\"action\":\"live\",\"position\":3,\"confirm\":\"enable_live\"}",NULL);
-    assert(live_selected&&go_active&&!armed&&!state.simulated);
+    assert(live_selected&&!go_active&&!armed&&!pwm&&state.simulated);
     request("{\"action\":\"test\",\"confirm\":\"unloaded_bench\"}","Enter Service");
     request("{\"action\":\"temperatures\",\"values\":[45,52,59,66,73,80]}","Switch to Service");
     request("{\"action\":\"service\"}",NULL);
@@ -163,9 +164,23 @@ int main(void)
     assert(go_active && !state.simulated && state.has_command && state.synchronized);
     int move_count=moves;
     request("{\"action\":\"live\",\"position\":99,\"confirm\":\"enable_live\"}",NULL);
-    assert(live_selected && go_active && !armed && moves==move_count);
+    assert(live_selected && !go_active && !armed && !pwm && moves==move_count);
     request("{\"action\":\"service\"}",NULL);
     assert(!live_selected && !go_active && !pwm);
+    /* Correctly aligned, powered-off servo can enable Live from Service. */
+    request("{\"action\":\"live\",\"position\":3,\"confirm\":\"enable_live\"}",NULL);
+    assert(live_selected && !pwm && !go_active && !armed && moves==move_count);
+    request("{\"action\":\"service\"}",NULL);
+    fake_encoder_angle=260.0f;
+    request("{\"action\":\"live\",\"position\":3,\"confirm\":\"enable_live\"}","AS5600 angle");
+    fake_encoder_angle=180.0f;
+    clock_ms+=THERMO_TTL_MS+1;
+    request("{\"action\":\"live\",\"position\":3,\"confirm\":\"enable_live\"}","fresh primary");
+    assert(th_sample(&state,TH_ROOM,63,0,clock_ms));
+    fail_save=true;
+    request("{\"action\":\"live\",\"position\":3,\"confirm\":\"enable_live\"}","could not persist Live");
+    assert(!live_selected && !go_active && !pwm);
+    fail_save=false;
 
     clock_ms=armed_until;request("{\"action\":\"pulse\",\"us\":1300}","Test Mode");
     request("{\"action\":\"reset\",\"confirm\":\"reset_calibration\"}",NULL);assert(!setup.start_us&&!setup.temperature_mask&&!armed&&!pwm);

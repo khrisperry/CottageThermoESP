@@ -11,7 +11,7 @@
 <p class="lead" id="liveSafety">Live starts only after calibration, fresh thermostat samples and calibrated AS5600 position validation. Test/Service stops automatic movement.</p>
 <div class="row" style="gap:12px;flex-wrap:wrap">
 <button id="enterService" class="danger">Enter Service / Calibration · Stop</button>
-<button id="enableLive" class="primary">Enable persistent Live</button>
+<button id="enableLive" class="primary">Enable persistent Live</button><small id="liveReadiness" role="status" aria-live="polite">Checking Live requirements…</small>
 <button id="restartController">Restart controller</button>
 </div><p class="pill-line" id="recoveryStatus">In Live, the controller restarts after 30 minutes without valid thermostat temperature reports. Service and calibration are exempt.</p><p class="pill-line">Live selection survives power loss. On reboot PWM remains OFF until encoder and sensor checks pass. A temporary magnet loss stops PWM and waits for the same verified angle; unrelated encoder/servo faults still select Service. The controller remains heat-only and should be physically validated before leaving unattended.</p></section>
 <nav aria-label="Controller setup steps" role="tablist"><button role="tab" aria-selected="true" aria-controls="panel-calibration" id="tab-calibration" data-tab="calibration"><span class="step-number">01</span>Calibration</button><button role="tab" aria-selected="false" aria-controls="panel-temperatures" id="tab-temperatures" data-tab="temperatures"><span class="step-number">02</span>Estimated temperatures</button><button role="tab" aria-selected="false" aria-controls="panel-test" id="tab-test" data-tab="test"><span class="step-number">03</span>Test Mode</button><button role="tab" aria-selected="false" aria-controls="panel-go" id="tab-go" data-tab="go"><span class="step-number">04</span>Bench Go / Live</button></nav>
@@ -59,8 +59,8 @@ if(status.heat_feedback){
   el('heatFeedbackInfo').textContent='Automatic thermal corrections disabled. Holding the calibrated target. Furnace watts and amps are observation only until onsite cycle validation and confirmed unoccupied learning setup.';
 }
 el('output').textContent=!online?'Unknown':status.pwm_active?(op==='go'?'Automatic':'Manual'):status.live_active?'Monitoring':'Stopped';el('session').textContent=status.operating_mode==='live'?(status.live_active?(status.pwm_active?'Live · no bench timeout':'Live active · no movement requested'):'Live selected · output disabled'):status.bench_armed&&online?Math.ceil(status.arm_remaining_ms/60000)+' min remaining':'Service · output disabled';el('reason').textContent=!online?'Controls disabled until connection returns':op==='test'?'Automatic control disabled; jog or capture positions.':(explanations[status.reason]||status.reason||'Stopped')+(op==='go'&&status.dwell_remaining_ms?' · '+Math.ceil(status.dwell_remaining_ms/1000)+'s remaining':'');el('encoderAngle').textContent=online&&status.encoder?.angle_valid?fmt(status.encoder.angle_deg,2)+'°':'—';el('magnetStatus').textContent=!online?'Reading unavailable':status.encoder?.angle_valid?'Magnet detected · field OK':'Encoder reading unavailable';el('lastPulse').textContent=online&&status.pwm_active&&status.last_command_us>=500?status.last_command_us+' µs':'—';el('limitsHint').textContent=setup?.start_us&&setup?.end_us?'Travel: '+Math.min(setup.start_us,setup.end_us)+'–'+Math.max(setup.start_us,setup.end_us)+' µs':setup?.start_us||setup?.end_us?'Travel limits INCOMPLETE · 500–2500 µs bench range':'No saved travel limits · 500–2500 µs bench range';el('testHint').textContent=status.operating_mode==='live'?'First select Service above to disable Live and enter attended Test.':op==='go'?'Entering Test Mode stops bench automatic movement.':'Enables manual movement for 15 minutes. Entering Test Mode does not move the arm.';if(!targetLoaded&&Number.isFinite(status.target_f)){el('goTarget').value=status.target_f;targetLoaded=true;}
-const pos=Number(el('goPosition').value),atStart=testing()&&status.pwm_active&&status.last_command_us===setup?.positions[pos]?.pulse_us;const hasTemperature=online&&status.source==='room'&&Number.isFinite(status.temperature_f);const range=setup?.positions[1]?.temp_f!==undefined&&setup?.positions[6]?.temp_f!==undefined&&
-(status.away?status.target_f===50&&setup.positions[6].temp_f>=50:status.target_f>=setup.positions[1].temp_f&&status.target_f<=setup.positions[6].temp_f);const checks=[[!!(setup?.start_us&&setup?.end_us),'Travel limits saved'],[!!setup?.positions.every(p=>p.pulse_us),'Off, 1–6 and Max captured'],[!!setup?.ready,setup?.ready?'Estimated temperatures and dial order valid':setup?.issue||'Complete estimated temperatures'],[hasTemperature,'Fresh primary thermostat temperature'],[!!range,'Target inside estimated temperature range'],[!!atStart,'Test Mode: positioned at saved dial '+pos]];el('checklist').replaceChildren(...checks.map(([ok,label])=>{const li=document.createElement('li');li.className=ok?'yes':'no';li.textContent=(ok?'✓ ':'○ ')+label;return li;}));const ready=checks.every(([ok])=>ok);el('goReadiness').textContent=op==='go'?'Go is active · physical automatic movement enabled':ready?'Ready. Verify the starting position, then press Go.':checks.find(([ok])=>!ok)[1];el('goButton').disabled=!enabled||!ready||status.operating_mode==='live';
+const pos=Number(el('goPosition').value),atStart=testing()&&status.pwm_active&&status.last_command_us===setup?.positions[pos]?.pulse_us;const hasTemperature=online&&(status.room?.fresh===true||(status.room===undefined&&status.source==='room'&&Number.isFinite(status.temperature_f)));const range=setup?.positions[1]?.temp_f!==undefined&&setup?.positions[6]?.temp_f!==undefined&&
+(status.away?setup.positions[6].temp_f>=50:status.target_f>=setup.positions[1].temp_f&&status.target_f<=setup.positions[6].temp_f);const checks=[[!!(setup?.start_us&&setup?.end_us),'Travel limits saved'],[!!setup?.positions.every(p=>p.pulse_us),'Off, 1–6 and Max captured'],[!!setup?.ready,setup?.ready?'Estimated temperatures and dial order valid':setup?.issue||'Complete estimated temperatures'],[hasTemperature,'Fresh primary thermostat temperature'],[!!range,'Target inside estimated temperature range'],[!!atStart,'Test Mode: positioned at saved dial '+pos]];el('checklist').replaceChildren(...checks.map(([ok,label])=>{const li=document.createElement('li');li.className=ok?'yes':'no';li.textContent=(ok?'✓ ':'○ ')+label;return li;}));const ready=checks.every(([ok])=>ok);el('goReadiness').textContent=op==='go'?'Go is active · physical automatic movement enabled':ready?'Ready. Verify the starting position, then press Go.':checks.find(([ok])=>!ok)[1];el('goButton').disabled=!enabled||!ready||status.operating_mode==='live';
 const angles=setup?.positions?.slice(1,7).map(p=>p.angle_deg)||[];
 const deltas=angles.slice(1).map((a,i)=>((a-angles[i]+540)%360)-180);
 const angleMapOk=angles.length===6&&angles.every(Number.isFinite)&&
@@ -70,7 +70,6 @@ const angleMapOk=angles.length===6&&angles.every(Number.isFinite)&&
 const isBenchGo=status.operating_mode==='service'&&status.operation==='go'&&
     status.pwm_active&&!status.simulation&&status.position_synchronized&&
     Number.isFinite(status.commanded_level)&&status.commanded_level>=1&&status.commanded_level<=6;
-const physicalStart=atStart||isBenchGo;
 const level=isBenchGo?status.commanded_level:pos;
 let expected=NaN;
 if(angleMapOk&&Number.isFinite(level)&&level>=1&&level<=6){
@@ -85,19 +84,24 @@ const matches=Number.isFinite(actual)&&Number.isFinite(expected)&&
     Math.abs(((actual-expected+540)%360)-180)<=12;
 let liveBlock='';
 if(!setup?.ready)liveBlock='Complete valid travel, dial positions and estimated temperatures before enabling Live.';
-else if(!angleMapOk)liveBlock='Save valid, monotonic AS5600 angles for every dial 1-6 position. Captures must follow one direction.';
+else if(!angleMapOk)liveBlock='Save valid, monotonic AS5600 angles for dial 1-6 in one direction.';
 else if(!hasTemperature)liveBlock='Waiting for a fresh primary thermostat temperature (not SwitchBot).';
-else if(!range)liveBlock='The target is outside calibrated temperatures. Update estimates or set a supported temperature.';
-else if(!physicalStart)liveBlock='Enter Service Test and move to saved dial '+pos+', OR start Bench Go. Live can be enabled from either after encoder confirmation.';
+else if(!range)liveBlock='Target is outside the estimated temperature range; set a supported target or revise calibration.';
+else if(status.operation==='go'&&!isBenchGo)liveBlock='Bench Go is not actively driving a verified position. Return to Service and confirm the dial setting.';
 else if(!status.encoder?.angle_valid)liveBlock='AS5600 reading missing/stale or magnet invalid. Check encoder connection and field.';
-else if(!matches)liveBlock='AS5600 measured '+fmt(actual,1)+'°, expected '+fmt(expected,1)+'° at dial '+fmt(level,2)+'; within 12° required.';
-el('enableLive').disabled=!enabled||status.operating_mode==='live'||!!liveBlock;
-if(status.operating_mode==='live')el('liveSafety').textContent=status.live_issue||'Persistent Live enabled.';
+else if(!matches)liveBlock='AS5600 measured '+fmt(actual,1)+'°, expected '+fmt(expected,1)+'° at dial '+fmt(level,2)+'. Select the correct dial mark (within 12°), or recapture the angle.';
+const liveEnabled=status.operating_mode==='live';
+el('enableLive').disabled=!enabled||liveEnabled||!!liveBlock;
+const readiness=liveEnabled?(status.live_active?'Live operating.':status.live_issue||'Live selected; awaiting validation.'):
+    liveBlock?'Cannot enable Live: '+liveBlock:
+    'Ready: measured angle matches dial '+fmt(level,2)+'. Confirm mechanical mounting; PWM waits for stable encoder validation.';
+el('liveReadiness').textContent=readiness;
+if(liveEnabled)el('liveSafety').textContent=status.live_issue||'Persistent Live selected.';
 else {
-  const previous=status.last_live_exit_reason;
-  const exitText=previous && previous!=='none' && !previous.startsWith('unknown')?
-      ' Previous Live exit: '+previous+'.':'';
-  el('liveSafety').textContent=(status.live_issue||liveBlock||'Service selected; automatic movement disabled.')+exitText;
+    const previous=status.last_live_exit_reason;
+    const exitText=previous && previous!=='none' && !previous.startsWith('unknown')?
+        ' Previous Live exit: '+previous+'.':'';
+    el('liveSafety').textContent=readiness+exitText;
 }
 
 el('moveStart').disabled=!enabled||!testing()||!setup?.positions[pos]?.pulse_us;
@@ -123,7 +127,7 @@ el('enableLive').onclick=()=>{
      'Promote the verified Bench Go dial position directly to persistent Live? No extra manual movement is required. This remains active after restarts only if the sensor and calibrated AS5600 verify.' :
      'Enable persistent Live? Confirm the servo is mounted on the furnace, final dial calibration is complete and the AS5600 agrees. Live can resume after a power failure if sensor and encoder checks pass.';
  if(confirm(question))act('live',{position:Number(el('goPosition').value),confirm:'enable_live'},
-     fromGo?'Bench Go promoted to persistent Live.':'Persistent Live enabled. Encoder checking active.');
+     fromGo?'Bench Go promoted; waiting for stable AS5600 verification before moving.':'Live selected; verifying stable encoder readings before servo movement.');
 };
 el('testButton').onclick=()=>{if(confirm('Enter attended bench Test Mode? Automatic control and existing PWM will stop. Manual movement will be enabled for 15 minutes.'))act('test',{confirm:'unloaded_bench'},'Test Mode active. Send a starting pulse, then jog.');};
 el('sendPulse').onclick=()=>{const us=Number(el('startingPulse').value);if(!Number.isInteger(us)||us<500||us>2500)return notice('Enter a whole pulse width between 500 and 2500 µs.',true);if(confirm('Move the bench servo to '+us+' µs?'))act('pulse',{us},'Starting pulse sent. Small jog movements are available.');};
