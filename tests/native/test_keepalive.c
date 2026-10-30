@@ -16,7 +16,8 @@ struct fake_client {
 };
 static struct fake_client client;
 static int inits,attempts,cleanups,fail_next,status_next=200,streaming_calls;
-static bool complete=true;
+static bool complete=true,local_request=false;
+static int auth_headers;
 static const char *reply="{}";
 static time_t clock_value=1800000000;
 static time_t test_time(time_t *p){if(p)*p=clock_value;return clock_value;}
@@ -27,8 +28,8 @@ esp_err_t esp_crt_bundle_attach(void *p){return ESP_OK;}
 esp_http_client_handle_t esp_http_client_init(const esp_http_client_config_t *cfg)
 {
     ++inits;memset(&client,0,sizeof(client));
-    assert(cfg->disable_auto_redirect&&cfg->keep_alive_enable);
-    assert(cfg->max_authorization_retries==-1);
+    assert(cfg->disable_auto_redirect&&(cfg->keep_alive_enable||local_request));
+    if(!local_request)assert(cfg->max_authorization_retries==-1);
     assert(cfg->crt_bundle_attach==esp_crt_bundle_attach);
     client.handler=cfg->event_handler;return &client;
 }
@@ -37,7 +38,8 @@ esp_err_t esp_http_client_set_url(esp_http_client_handle_t h,const char *url){sn
 esp_err_t esp_http_client_set_timeout_ms(esp_http_client_handle_t h,int timeout){assert(timeout>0);return ESP_OK;}
 esp_err_t esp_http_client_set_header(esp_http_client_handle_t h,const char *key,const char *value)
 {
-    if(!strcmp(key,"Authorization"))assert(!strcmp(value,"Bearer fixture"));
+    assert(key);
+    if(!strcmp(key,"Authorization")){++auth_headers;assert(!strcmp(value,"Bearer fixture"));}
     if(!strcmp(key,"Content-Type")){
         if(!value&&!h->content_type)return ESP_ERR_NOT_FOUND;
         h->content_type=value!=NULL;
@@ -70,7 +72,7 @@ esp_err_t esp_http_client_open(esp_http_client_handle_t h,int n){++streaming_cal
 int esp_http_client_write(esp_http_client_handle_t h,const char *p,int n){assert(0);return -1;}
 int64_t esp_http_client_fetch_headers(esp_http_client_handle_t h){assert(0);return -1;}
 int esp_http_client_read_response(esp_http_client_handle_t h,char *p,int n){assert(0);return -1;}
-esp_err_t esp_http_client_close(esp_http_client_handle_t h){assert(0);return ESP_FAIL;}
+esp_err_t esp_http_client_close(esp_http_client_handle_t h){assert(local_request);return ESP_OK;}
 static esp_err_t request(room_http_session_t **s,const char *path,const char *post,char *out,size_t capacity,int *code,int *n)
 {
     return room_http_keepalive(s,"https://ha.test","Authorization","Bearer fixture",path,post,out,capacity,1000,code,n);
@@ -105,6 +107,20 @@ int main(void)
     clock_value=0;assert(request(&s,"/",NULL,out,sizeof(out),&code,&n)==ESP_ERR_INVALID_STATE);
     assert(attempts==before);
     esp_http_client_cleanup(s->client);free(s);
-    puts("PASS: persistent session reuse, POST/GET reset, bounded reads, failure cleanup, no POST replay, redirects/auth and origin/time guards");
+    local_request=true;int prior_headers=auth_headers;before=inits;
+    /* An unauthenticated local controller request reaches the HTTP client.
+     * The mock fails open deliberately; no access header may be added. */
+    assert(room_http("http://controller.test",NULL,NULL,"/api/link",NULL,out,sizeof(out),1000,&code,&n)==ESP_FAIL);
+    assert(inits==before+1&&streaming_calls==1&&auth_headers==prior_headers);
+    assert(room_http("http://controller.test","Authorization",NULL,"/api/link",NULL,out,sizeof(out),1000,&code,&n)==ESP_ERR_INVALID_ARG);
+    room_http_session_t *local=NULL;clock_value=0;status_next=200;before=inits;
+    for(int k=0;k<10;++k)assert(room_http_keepalive(&local,"http://controller.test",NULL,NULL,"/api/link","{}",out,sizeof(out),1800,&code,&n)==ESP_OK);
+    assert(inits==before+1&&auth_headers==prior_headers&&code==200&&n==2);
+    fail_next=1;before=attempts;
+    assert(room_http_keepalive(&local,"http://controller.test",NULL,NULL,"/api/link","{}",out,sizeof(out),1800,&code,&n)==ESP_FAIL);
+    assert(attempts==before+1&&local->client==NULL); /* No mutation replay. */
+    assert(room_http_keepalive(&local,"http://controller.test",NULL,NULL,"/api/link","{}",out,sizeof(out),1800,&code,&n)==ESP_OK);
+    assert(auth_headers==prior_headers);esp_http_client_cleanup(local->client);free(local);
+    puts("PASS: token-free local requests, persistent session reuse, POST/GET reset, bounded reads, failure cleanup, no POST replay, redirects/auth and origin/time guards");
     return 0;
 }

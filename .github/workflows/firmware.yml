@@ -1,0 +1,123 @@
+name: Production firmware
+
+on:
+  push:
+    branches: [main, 'release/**']
+    tags: ['V1.0.*']
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: firmware-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: version
+        name: Validate coordinated release version
+        shell: bash
+        run: |
+          version=$(cat VERSION)
+          [[ "$version" =~ ^1\.0\.[0-9]+$ ]]
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            test "$GITHUB_REF_NAME" = "V$version"
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@v4
+        with:
+          repository: DaveGamble/cJSON
+          ref: c859b25da02955fef659d658b8f324b5cde87be3
+          path: .test-deps/cjson
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: tests/package-lock.json
+      - name: Host and packaging checks
+        run: |
+          cmake -S tests -B build-host -DCJSON_SOURCE_DIR="$PWD/.test-deps/cjson"
+          cmake --build build-host --parallel
+          ctest --test-dir build-host --output-on-failure
+          python -m unittest discover -s tests -p test_release.py
+      - name: Production PowerShell build helper checks
+        shell: pwsh
+        run: ./tests/test-build-helpers.ps1
+      - name: Embedded web workflow tests
+        working-directory: tests
+        run: |
+          npm ci --ignore-scripts
+          npx playwright install --with-deps chromium
+          npm test
+          npm run test:device
+
+  firmware:
+    needs: checks
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - device: controller
+            project: controller
+            build: build-supermini
+            config: sdkconfig.supermini
+            defaults: sdkconfig.supermini.defaults
+          - device: thermostat
+            project: touchscreen
+            build: build-4b
+            config: sdkconfig.4b
+            defaults: sdkconfig.defaults
+    steps:
+      - uses: actions/checkout@v4
+      - name: Prepare public build defaults
+        run: cp touchscreen/secrets.h.example touchscreen/secrets.h
+      - name: Build ESP32-S3 firmware
+        uses: espressif/esp-idf-ci-action@v1
+        with:
+          esp_idf_version: v6.0.1
+          target: esp32s3
+          path: ${{ matrix.project }}
+          command: idf.py -B ${{ matrix.build }} -D SDKCONFIG=${{ matrix.config }} -D SDKCONFIG_DEFAULTS=${{ matrix.defaults }} build
+      - name: Verify embedded version and package flash files
+        run: python tools/package-release.py --device ${{ matrix.device }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: CottageThermoESP-V${{ needs.checks.outputs.version }}-${{ matrix.device }}
+          retention-days: 30
+          if-no-files-found: error
+          path: dist/*.zip
+
+  publish:
+    if: startsWith(github.ref, 'refs/tags/V1.0.') || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+    needs: [checks, firmware]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: CottageThermoESP-V*
+          path: dist
+          merge-multiple: true
+      - name: Publish verified release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: V${{ needs.checks.outputs.version }}
+          SOURCE_SHA: ${{ github.sha }}
+        shell: bash
+        run: |
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            echo "$RELEASE_TAG already exists; keeping the published release unchanged."
+            exit 0
+          fi
+          gh release create "$RELEASE_TAG" dist/*.zip --target "$SOURCE_SHA" --title "CottageThermoESP $RELEASE_TAG" --notes-file "docs/releases/$RELEASE_TAG.md"

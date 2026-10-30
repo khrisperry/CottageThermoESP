@@ -1,6 +1,10 @@
 # Local validation and next cottage visit
 
-Firmware: **controller v0.2.0 / room panel v0.6.0**, updated 2026-10-20. Build from a configured **ESP-IDF 6.0.1** terminal; user machine is Windows/VSCode. The checked-in PowerShell helper builds both firmware projects, does not flash, and checks exit codes.
+Reviewed baseline: **controller v0.2.0 / panel v0.9.4** on `main`. New review: **controller v0.3.0 / panel v0.10.0**, updated 2026-10-21. Build from a configured **ESP-IDF 6.0.1** terminal; user machine is Windows/VSCode. The checked-in PowerShell helper builds both firmware projects, does not flash, and checks exit codes.
+
+## Current connectivity review evidence
+
+See [CONNECTIVITY_REVIEW.md](CONNECTIVITY_REVIEW.md) for current setup and validation. Both ESP-IDF 6.0.1 firmware builds pass with ESP-NOW enabled; configured MQTT is included in the controller build. All 16 host tests pass. User hardware validation established the v0.9.4 display, direct HA, camera, sound and BME280 baseline. Real radio/MQTT outage and discovery checks remain pending. The older milestone evidence below is historical and does not replace this checklist.
 
 ## Before next weekend
 

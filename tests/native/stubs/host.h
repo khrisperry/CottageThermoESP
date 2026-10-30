@@ -14,6 +14,8 @@ typedef int esp_err_t;
 #define ESP_ERROR_CHECK(x) assert((x)==0)
 #define ESP_LOGI(...) ((void)0)
 #define ESP_LOGE(...) ((void)0)
+#define ESP_LOGW(...) ((void)0)
+#define MALLOC_CAP_INTERNAL 4
 #define MALLOC_CAP_SPIRAM 1
 #define MALLOC_CAP_8BIT 2
 #define CONFIG_ROOM_NATIVE_DISPLAY 1
@@ -21,7 +23,7 @@ typedef int esp_err_t;
 #define CONFIG_ROOM_HA_BRIDGE_URL "http://ha.test"
 #define CONFIG_ROOM_CONTROLLER_URL "http://controller.test"
 #define CONFIG_ROOM_HA_BRIDGE_TOKEN "test-bridge-token"
-#define CONFIG_ROOM_API_TOKEN "test-room-token"
+#define CONFIG_ROOM_API_TOKEN "0123456789abcdef0123456789abcdef"
 #define BSP_I2C_SDA 47
 #define BSP_I2C_SCL 48
 #define portMAX_DELAY 0
@@ -46,7 +48,16 @@ void vTaskDelay(int);
 void *heap_caps_malloc(size_t,int);
 bool bsp_display_lock(uint32_t);
 void bsp_display_unlock(void);
-lv_display_t *bsp_display_start(void);
+typedef struct {int task_stack,task_affinity;} lvgl_port_cfg_t;
+typedef struct {lvgl_port_cfg_t lvgl_port_cfg;} bsp_display_cfg_t;
+#define ESP_LVGL_PORT_INIT_CONFIG() {.task_stack=7168}
+lv_display_t *bsp_display_start_with_config(const bsp_display_cfg_t*);
+unsigned uxTaskGetStackHighWaterMark(void*);
 void bsp_display_rotate(lv_display_t*,lv_display_rotation_t);
 int bsp_display_brightness_set(int);
 void *bsp_i2c_get_handle(void);
+
+size_t heap_caps_get_free_size(int);
+size_t heap_caps_get_largest_free_block(int);
+
+void esp_fill_random(void*,size_t);

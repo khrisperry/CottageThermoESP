@@ -25,17 +25,99 @@ int main(void)
     th_config_t c=example();assert(th_config_valid(&c));
     th_state_t s;th_init(&s,&c,true);expect_reason(&s,100000,"position_unsynchronized");
     assert(!s.synchronized && !s.has_command); // Never restore a persisted target as position.
-    s=prepared();th_action_t a=th_tick(&s,100000);assert(a.move&&fabsf(a.level-3.25f)<0.001f);
-    th_commit_move(&s,a,100000);assert(s.commanded_us==1525);expect_reason(&s,101000,"movement_dwell");
-    assert(th_sample(&s,TH_ROOM,60,0,400000));assert(th_tick(&s,400000).move);
+    /* A thermostat setpoint maps straight to the calibrated dial position,
+     * without 0.25-level steps or the five-minute adaptive dwell. */
+    s=prepared();th_action_t a=th_tick(&s,100000);
+    assert(a.move&&fabsf(a.level-4.0f)<0.001f&&a.pulse_us==1600);
+    th_commit_move(&s,a,100000);assert(s.commanded_us==1600);
+    expect_reason(&s,101000,"mapped_setting_reached");
+    s.config.target_f=80;
+    expect_reason(&s,101000,"setpoint_cooldown");
+    assert(th_tick(&s,101999).move==false);
+    a=th_tick(&s,102000);assert(a.move&&a.level==6&&a.pulse_us==1800);
+    th_commit_move(&s,a,102000);
+    s.config.target_f=50;expect_reason(&s,103000,"setpoint_cooldown");
+    a=th_tick(&s,104000);assert(a.move&&a.level==1&&a.pulse_us==1200);
+    th_commit_move(&s,a,104000);
+    assert(th_sample(&s,TH_ROOM,61,0,105000));
+    expect_reason(&s,105000,"mapped_setting_reached");
+    s.config.target_f=65;
+    expect_reason(&s,105000,"setpoint_cooldown");
+    a=th_tick(&s,106000);assert(a.move&&a.level==3&&a.pulse_us==1500);
+    /* The room can warm/cool without inventing any additional dial moves. */
+    th_commit_move(&s,a,106000);
+    assert(th_sample(&s,TH_ROOM,56,0,108000));expect_reason(&s,108000,"mapped_setting_reached");
+    /* Freeze Hold is 50F and does not overwrite the original comfort target.
+     * Exiting Away resumes the stored target. If dial 1 is warmer than 50F,
+     * clamp to minimum heat instead of silently disabling frost protection. */
+    s=prepared();s.away=true;
+    a=th_tick(&s,100000);
+    assert(a.move && a.level==1 && a.pulse_us==1200 && s.effective_target_f==50);
+    th_commit_move(&s,a,100000);
+    assert(s.config.target_f==70&&!s.away_clamped);
+    s.away=false;a=th_tick(&s,102000);
+    assert(a.move && a.level==4 && a.pulse_us==1600 && s.config.target_f==70);
+    th_commit_move(&s,a,102000);
+    s=prepared();s.config.map[0].temp_f=55;s.away=true;
+    a=th_tick(&s,100000);
+    assert(a.move && a.level==1 && s.away_clamped && s.effective_target_f==50);
+    s.away=false;a=th_tick(&s,100000);
+    assert(a.move && !s.away_clamped && s.effective_target_f==70);
+
+    /* Sunshine/deck warmth is not evidence of furnace overshoot: sustained
+     * excess temperature must never lower the calibrated nighttime setting. */
+    s=prepared();
+    s.config.target_f=60;
+    a=th_tick(&s,100000);assert(a.move&&!a.feedback_adjustment);
+    const float sixty_level=a.level;
+    th_commit_move(&s,a,100000);
+    for(uint64_t now=115000;now<=3700000;now+=15000){
+        assert(th_sample(&s,TH_ROOM,70,0,now));
+        a=th_tick(&s,now);
+        assert(!a.move&&!a.feedback_adjustment);
+        assert(s.feedback_trim==0&&s.feedback_corrections==0);
+        assert(s.commanded_level==sixty_level);
+    }
+    /* Nighttime cooling leaves the original 60F dial setting in place. */
+    assert(th_sample(&s,TH_ROOM,58,0,3715000));
+    expect_reason(&s,3715000,"mapped_setting_reached");
+    assert(s.commanded_level==sixty_level);
+    s.config.target_f=65;
+    a=th_tick(&s,3717000);
+    assert(a.move&&!a.feedback_adjustment&&a.level==3);
+    th_commit_move(&s,a,3717000);
+    /* Short excursion: no trim even after the observation window. */
+    s=prepared();
+    a=th_tick(&s,100000);th_commit_move(&s,a,100000);
+    assert(th_sample(&s,TH_ROOM,74,0,800000));
+    expect_reason(&s,800000,"mapped_setting_reached");
+    assert(th_sample(&s,TH_ROOM,70,0,802000));
+    expect_reason(&s,802000,"mapped_setting_reached");
+    assert(s.feedback_over_since_ms==0 && s.feedback_corrections==0);
+    assert(th_sample(&s,TH_ROOM,72,0,1300000));
+    expect_reason(&s,1300000,"mapped_setting_reached"); /* fresh spike not confirmed */
+    assert(s.feedback_corrections==0);
+    /* Losing primary data cannot trigger a correction, even if SwitchBot
+     * remains available; no fresh thermal evidence means no learning. */
+    assert(th_sample(&s,TH_SWITCHBOT,75,0,2000000));
+    s.config.secondary_enabled=true;
+    expect_reason(&s,2000000,"mapped_setting_reached");
+    assert(s.feedback_over_since_ms==0 && s.feedback_corrections==0);
+    th_release(&s);
+    assert(!s.feedback_tracking && s.feedback_trim==0 && s.feedback_corrections==0);
     s=prepared();expect_reason(&s,190001,"temperature_stale");
     assert(th_sample(&s,TH_SWITCHBOT,62,0,190001));expect_reason(&s,190001,"temperature_stale");
     s.config.secondary_enabled=true;assert(th_tick(&s,190001).move&&s.source==TH_SWITCHBOT);
     assert(th_sample(&s,TH_ROOM,70,0,190002));expect_reason(&s,190002,"sensor_disagreement");
     s.config.secondary_enabled=false;assert(th_tick(&s,190002).move&&s.source==TH_ROOM);
     s.config.target_f=45;expect_reason(&s,190002,"target_outside_measured_map");
+    /* Non-setpoint/direct and future background adjustments keep the original
+     * dwell and fractional movement safety policy. */
     s=prepared();s.config.mode=TH_DIRECT;s.config.direct_level=6;assert(th_tick(&s,300000).move);
     s.config.direct_level=1;assert(th_tick(&s,300000).level==2.75f);
+    s.config.direct_level=6;a=th_tick(&s,300000);assert(a.move&&a.level==3.25f);
+    th_commit_move(&s,a,300000);
+    s.config.direct_level=1;expect_reason(&s,301000,"movement_dwell");
     s.config.direct_level=0;expect_reason(&s,300000,"level_outside_measured_map");
     s=prepared();s.config.mode=TH_HOLD;expect_reason(&s,100000,"hold");
     s.config.mode=TH_MANUAL;expect_reason(&s,100000,"manual");
@@ -54,7 +136,10 @@ int main(void)
     c.map[1].pulse_us=1850;assert(!th_config_valid(&c));
     c=example();c.map[1].level=1;assert(!th_config_valid(&c));
     c=example();c.map[1].temp_f=50;assert(!th_config_valid(&c));
-    c=example();c.map[0].pulse_us=1000;assert(!th_config_valid(&c));
+    c=example();c.map[0].pulse_us=499;assert(!th_config_valid(&c));
+    c=example();c.map[0].pulse_us=500;assert(th_config_valid(&c));
+    c=example();c.map[2].pulse_us=2500;assert(th_config_valid(&c));
+    c.map[2].pulse_us=2501;assert(!th_config_valid(&c));
     c=example();c.target_f=NAN;assert(!th_config_valid(&c));
     c=example();c.max_level_step=INFINITY;assert(!th_config_valid(&c));
     c=example();c.map_count=1;assert(!th_config_valid(&c));c.map_count=9;assert(!th_config_valid(&c));
@@ -71,12 +156,23 @@ int main(void)
     assert(!th_scheduled_target(&c,7,360,&target));
     th_init(&s,&c,true);assert(th_sync(&s,3));assert(th_sample(&s,TH_ROOM,60,0,100000));
     expect_reason(&s,100000,"schedule_clock_unavailable");
-    th_clock(&s,true,0,360);assert(th_tick(&s,100000).move);assert(s.effective_target_f==68);
-    th_clock(&s,true,9,360);expect_reason(&s,100000,"schedule_clock_unavailable");
+    th_clock(&s,true,0,360);
+    a=th_tick(&s,100000);
+    assert(a.move && fabsf(a.level-3.6f)<0.001f);
+    assert(s.effective_target_f==68);
+    th_commit_move(&s,a,100000);
+    /* A scheduled setback is also an intentional setpoint change, not a
+     * five-minute series of 0.25-level moves. */
+    th_clock(&s,true,0,1320);
+    expect_reason(&s,101000,"setpoint_cooldown");
+    a=th_tick(&s,102000);
+    assert(a.move && fabsf(a.level-(1.0f+5.0f/15.0f*2.0f))<0.001f);
+    th_clock(&s,true,9,360);expect_reason(&s,102000,"schedule_clock_unavailable");
     c.schedule[1].minute=360;assert(!th_config_valid(&c)); // Overlap rejected.
     c.schedule[1].days=0;assert(!th_config_valid(&c));
-    // Long simulation: every accepted action stays within map and step/dwell limits.
-    s=prepared();float previous=s.commanded_level;uint64_t last=0;
+    // Long simulation of conservative DIRECT mode: bounded steps and dwell.
+    s=prepared();s.config.mode=TH_DIRECT;s.config.direct_level=4;
+    float previous=s.commanded_level;uint64_t last=0;
     for(uint64_t now=100000;now<4000000;now+=1000) {
         assert(th_sample(&s,TH_ROOM,60,0,now+1));
         a=th_tick(&s,now+1);
@@ -87,5 +183,5 @@ int main(void)
         }
     }
     assert(fabsf(s.commanded_level-4)<0.001f);
-    puts("PASS: thermostat startup, maps, reverse direction, freshness, source selection, disagreements, modes, dwell, bounds, persistence validation and long simulation");
+    puts("PASS: setpoint full-travel response with 2-second guard, slow direct-mode dwell, maps, freshness, safety checks, and long simulation");
 }

@@ -1,69 +1,66 @@
-# CottageThermoESP
+# CottageThermoESP — V1.0.X
 
-ESP-IDF smart thermostat / mechanical knob actuator project for a **Williams model 1773512 direct-vent cottage furnace**.
+Coordinated firmware for the cottage furnace dial controller and room thermostat. The first release is **V1.0.0**. Both devices read the same root `VERSION`; subsequent fixes use V1.0.1, V1.0.2, and so on.
 
-> **Status: controller v0.2.0; native 4B room panel v0.9.4.** Controller and room client are separate ESP-IDF 6.0.1 projects. Automatic output defaults to simulation; physical servo commands are explicitly armed bench operations. Mechanical travel/torque, encoder feedback and appliance integration remain unverified.
+| Device | Production hardware | Build helper | Firmware identity |
+|---|---|---|---|
+| Controller | HW-747 ESP32-S3 Super Mini, 4 MB | `tools/build-controller-supermini.ps1` | `cottage_thermo_controller` |
+| Thermostat | Waveshare ESP32-S3 Touch-LCD-4B, 16 MB | `tools/build-room-4b.ps1` | `cottage_thermo_room_4b` |
 
-## Start here when resuming the project
+Use [the production guide](docs/PRODUCTION.md) for builds, flashing, settings, calibration and release packaging. See [V1.0.0 release notes](docs/releases/V1.0.0.md) and [CHANGELOG.md](CHANGELOG.md).
 
-1. **[docs/PROJECT_SPEC.md](docs/PROJECT_SPEC.md)** — complete context, requirements, software architecture, sensor selection, learning, Home Assistant, and failure behavior.
-2. **[docs/PROTOTYPE_01.md](docs/PROTOTYPE_01.md)** — the first experiment: TS90MD + basic ESP-IDF web control + 3D-printed friction caps.
-3. **[docs/MECHANICAL_NOTES.md](docs/MECHANICAL_NOTES.md)** — knobs, direct-drive coupling, cap trial sizes, measurement list and attachment concept.
-4. **[docs/DECISIONS_AND_OPEN_QUESTIONS.md](docs/DECISIONS_AND_OPEN_QUESTIONS.md)** — confirmed decisions, unknowns, next session checklist.
-5. **[hardware/cap_fit_kit.scad](hardware/cap_fit_kit.scad)** — parametric **test coupons**, not a verified knob/servo coupling.
-6. **[controller/README.md](controller/README.md)** — controller setup, modes, calibration and bench movement.
-7. **[touchscreen/README.md](touchscreen/README.md)** — native 4B build, captive Wi-Fi/direct HA setup and first hardware checks.
-8. **[docs/LOCAL_VALIDATION.md](docs/LOCAL_VALIDATION.md)** — local build/test steps and next cottage visit.
-9. **[docs/API.md](docs/API.md)** — direct paired API, schedules and data freshness.
+## Build and flash
 
-## Home Assistant development
-
-The native room client connects **directly to Home Assistant** using a long-lived token in ignored `touchscreen/secrets.h`. No bridge or bridge token is required. See [touchscreen setup](touchscreen/README.md) for the one-time secrets file, Wi-Fi settings and 4B build/flash commands. Climate/Home/Laundry/Camera and swipe navigation are implemented. The direct-HA v0.5.0 build/checks passed. v0.6.0 adds captive Wi-Fi provisioning, an on-screen Wi-Fi button and a 16 KB startup stack; local compilation and physical portal testing are pending.
-
-## Goal
-
-- Keep the original Williams furnace thermostat and safety functions intact. Its physical 0–6 dial sets the temperature; it is **not** an on/off power relay.
-- Fit a removable 3D-printed cap over the existing knob, driven 1:1 by a coaxial servo (starting with **TS90MD**). **No intermediate gears.**
-- Servo body stays fixed to a removable bracket; cap and shaft rotate. Cap can stay on the knob for manual turning when servo module is detached.
-- Servo must not automatically go to 0, sweep, or seek a default position on reboot / power restoration.
-- Ultimately: standalone local thermostat operation, optional Home Assistant climate integration, ESP32-S3 touchscreen room thermostat, adaptive temperature-to-dial calibration, heating recovery-time learning, and HA-assisted "Heading to Cottage" preheat.
-
-## Software now implemented
-
-Persistent modes/target/calibration, measured-map interpolation, fractional dial commands, source freshness/disagreement checks, movement limits, weekly schedules in Detroit time, paired web/API access, optional LAN Wi-Fi, events and six-hour sample CSV export. The room client reports CRC-checked SHT31/SHT4x samples and presents browser and native 4B interfaces. Native display electronics and probe wiring await physical validation.
-
-```text
-controller/    AtomS3 Lite controller + bench web UI
-touchscreen/ native 4B + external probe + browser UI
-shared/thermo/ hardware-independent thermostat engine
-tests/        engine, LVGL host, HA bridge and browser checks
-tools/        Windows local build helper
-hardware/     CAD, reference models and tests
-docs/         specification, API, validation and engineering decisions
-```
-
-Build both locally from the configured ESP-IDF PowerShell terminal:
+Run from the repository root in an **ESP-IDF 6.0.1 PowerShell terminal**. Build both without flashing:
 
 ```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tools\build-local.ps1
+.\tools\build.ps1
 ```
 
-## Current short-term milestone: does the servo have enough torque?
-
-Test a **TS90MD**, controlled by an **M5Stack AtomS3 Lite on rear GPIO38 (G38)**, with a secured stationary servo bracket and printed trial cap. Start on a disconnected dummy knob or equivalent load. Establish real knob dimensions, rotation range, friction/torque, and whether the servo moves the knob without binding. The MG995 is available as a larger fallback but not the first choice.
-
-A fitted cap and stationary mount are independent parts. The servo horn/spline must match the **actual servo shaft** (T20 and T25 are not interchangeable); use the correct supplied/matching metal horn or hub rather than guessing a printed spline.
-
-**Project origin:** planning discussion, 2026-10-17. All example calibration temperatures, runtime estimates and cap diameters are placeholders until measured.
-
-## Consolidated display baseline (2026-10-21)
-
-Use `main` for the consolidated controller/display baseline. Waveshare ESP32-S3-Touch-LCD-4B is the planned production display (480×480, 16 MB flash, 8 MB PSRAM). User hardware tests confirm the native UI, direct Home Assistant, camera, sound and local BME280 test sensor. These results supersede older pending-display notes above. Permanent sensing and furnace mechanics still require validation. Follow-up work is reviewed separately before integration.
+Flash one device at a time, using its actual COM port:
 
 ```powershell
-git switch main
-git pull --ff-only
-.\tools\build-room-4b.ps1 -Bme280Test -Flash -Monitor -Port COM14
+.\tools\build.ps1 -Device controller -Flash -Monitor -Port COM17
+.\tools\build.ps1 -Device thermostat -Flash -Monitor -Port COM14
 ```
 
-Omit `-Bme280Test` when retaining the configured permanent sensor profile. Deferred transport, status and climate requirements are tracked in `docs/DECISIONS_AND_OPEN_QUESTIONS.md`.
+PowerShell switches use one dash: `-Flash`, `-Monitor`. The existing board-specific helpers still work; `build-local.ps1` now selects the production Super Mini and 4B profiles. Local configs/secrets are ignored by Git and retained. Normal upgrades do not require erasing NVS or recapturing calibration.
+
+## Included behavior
+
+- Persistent Live, Service/Calibration, attended Test and 15-minute Bench Go.
+- Measured fractional dial recovery, encoder checks on startup and movement, and a visible calibration/expected-angle table.
+- LAN/mDNS discovery, paired encrypted ESP-NOW fallback and controller link recovery.
+- SHT45 primary temperature, saved sensor offset, standalone thermostat and optional HA/MQTT Climate integration.
+- Native Climate/Home/Laundry/Camera/Ships pages, digital clock screensaver, HA furnace power stages and outdoor weather.
+- Thermostat webpage settings, restart and rollback-capable application OTA; controller USB updates.
+
+The release preserves the tested control logic. Furnace power and weather are observations; adaptive learning and automatic thermal trim remain disabled. Bench verification and final furnace installation validation are separate.
+
+## Repository
+
+| Directory | Purpose |
+|---|---|
+| `controller/` | Production Super Mini firmware and calibration webpage |
+| `touchscreen/` | Production Waveshare 4B thermostat |
+| `shared/` | Thermostat engine and paired transport |
+| `tools/` | Build helpers, release packager and HA mapping generator |
+| `tests/` | Host, embedded web workflow, native LVGL and packaging checks |
+| `hardware/` | Mechanical/CAD work |
+| `docs/` | Production guide and engineering references |
+| `docs/history/` | Earlier development logs |
+| `ha_bridge/` | Optional legacy bridge; direct HA does not require it |
+
+`main` is the consolidated production source. Release tags are `V1.0.X`. Development branches remain available for history; they are not the upgrade path. Application identities, partition offsets and saved settings formats are retained from the working baseline.
+
+## Validation and artifacts
+
+The production workflow tests the host logic/web interfaces, builds both devices with ESP-IDF 6.0.1, and packages each binary with its bootloader, partition table, flash arguments, manifest and SHA-256 checksums. A new VERSION on main publishes its matching V1.0.X release only after all jobs succeed; existing releases are left intact. CI builds contain example/empty credentials; configure integrations through the device pages. A firmware binary built locally may contain your compiled credentials.
+
+For local release archives after building:
+
+```powershell
+python .\tools\package-release.py
+```
+
+Archives are written to ignored `dist/`. The packager rejects a binary whose embedded version or application identity does not match the release/device.

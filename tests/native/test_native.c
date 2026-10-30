@@ -7,9 +7,13 @@
 static int64_t now=1000000;
 static int posts=0,queue_count=0;
 static char last_path[80],last_post[256];
-static bool unknown=false;
+static bool unknown=false,test_wifi=true,test_fallback=false,controller_missing=false;
+static bool ship_showing,test_ships_populated,test_ship_map_pending,test_weather_available=true;
 static unsigned test_notify_mask,test_volume=100;
 #include "../../touchscreen/main/room_display.c"
+/* Worker tasks are registered but not run in this deterministic UI fixture. */
+esp_err_t room_ha_camera(void *buffer,size_t capacity,int *code,int *length){assert(!"Camera worker must not run in UI fixture");return ESP_FAIL;}
+esp_err_t esp_jpeg_decode(esp_jpeg_image_cfg_t *cfg,esp_jpeg_image_output_t *out){assert(!"JPEG worker must not run in UI fixture");return ESP_FAIL;}
 static command_t queued;
 int64_t esp_timer_get_time(void){return now;}
 uint32_t esp_random(void){return 123;}
@@ -26,16 +30,43 @@ void vTaskDelete(void*p){}
 void *heap_caps_malloc(size_t n,int cap){return malloc(n);}
 bool bsp_display_lock(uint32_t n){return true;}
 void bsp_display_unlock(void){}
-lv_display_t *bsp_display_start(void){return lv_display_get_default();}
+lv_display_t *bsp_display_start_with_config(const bsp_display_cfg_t *cfg){assert(cfg->lvgl_port_cfg.task_stack==16384&&cfg->lvgl_port_cfg.task_affinity==1);return lv_display_get_default();}
+unsigned uxTaskGetStackHighWaterMark(void *task){return 12000;}
 void bsp_display_rotate(lv_display_t *d,lv_display_rotation_t r){lv_display_set_rotation(d,r);}
 int bsp_display_brightness_set(int n){return 0;}
 void *bsp_i2c_get_handle(void){return (void*)47;}
+bool room_wifi_connected(void){return test_wifi;}
+const char *room_settings_ha_token(void){return "configured";}
+bool room_controller_fallback(void){return test_fallback;}
+bool room_controller_radio_ready(void){return true;}
+bool room_controller_radio_online(void){return test_fallback;}
+const char *room_settings_controller_token(void){return "0123456789abcdef0123456789abcdef";}
 const char *room_settings_controller_url(void){return CONFIG_ROOM_CONTROLLER_URL;}
 unsigned room_audio_get_volume(void){return test_volume;}
 bool room_audio_set_volume(unsigned value){if(value>100)return false;test_volume=value;return true;}
 bool room_audio_test(void){return true;}
 bool room_audio_notify_enabled(int key){return (test_notify_mask&(1U<<(key-3)))!=0;}
 bool room_audio_set_notify(int key,bool enabled){unsigned bit=1U<<(key-3);test_notify_mask=enabled?test_notify_mask|bit:test_notify_mask&~bit;return true;}
+bool room_ota_busy(void){return false;}
+void room_wifi_address(char *buffer,size_t size){snprintf(buffer,size,"%s","192.0.2.10");}
+bool room_settings_ships_enabled(void){return true;}
+unsigned room_settings_ship_range(void){return 30;}
+int room_mqtt_state(void){return 0;}
+cJSON *room_mqtt_status(void){return cJSON_CreateObject();}
+const char *room_controller_sync_state(void){return "Not managed";}
+void room_ships_active(bool active){ship_showing=active;}
+void room_ships_snapshot(room_ships_t *out){memset(out,0,sizeof(*out));out->service=true;out->feed=true;out->received_at=now;out->range=30;out->latitude=44.3f;out->longitude=-83.5f;
+ if(test_ships_populated){out->count=out->nearby=3;for(unsigned i=0;i<3;++i){room_ship_t *v=&out->ships[i];v->mmsi=316000001+i;snprintf(v->name,sizeof(v->name),"TEST VESSEL %u",i+1);snprintf(v->kind,sizeof(v->kind),"Cargo");snprintf(v->destination,sizeof(v->destination),"PORT HURON");v->lat=44.3f+i*.02f;v->lon=-83.4f+i*.02f;v->distance=3+i;v->speed_valid=true;v->speed=11.2f;v->age=30;}}
+}
+bool room_ships_online(void){return true;}
+bool room_ships_service_online(void){return true;}
+void *room_ships_take_map(double bounds[4]){
+ if(!test_ship_map_pending)return NULL;test_ship_map_pending=false;
+ bounds[0]=-84;bounds[1]=44;bounds[2]=-83;bounds[3]=44.6;
+ uint16_t *p=malloc(456*400*2);assert(p);for(unsigned y=0;y<400;++y)for(unsigned x=0;x<456;++x)p[y*456+x]=(x%57==0||y%50==0)?0x22aa:0x1105;return p;
+}
+size_t heap_caps_get_free_size(int caps){return 1000000;}
+size_t heap_caps_get_largest_free_block(int caps){return 100000;}
 static char ha_json[4096];
 esp_err_t room_http(const char *origin,const char *header,const char *token,const char *path,const char *post,void *out,size_t cap,int timeout,int *status,int *length)
 {
@@ -45,7 +76,12 @@ esp_err_t room_http(const char *origin,const char *header,const char *token,cons
  else body="{\"temperature_f\":65.2,\"target_f\":67,\"simulation\":true,\"mode\":\"hold\",\"reason\":\"simulation\"}";
  *length=snprintf(out,cap,"%s",body);*status=200;return 0;
 }
+cJSON *room_controller_status(void){if(controller_missing)return NULL;char buffer[1024];int code,n;room_http("http://controller.test","X-Thermo-Token","test","/api/status",NULL,buffer,sizeof(buffer),1000,&code,&n);return cJSON_Parse(buffer);}
+cJSON *room_controller_target(float target,int *code){char buffer[1024],post[80];int n;snprintf(post,sizeof(post),"{\"target_f\":%.1f}",target);room_http("http://controller.test","X-Thermo-Token","test","/api/config",post,buffer,sizeof(buffer),1000,code,&n);return cJSON_Parse(buffer);}
 cJSON *room_ha_status(void){return cJSON_Parse(ha_json);}
+cJSON *room_controller_away(bool enabled,int *code){(void)enabled;++posts;*code=200;return cJSON_Parse("{\"ok\":true}");}
+cJSON *room_ha_weather_status(void){return cJSON_Parse(test_weather_available?"{\"available\":true,\"temperature_f\":54.5}":"{\"available\":false}");}
+float room_settings_temp_offset_f(void){return 0.0f;}
 cJSON *room_ha_command(cJSON *p,int *code){char *post=cJSON_PrintUnformatted(p),buffer[256];int length;room_http("http://ha.test","Authorization","Bearer test","/api/ha/command",post,buffer,sizeof(buffer),1000,code,&length);free(post);return cJSON_Parse(buffer);}
 static uint8_t screen_pixels[480*480*3],draw_pixels[480*480*3];
 static void flush(lv_display_t *d,const lv_area_t *a,uint8_t *pixels)
@@ -74,17 +110,58 @@ static void populate(void)
 }
 int main(void)
 {
+#ifdef ROOM_CLIMATE_WEATHER_TEST
+ {
+ lv_init();lv_display_t *d=lv_display_create(480,480);lv_display_set_color_format(d,LV_COLOR_FORMAT_RGB888);lv_display_set_buffers(d,draw_pixels,NULL,sizeof(draw_pixels),LV_DISPLAY_RENDER_MODE_PARTIAL);lv_display_set_flush_cb(d,flush);
+ room_display_start();populate();room_display_probe_sample(74.3f,79.6f);refresh(NULL);select_page(0);
+ int before=queue_count;render("climate-weather.ppm");
+ assert(!strcmp(lv_label_get_text(temp_label),"Current 74.3 F"));
+ assert(!strcmp(lv_label_get_text(outside_label),"Outside 54.5 F"));
+ lv_area_t inside,outside,target;lv_obj_get_coords(temp_label,&inside);lv_obj_get_coords(outside_label,&outside);lv_obj_get_coords(target_label,&target);
+ assert(target.y2<inside.y1&&inside.y2<outside.y1);
+ assert(outside.x1==inside.x1&&outside.x2<ROOM_CLIMATE_RING_X+12);
+ assert(outside.y2<ROOM_CLIMATE_MODE_Y+57);
+ test_weather_available=false;poll_ha();refresh(NULL);assert(!strcmp(lv_label_get_text(outside_label),"Outside -- F"));
+ render("climate-weather-unavailable.ppm");
+ test_weather_available=true;poll_ha();test_wifi=false;refresh(NULL);assert(!strcmp(lv_label_get_text(outside_label),"Outside -- F"));
+ test_wifi=true;poll_ha();refresh(NULL);assert(!strcmp(lv_label_get_text(outside_label),"Outside 54.5 F"));
+ now+=11000000;refresh(NULL);assert(!strcmp(lv_label_get_text(outside_label),"Outside -- F"));
+ assert(queue_count==before&&posts==0);
+ puts("PASS: native Climate room/outside placement, nonoverlap, unavailable/stale/Wi-Fi handling and no commands");return 0;
+ }
+#endif
+
+ /* A missed poll preserves the real timestamp, expires after ten seconds,
+  * and cannot keep renewing an offline controller's availability. */
+ poll_climate();int64_t acknowledged=model.climate_at;float confirmed_target=model.target;
+ controller_missing=true;now+=2000000;poll_climate();assert(model.climate_at==acknowledged&&model.target==confirmed_target&&current(model.climate_at));
+ now+=9000000;poll_climate();assert(model.climate_at==acknowledged&&!current(model.climate_at));
+ controller_missing=false;poll_climate();assert(current(model.climate_at));now=1000000;
  lv_init();lv_display_t *d=lv_display_create(480,480);lv_display_set_color_format(d,LV_COLOR_FORMAT_RGB888);lv_display_set_buffers(d,draw_pixels,NULL,sizeof(draw_pixels),LV_DISPLAY_RENDER_MODE_PARTIAL);lv_display_set_flush_cb(d,flush);
  lv_indev_t *input=lv_indev_create();lv_indev_set_type(input,LV_INDEV_TYPE_POINTER);lv_indev_set_read_cb(input,pointer_read);lv_indev_set_display(input,d);
- mutex=(void*)1;commands=(void*)1;build_ui();
+ room_display_start();
+ for(unsigned i=0;i<4;++i)refresh(NULL);assert(lvgl_stack_free==12000);
  assert(lv_obj_has_state(control[0][0],LV_STATE_DISABLED));
+ lv_obj_add_state(nav[4],LV_STATE_PRESSED);lv_refr_now(NULL);assert(lv_obj_get_style_shadow_width(nav[4],0)==0);lv_obj_remove_state(nav[4],LV_STATE_PRESSED);
  click(settings_button);assert(model.settings_open&&!lv_obj_has_flag(settings_modal,LV_OBJ_FLAG_HIDDEN));
  lv_slider_set_value(settings_volume,42,LV_ANIM_OFF);lv_obj_send_event(settings_volume,LV_EVENT_RELEASED,NULL);assert(test_volume==42);
  click(settings_camera_button);assert(model.camera_fill);
  click(settings_close_button);assert(!model.settings_open&&lv_obj_has_flag(settings_modal,LV_OBJ_FLAG_HIDDEN));
  populate();refresh(NULL);assert(!lv_obj_has_state(control[0][0],LV_STATE_DISABLED));
- room_display_probe_sample(65.2f);refresh(NULL);
- assert(!strcmp(lv_label_get_text(temp_label),"65.2 F"));assert(!strcmp(model.items[3].state,"Running")); /* Hidden long-dot labels are laid out when shown. */
+ assert(!strcmp(lv_label_get_text(connection),"Online"));
+ assert(!strcmp(lv_label_get_text(lv_obj_get_child(settings_button,0)),LV_SYMBOL_SETTINGS));
+ click(health_button);refresh(NULL);assert(model.settings_open);assert(!strcmp(lv_label_get_text(diagnostic_cells[3]),"Standby"));
+ assert(lv_obj_get_x(diagnostic_badges[0])==lv_obj_get_x(diagnostic_badges[6]));
+ assert(lv_obj_get_x(diagnostic_cells[0])==lv_obj_get_x(diagnostic_cells[6]));
+ render("connections.ppm");click(diagnostic_close_button);assert(!model.settings_open);
+ test_fallback=true;test_wifi=false;refresh(NULL);
+ assert(strstr(lv_label_get_text(connection),"ESPNOW"));assert(lv_obj_has_state(control[0][0],LV_STATE_DISABLED));
+ int before_fallback=queue_count;click(control[0][0]);assert(before_fallback==queue_count);assert(!camera_current(model.generation));
+ render("fallback.ppm");test_wifi=true;controller_missing=true;model.climate_at=0;populate();refresh(NULL);
+ assert(!lv_obj_has_state(control[0][0],LV_STATE_DISABLED)); /* HA recovers independently of controller. */
+ test_fallback=false;controller_missing=false;populate();refresh(NULL);
+ room_display_probe_sample(65.2f,65.2f);refresh(NULL);
+ assert(!strcmp(lv_label_get_text(temp_label),"Current 65.2 F"));assert(!strcmp(model.items[3].state,"Running")); /* Hidden long-dot labels are laid out when shown. */
  click(notify_button[0]);assert(room_audio_notify_enabled(3));assert(!room_audio_notify_enabled(4));
  click(notify_button[0]);assert(!room_audio_notify_enabled(3));
  int no_commands=queue_count;
@@ -126,6 +203,15 @@ select_page(2);render("laundry.ppm");select_page(3);render("camera.ppm");
  refresh(NULL);assert(!strcmp(lv_label_get_text(states[0]),"on"));
  execute(second);assert(model.pending==0);posts=0;
  assert(lv_obj_get_height(body[1])==364);
+ select_page(4);assert(ship_showing);refresh(NULL);assert(strstr(lv_label_get_text(ship_detail),"No ships"));
+ render("ships-empty.ppm");test_ships_populated=true;test_ship_map_pending=true;refresh(NULL);lv_obj_update_layout(lv_screen_active());
+ assert(!lv_obj_has_flag(ship_map,LV_OBJ_FLAG_HIDDEN));assert(!lv_obj_has_flag(ship_markers[0],LV_OBJ_FLAG_HIDDEN));
+ assert(strstr(lv_label_get_text(ship_detail),"3.0 mi"));render("ships-map.ppm");lv_mem_monitor_t before_map,after_map;lv_mem_monitor(&before_map);
+ for(unsigned i=0;i<100;++i){test_ship_map_pending=true;refresh(NULL);lv_refr_now(NULL);}
+ lv_mem_monitor(&after_map);assert(after_map.free_size+1024>=before_map.free_size);
+ click(ship_markers[1]);assert(selected_ship==1);test_ships_populated=false;
+ select_page(0);assert(!ship_showing);
+ cJSON *device=room_display_status();assert(cJSON_GetArraySize(cJSON_GetObjectItem(device,"services"))==7);cJSON_Delete(device);
  assert(lv_obj_has_flag(notice,LV_OBJ_FLAG_HIDDEN));
  assert(bulb_head[0]&&bulb_head[1]&&activity_ring[3]&&activity_ring[6]);
  assert(room_visual_state("Washing",true)==ROOM_VIS_ACTIVE);
@@ -140,12 +226,30 @@ select_page(2);render("laundry.ppm");select_page(3);render("camera.ppm");
  assert(room_display_probe_bus(1,2)==NULL);assert(room_display_probe_bus(47,48)==(void*)47);
  select_page(2);now+=61000000;refresh(NULL);assert(visible_page==0);assert(!camera_current(model.generation));
  /* Local readings remain visible without controller or HA, but stale readings clear. */
- model.climate_ok=false;model.ha_ok=false;room_display_probe_sample(69.4f);refresh(NULL);
- assert(!strcmp(lv_label_get_text(temp_label),"69.4 F"));
+ model.climate_ok=false;model.ha_ok=false;room_display_probe_sample(69.4f,69.4f);refresh(NULL);
+ assert(!strcmp(lv_label_get_text(temp_label),"Current 69.4 F"));
  assert(lv_obj_has_state(apply_button,LV_STATE_DISABLED));
  click(settings_button);refresh(NULL);assert(strstr(lv_label_get_text(probe_test_label),"69.4 F"));render("bmp280-settings.ppm");
- now+=31000000;refresh(NULL);assert(!strcmp(lv_label_get_text(temp_label),"-- F"));
+ now+=31000000;refresh(NULL);assert(!strcmp(lv_label_get_text(temp_label),"Current -- F"));
  assert(strstr(lv_label_get_text(probe_test_label),"no fresh reading"));
+ /* HA/MQTT availability cannot gate direct thermostat setpoint changes. */
+ model.ha_ok=false;model.climate_ok=true;model.climate_at=now;model.has_target=true;model.target=67;room_display_probe_sample(68,68);refresh(NULL);
+ assert(!lv_obj_has_state(apply_button,LV_STATE_DISABLED));click(plus_button);click(apply_button);before=posts;execute(queued);assert(posts==before+1&&!strcmp(last_path,"/api/config"));
+ /* HA targets share the touchscreen queue and freshness/pending/expiry rules. */
+ assert(!room_display_request_target(NAN)&&!room_display_request_target(81));
+ assert(room_display_request_target(70.5f));assert(!room_display_request_target(71));before=posts;execute(queued);assert(posts==before+1&&strstr(last_post,"70.5"));
+ assert(room_display_request_target(71));before=posts;now+=11000000;execute(queued);assert(posts==before);model.climate_at=now;
+ cJSON *telemetry=room_display_mqtt_state();assert(cJSON_IsTrue(cJSON_GetObjectItem(telemetry,"controller_online")));assert(cJSON_GetObjectItem(telemetry,"temperature_f")->valuedouble==68);cJSON_Delete(telemetry);
+ now+=11000000;assert(!room_display_request_target(70));telemetry=room_display_mqtt_state();assert(cJSON_IsFalse(cJSON_GetObjectItem(telemetry,"controller_online"))&&cJSON_IsTrue(cJSON_GetObjectItem(telemetry,"sensor_fresh")));cJSON_Delete(telemetry);
+ model.ha_ok=true;model.ha_at=now;
+ cJSON *state=room_display_mqtt_state(),*dashboard=room_display_status();
+ const char *service_keys[]={"wifi","ha","controller","espnow","sensor","ships","mqtt"};
+ cJSON *services=cJSON_GetObjectItem(state,"services");assert(cJSON_GetArraySize(services)==7);
+ for(unsigned i=0;i<7;++i)assert(!strcmp(cJSON_GetObjectItem(services,service_keys[i])->valuestring,cJSON_GetObjectItem(cJSON_GetArrayItem(cJSON_GetObjectItem(dashboard,"services"),i),"state")->valuestring));
+ assert(!strcmp(cJSON_GetObjectItem(services,"controller")->valuestring,"Offline"));
+ assert(!strcmp(cJSON_GetObjectItem(services,"ha")->valuestring,"Online"));cJSON_Delete(state);cJSON_Delete(dashboard);
+ model.climate_ok=true;model.climate_at=now;test_fallback=true;state=room_display_mqtt_state();services=cJSON_GetObjectItem(state,"services");
+ assert(!strcmp(cJSON_GetObjectItem(services,"controller")->valuestring,"ESP-NOW"));assert(!strcmp(cJSON_GetObjectItem(services,"espnow")->valuestring,"Active"));cJSON_Delete(state);
  puts("PASS: native LVGL pages/swipes, HA commands, unknown outcomes, expired requests, stale controls, target-only climate, probe guard and idle return");
  return 0;
 }

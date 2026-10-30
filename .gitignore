@@ -42,3 +42,19 @@ __pycache__/
 # Direct Home Assistant credentials (compiled locally into the ESP firmware)
 /touchscreen/*secrets.h*
 !/touchscreen/secrets.h.example
+
+/controller/*secrets.h*
+!/controller/secrets.h.example
+
+**/build-verify*/
+
+# HW-747 local build configuration (may contain credentials)
+**/build-supermini/
+**/sdkconfig.supermini
+**/sdkconfig.supermini.old
+
+# Release/test output and downloaded test dependencies
+/dist/
+/build-host/
+/.test-deps/
+/tests/playwright-report/

@@ -6,13 +6,14 @@
 #include <time.h>
 #include "esp_crt_bundle.h"
 #include "esp_http_client.h"
+#include "esp_log.h"
 
 esp_err_t room_http(const char *origin, const char *header, const char *token,
                     const char *path, const char *post, void *out, size_t capacity,
                     int timeout_ms, int *status, int *length)
 {
     *status=0; *length=0;
-    if (!origin || !token || !*token || capacity<2) return ESP_ERR_INVALID_ARG;
+    if (!origin || (header&&(!token||!*token)) || (!header&&token) || capacity<2) return ESP_ERR_INVALID_ARG;
     bool tls=!strncmp(origin,"https://",8);
     if (!tls && strncmp(origin,"http://",7)) return ESP_ERR_INVALID_ARG;
     const char *host=origin+(tls?8:7);
@@ -25,7 +26,7 @@ esp_err_t room_http(const char *origin, const char *header, const char *token,
         .disable_auto_redirect=true,.crt_bundle_attach=esp_crt_bundle_attach};
     esp_http_client_handle_t h=esp_http_client_init(&cfg);
     if (!h) return ESP_ERR_NO_MEM;
-    esp_http_client_set_header(h,header,token);
+    if(header)esp_http_client_set_header(h,header,token);
     if (post) {
         esp_http_client_set_method(h,HTTP_METHOD_POST);
         esp_http_client_set_header(h,"Content-Type","application/json");
@@ -40,8 +41,17 @@ esp_err_t room_http(const char *origin, const char *header, const char *token,
     *status=esp_http_client_get_status_code(h);
     if (err==ESP_OK) {
         int n=esp_http_client_read_response(h,out,capacity-1);
-        if (n<0 || n>=(int)capacity-1 || !esp_http_client_is_complete_data_received(h)) err=ESP_FAIL;
-        else { ((char*)out)[n]=0; *length=n; }
+        bool complete=n>=0 && esp_http_client_is_complete_data_received(h);
+        if (n<0 || n>=(int)capacity-1 || !complete) {
+            /* With a too-small caller buffer, IDF returns HTTP 200 but the
+             * body is not fully read. Log the actual size problem rather
+             * than misdiagnosing it as a Wi-Fi association failure. */
+            ESP_LOGW("room_transport",
+                "Incomplete HTTP body for %s: code=%d received=%d capacity=%u content_length=%lld complete=%d",
+                path,*status,n,(unsigned)capacity,
+                (long long)esp_http_client_get_content_length(h),(int)complete);
+            err=ESP_FAIL;
+        } else { ((char*)out)[n]=0; *length=n; }
     }
     esp_http_client_close(h); esp_http_client_cleanup(h);
     return err;
@@ -70,12 +80,20 @@ esp_err_t room_http_keepalive(room_http_session_t **session,
                     int timeout_ms,int *status,int *length)
 {
     *status=0;*length=0;
-    if(!session||!origin||!header||!token||!*token||!path||path[0]!='/'||path[1]=='/'||
+    if(!session||!origin||(header&&(!token||!*token))||(!header&&token)||!path||path[0]!='/'||path[1]=='/'||
        strpbrk(path,"\r\n")||!out||capacity<2||capacity>INT_MAX)return ESP_ERR_INVALID_ARG;
-    if(strncmp(origin,"https://",8)||!origin[8]||strpbrk(origin+8,"/@?#\\ \r\n")||
+    bool tls=!strncmp(origin,"https://",8);
+    if(!tls&&strncmp(origin,"http://",7))return ESP_ERR_INVALID_ARG;
+    const char *host=origin+(tls?8:7);
+    if(!*host||strpbrk(host,"/@?#\\ \r\n")||
        strlen(origin)>=sizeof(((room_http_session_t*)0)->origin))return ESP_ERR_INVALID_ARG;
-    if(time(NULL)<1767225600)return ESP_ERR_INVALID_STATE;
-    if(*session&&strcmp((*session)->origin,origin))return ESP_ERR_INVALID_ARG;
+    if(tls&&time(NULL)<1767225600)return ESP_ERR_INVALID_STATE;
+    /* DHCP/mDNS may change the selected controller IP between attempts.
+     * A failed old connection is never reused for a new origin. */
+    if(*session&&strcmp((*session)->origin,origin)){
+        if((*session)->client)esp_http_client_cleanup((*session)->client);
+        free(*session);*session=NULL;
+    }
     char url[320];int size=snprintf(url,sizeof(url),"%s%s",origin,path);
     if(size<0||size>=(int)sizeof(url))return ESP_ERR_INVALID_SIZE;
     if(!*session){
@@ -94,7 +112,7 @@ esp_err_t room_http_keepalive(room_http_session_t **session,
     esp_http_client_handle_t h=s->client;
     esp_err_t err=esp_http_client_set_url(h,url);
     if(err==ESP_OK)err=esp_http_client_set_timeout_ms(h,timeout_ms);
-    if(err==ESP_OK)err=esp_http_client_set_header(h,header,token);
+    if(err==ESP_OK&&header)err=esp_http_client_set_header(h,header,token);
     if(err==ESP_OK)err=esp_http_client_set_method(h,post?HTTP_METHOD_POST:HTTP_METHOD_GET);
     /* IDF 6.0.1 set_post_field(NULL) deletes Content-Type and returns
      * ESP_ERR_NOT_FOUND if absent. Seed it before both GET reset and POST. */

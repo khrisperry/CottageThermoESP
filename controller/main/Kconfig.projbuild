@@ -1,8 +1,20 @@
 menu "Cottage thermostat"
+    config THERMO_SUPERMINI
+        bool "HW-747 Super Mini 4 MB controller profile"
+        default n
     config THERMO_SERVO_GPIO
-        int "Servo signal GPIO (AtomS3 Lite rear G38)"
+        int "Servo signal GPIO"
         range 0 48
+        default 5 if THERMO_SUPERMINI
         default 38
+    config THERMO_ENCODER_SDA
+        int "AS5600 bench SDA GPIO"
+        range 0 48
+        default 6
+    config THERMO_ENCODER_SCL
+        int "AS5600 bench SCL GPIO"
+        range 0 48
+        default 7
     config THERMO_AP_SSID
         string "Open bench access point SSID"
         default "CottageThermoBench"
@@ -12,11 +24,4 @@ menu "Cottage thermostat"
     config THERMO_WIFI_PASSWORD
         string "LAN Wi-Fi password"
         default ""
-    config THERMO_LIVE_BENCH
-        bool "Enable physical output from thermostat engine (inert bench only)"
-        default n
-        help
-            Default is simulation. Enabling still requires a fresh session arm,
-            measured map and explicit observed-position synchronization.
-            No encoder feedback exists; never restore motion on boot.
 endmenu
