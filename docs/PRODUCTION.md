@@ -67,7 +67,7 @@ python .\tools\package-release.py
 
 This produces two ZIPs in `dist/`, one per device. Each contains only the expected app/bootloader/partition/flash files plus a manifest, SHA256SUMS and flashing instructions. Packaging reads the binary's embedded version and application identity and rejects stale/wrong images. It does not include SDK configs, secret headers, ELF files or build logs. Locally compiled application binaries may themselves contain private credentials; keep those packages private.
 
-CI builds start with empty example credentials. On `V1.0.X` tags, the workflow verifies that the tag matches `VERSION`, runs tests, builds both applications, and publishes both archives only after success. Do not reuse a release tag; advance the patch number for later changes.
+CI builds start with empty example credentials. A new `VERSION` merged to main runs tests, builds both applications, then creates the matching `V1.0.X` tag/release with both archives after success. Existing releases are left intact. Explicit tag builds also verify that the tag matches `VERSION`. Do not reuse a release tag; advance the patch number for later changes.
 
 ## Validation
 

@@ -55,7 +55,7 @@ The release preserves the tested control logic. Furnace power and weather are ob
 
 ## Validation and artifacts
 
-The production workflow tests the host logic/web interfaces, builds both devices with ESP-IDF 6.0.1, and packages each binary with its bootloader, partition table, flash arguments, manifest and SHA-256 checksums. Tag builds publish a release only after all jobs succeed. CI builds contain example/empty credentials; configure integrations through the device pages. A firmware binary built locally may contain your compiled credentials.
+The production workflow tests the host logic/web interfaces, builds both devices with ESP-IDF 6.0.1, and packages each binary with its bootloader, partition table, flash arguments, manifest and SHA-256 checksums. A new VERSION on main publishes its matching V1.0.X release only after all jobs succeed; existing releases are left intact. CI builds contain example/empty credentials; configure integrations through the device pages. A firmware binary built locally may contain your compiled credentials.
 
 For local release archives after building:
 

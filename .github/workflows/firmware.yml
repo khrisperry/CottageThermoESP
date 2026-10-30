@@ -97,7 +97,7 @@ jobs:
           path: dist/*.zip
 
   publish:
-    if: startsWith(github.ref, 'refs/tags/V1.0.')
+    if: startsWith(github.ref, 'refs/tags/V1.0.') || (github.event_name == 'push' && github.ref == 'refs/heads/main')
     needs: [checks, firmware]
     runs-on: ubuntu-latest
     permissions:
@@ -112,5 +112,12 @@ jobs:
       - name: Publish verified release
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ github.ref_name }}
-        run: gh release create "$RELEASE_TAG" dist/*.zip --verify-tag --title "CottageThermoESP $RELEASE_TAG" --notes-file "docs/releases/$RELEASE_TAG.md"
+          RELEASE_TAG: V${{ needs.checks.outputs.version }}
+          SOURCE_SHA: ${{ github.sha }}
+        shell: bash
+        run: |
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            echo "$RELEASE_TAG already exists; keeping the published release unchanged."
+            exit 0
+          fi
+          gh release create "$RELEASE_TAG" dist/*.zip --target "$SOURCE_SHA" --title "CottageThermoESP $RELEASE_TAG" --notes-file "docs/releases/$RELEASE_TAG.md"
