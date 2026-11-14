@@ -128,6 +128,7 @@ static void discover_controller(void)
     esp_ip4_addr_t ip={0};
     esp_err_t err=mdns_query_a("CottageThermoController",1200,&ip);
     if(err!=ESP_OK){
+        diag_note(RLD_DISCOVERY_FAIL,"mdns","mdns_query_failed",err,0,1200,true);
         discovery_last_error=err;
         ++discovery_failed_checks;
         ESP_LOGW("controller_discovery","mDNS lookup CottageThermoController.local failed: %s",esp_err_to_name(err));
@@ -140,6 +141,8 @@ static void discover_controller(void)
     room_discovery_result_t result={0};
     if(!room_discovery_probe_origin(found_origin,pair->radio_enabled,
                                    pair->peer,&result)){
+        diag_note(RLD_DISCOVERY_FAIL,"mdns_probe",result.identity_mismatch?"identity_mismatch":"status_unavailable",
+                  result.http_error,result.http_status,2400,true);
         discovery_last_error=result.http_error;
         discovery_last_http_status=result.http_status;
         ++discovery_failed_checks;
@@ -201,14 +204,23 @@ bool room_controller_radio_ready(void){return tl_radio_configured();}
 bool room_controller_radio_online(void){return tl_radio_online();}
 static bool http(const tl_packet_t *p,tl_packet_t *out)
 {
-    if(!room_wifi_connected())return false;
+    if(!room_wifi_connected()){
+        diag_note(RLD_LINK_FAIL,"link_http","room_wifi_offline",0,0,0,true);
+        return false;
+    }
     const char *origin=controller_origin();
-    if(!*origin)return false;
+    if(!*origin){
+        diag_note(RLD_LINK_FAIL,"link_http","no_origin",0,0,0,true);
+        return false;
+    }
     char hex[sizeof(*p)*2+1],body[sizeof(*p)*2+20],response[512];int status=0,length=0;
+    int64_t started=esp_timer_get_time();
     tl_hex(p,hex);snprintf(body,sizeof(body),"{\"packet\":\"%s\"}",hex);
     esp_err_t err=room_http_keepalive(&http_session,origin,NULL,NULL,
        "/api/link",body,response,sizeof(response),1800,&status,&length);
     if(err!=ESP_OK||status!=200){
+        diag_note(RLD_LINK_FAIL,"link_http",err!=ESP_OK?"transport_error":"http_status",
+                  err,status,(uint32_t)((esp_timer_get_time()-started)/1000),true);
         ESP_LOGW("controller_link","Controller %s/api/link: error=%d HTTP=%d",origin,(int)err,status);
         if(origin==discovered_origin){
             discovered_origin[0]=0;discovered_address[0]=0;discovery_verified=false;
@@ -218,7 +230,11 @@ static bool http(const tl_packet_t *p,tl_packet_t *out)
     }
     if(origin!=discovered_origin)manual_failures=0;
     cJSON *j=cJSON_Parse(response),*v=cJSON_GetObjectItemCaseSensitive(j,"packet");
-    bool ok=cJSON_IsString(v)&&tl_unhex(v->valuestring,out);cJSON_Delete(j);return ok;
+    bool ok=cJSON_IsString(v)&&tl_unhex(v->valuestring,out);cJSON_Delete(j);
+    diag_note(ok?RLD_LINK_OK:RLD_LINK_FAIL,"link_http",
+              ok?"ok":"invalid_reply",err,status,
+              (uint32_t)((esp_timer_get_time()-started)/1000),!ok);
+    return ok;
 }
 static bool matching(const tl_packet_t *p,const tl_packet_t *r)
 {return tl_valid(r)&&r->operation==TL_REPLY&&r->client==p->client&&r->sequence==p->sequence;}
@@ -236,14 +252,25 @@ static bool exchange(tl_packet_t p,tl_packet_t *r,bool probe)
         else {
             start=esp_timer_get_time();
             if(tl_radio_exchange(&p,r)==ESP_OK&&matching(&p,r)&&r->result==TL_OK){
+                diag_note(RLD_RADIO_OK,"espnow_probe","ok",0,0,
+                          (uint32_t)((esp_timer_get_time()-start)/1000),false);
                 via_radio=true;ok=true;radio_failed_probes=0;
-            }else if(radio_failed_probes<1000000U)++radio_failed_probes;
+            }else{
+                diag_note(RLD_RADIO_FAIL,"espnow_probe","unavailable_or_rejected",0,0,
+                          (uint32_t)((esp_timer_get_time()-start)/1000),true);
+                if(radio_failed_probes<1000000U)++radio_failed_probes;
+            }
         }
     }else ok=fallback?(tl_radio_exchange(&p,r)==ESP_OK&&matching(&p,r)):(http(&p,r)&&matching(&p,r));
     if(ok&&esp_timer_get_time()-start<3000000){
         if(probe&&via_radio!=fallback){
-            if(via_radio)ESP_LOGW("controller_link","Controller link switched to ESP-NOW");
-            else ESP_LOGI("controller_link","Wi-Fi controller link restored");
+            if(via_radio){
+                diag_note(RLD_SWITCH_RADIO,"transport","to_espnow",0,0,0,true);
+                ESP_LOGW("controller_link","Controller link switched to ESP-NOW");
+            }else{
+                diag_note(RLD_SWITCH_LAN,"transport","to_lan",0,0,0,true);
+                ESP_LOGI("controller_link","Wi-Fi controller link restored");
+            }
         }
         if(probe)fallback=via_radio;
         latest=*r;received_at=esp_timer_get_time();
