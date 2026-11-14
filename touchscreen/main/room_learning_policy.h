@@ -7,16 +7,16 @@
 #define RL_SAMPLE_INTERVAL_MS 300000ULL
 #define RL_MIN_SETTLED_MS (90ULL*60ULL*1000ULL)
 #define RL_MAX_RECENT_SPREAD_F 1.5f
-#define RL_BINS 11
+#define RL_BINS 21
 
-/* Only 1.0, 1.5, ... 6.0 are reported as provisional per-position averages.
- * Fractional setpoints between those values are retained in CSV unchanged. */
-static inline int rl_half_step_bin(float level)
+/* Quarter-step buckets represent normal fractional thermostat positions.
+ * Raw exact commanded values always remain in CSV and in mean_commanded_level. */
+static inline int rl_quarter_step_bin(float level)
 {
-    if (!isfinite(level) || level < 0.9f || level > 6.1f) return -1;
-    int index=(int)lroundf((level-1.0f)*2.0f);
+    if (!isfinite(level) || level < 1.0f || level > 6.0f) return -1;
+    int index=(int)lroundf((level-1.0f)*4.0f);
     if (index<0 || index>=RL_BINS ||
-        fabsf(level-(1.0f+0.5f*index))>0.10f) return -1;
+        fabsf(level-(1.0f+0.25f*index))>0.126f) return -1;
     return index;
 }
 static inline bool rl_settled(uint64_t now_ms,uint64_t from_ms,
