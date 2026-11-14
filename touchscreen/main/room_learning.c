@@ -47,6 +47,8 @@ typedef struct {
     uint16_t flags;
     char stage[24];
     char mode[16];
+    char lan_reason[32];
+    bool espnow_selected;
 } rl_entry_t;
 
 static const char *TAG="room_learning";
@@ -134,6 +136,7 @@ static void observe(void)
     time_t wall=time(NULL);
     e.unix_s=wall>1700000000?(int64_t)wall:0;
     safe_word(e.mode,sizeof(e.mode),"unknown");
+    safe_word(e.lan_reason,sizeof(e.lan_reason),"not_attempted");
     safe_word(e.stage,sizeof(e.stage),"unknown");
 
     xSemaphoreTake(lock,portMAX_DELAY);
@@ -143,7 +146,8 @@ static void observe(void)
     }
     xSemaphoreGive(lock);
 
-    cJSON *control=room_controller_learning_status();
+    e.espnow_selected=room_controller_espnow_selected();
+    cJSON *control=room_controller_learning_status(e.lan_reason,sizeof(e.lan_reason));
     if(control){
         e.flags|=RL_CONTROLLER;
         (void)number(control,"commanded_level",&e.commanded_level);
@@ -312,6 +316,8 @@ cJSON *room_learning_status(void)
         cJSON_AddNumberToObject(s,"flags",latest->flags);
         cJSON_AddStringToObject(s,"stage",latest->stage);
         cJSON_AddStringToObject(s,"mode",latest->mode);
+        cJSON_AddStringToObject(s,"learning_lan_reason",latest->lan_reason);
+        cJSON_AddStringToObject(s,"selected_control_transport",latest->espnow_selected?"ESP-NOW":"LAN");
         if(isfinite(latest->room_f))cJSON_AddNumberToObject(s,"room_f",latest->room_f);
         if(isfinite(latest->commanded_level))cJSON_AddNumberToObject(s,"commanded_level",latest->commanded_level);
         cJSON_AddBoolToObject(s,"review_candidate",(latest->flags&RL_CANDIDATE)!=0);
@@ -334,7 +340,8 @@ esp_err_t room_learning_csv(httpd_req_t *r)
       "unix_s,uptime_s,room_f,raw_f,target_f,commanded_dial,encoder_angle_deg,"
       "outdoor_f,cloud_percent,power_w,current_a,controller_mode,furnace_stage,"
       "room_fresh,controller_lan,live,encoder_valid,power_fresh,current_fresh,weather_fresh,"
-      "monitor_enabled,installed_at_cottage,dial_settled,review_candidate\n");
+      "monitor_enabled,installed_at_cottage,dial_settled,review_candidate,"
+      "learning_lan_reason,selected_control_transport\n");
     xSemaphoreTake(lock,portMAX_DELAY);
     unsigned snapshot_count=count,begin=capacity?(next+capacity-count)%capacity:0;
     xSemaphoreGive(lock);
@@ -348,14 +355,15 @@ esp_err_t room_learning_csv(httpd_req_t *r)
                             e.encoder_deg,e.outside_f,e.cloud_pct,e.power_w,e.current_a};
         for(unsigned k=0;k<9;++k)csv_number(nums[k],a[k],sizeof(a[k]));
         snprintf(line,sizeof(line),
-          "%lld,%u,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u\n",
+          "%lld,%u,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%s,%s\n",
           (long long)e.unix_s,(unsigned)e.uptime_s,
           a[0],a[1],a[2],a[3],a[4],a[5],a[6],a[7],a[8],
           e.mode,e.stage,
           !!(e.flags&RL_ROOM),!!(e.flags&RL_CONTROLLER),!!(e.flags&RL_LIVE),
           !!(e.flags&RL_ENCODER),!!(e.flags&RL_POWER),!!(e.flags&RL_CURRENT),
           !!(e.flags&RL_WEATHER),!!(e.flags&RL_MONITOR),!!(e.flags&RL_INSTALLED),
-          !!(e.flags&RL_STABLE),!!(e.flags&RL_CANDIDATE));
+          !!(e.flags&RL_STABLE),!!(e.flags&RL_CANDIDATE),
+          e.lan_reason,e.espnow_selected?"ESP-NOW":"LAN");
         err=httpd_resp_sendstr_chunk(r,line);
     }
     if(err==ESP_OK)err=httpd_resp_send_chunk(r,NULL,0);
