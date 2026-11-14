@@ -1,5 +1,9 @@
 # Changelog
 
+## V1.0.3 — controller link diagnostics test build (not promoted)
+
+Capture actual LAN-to-ESP-NOW transport switches, failed controller HTTP, mDNS issues, and reasons for passive-learning LAN GET failures. Add a read-only diagnostics page and CSV failure reason. No control/fallback policy, servo, pairing, or calibration changes. See [diagnostic guide](docs/LINK_DIAGNOSTICS.md).
+
 ## V1.0.2 — fractional learning / power diagnostics field-test candidate
 
 Include normal fractional dial settings in quarter-step provisional learning bins, preserve actual mean dial positions, record electrical wattage separately from monitoring eligibility, and export monitor/installed flags. Automatic furnace adjustments remain disabled. See [V1.0.2 notes](docs/releases/V1.0.2.md).
