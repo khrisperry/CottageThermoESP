@@ -48,7 +48,8 @@ static void diag_note(rld_kind_t kind,const char *operation,const char *reason,
         .error=error,.http_status=http_status,.duration_ms=(int32_t)elapsed_ms,
         .rssi=associated?ap.rssi:0,.channel=associated?ap.primary:0,
         .room_wifi=room_wifi_connected(),.station_associated=associated,
-        .espnow_selected=atomic_load(&fallback)};
+        .espnow_selected=kind==RLD_SWITCH_RADIO?true:
+                         kind==RLD_SWITCH_LAN?false:atomic_load(&fallback)};
     snprintf(e.operation,sizeof(e.operation),"%s",operation);
     snprintf(e.reason,sizeof(e.reason),"%s",reason);
     if(xSemaphoreTake(diag_lock,pdMS_TO_TICKS(25))==pdTRUE){
