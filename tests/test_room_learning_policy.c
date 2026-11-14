@@ -4,15 +4,16 @@
 
 int main(void)
 {
-    assert(rl_half_step_bin(1.0f)==0);
-    assert(rl_half_step_bin(1.5f)==1);
-    assert(rl_half_step_bin(2.5f)==3);
-    assert(rl_half_step_bin(3.0f)==4);
-    assert(rl_half_step_bin(6.0f)==10);
-    assert(rl_half_step_bin(2.25f)==-1);
-    assert(rl_half_step_bin(NAN)==-1);
-    assert(rl_half_step_bin(0.0f)==-1);
-    assert(rl_half_step_bin(6.5f)==-1);
+    assert(rl_quarter_step_bin(1.0f)==0);
+    assert(rl_quarter_step_bin(1.5f)==2);
+    assert(rl_quarter_step_bin(2.5f)==6);
+    assert(rl_quarter_step_bin(2.727f)==7); /* live controller snapshot */
+    assert(rl_quarter_step_bin(2.75f)==7);
+    assert(rl_quarter_step_bin(3.0f)==8);
+    assert(rl_quarter_step_bin(6.0f)==20);
+    assert(rl_quarter_step_bin(NAN)==-1);
+    assert(rl_quarter_step_bin(0.0f)==-1);
+    assert(rl_quarter_step_bin(6.5f)==-1);
     assert(!rl_settled(6000000,1000000,6,0.5f));
     assert(!rl_settled(7000000,1000000,5,0.5f));
     assert(!rl_settled(7000000,1000000,6,1.6f));
