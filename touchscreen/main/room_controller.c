@@ -302,26 +302,64 @@ cJSON *room_controller_status(void)
  * incomplete observation even when ESP-NOW still handles setpoints safely.
  * Copy the validated controller origin under io, then release it before HTTP
  * so a slow diagnostic read cannot delay the normal thermostat link. */
-cJSON *room_controller_learning_status(void)
+static void learning_diagnostic(const char *reason,char *out,size_t n,
+                                bool success,int err,int status,uint32_t elapsed)
 {
-    if(!io||!room_wifi_connected())return NULL;
+    if(out&&n)snprintf(out,n,"%s",reason);
+    diag_note(success?RLD_LEARN_OK:RLD_LEARN_FAIL,"learning_get",reason,
+              err,status,elapsed,true);
+    if(!success)ESP_LOGW("room_learning","Controller diagnostic GET unavailable: %s; error=%d HTTP=%d elapsed=%u ms",
+                          reason,err,status,(unsigned)elapsed);
+}
+bool room_controller_espnow_selected(void){return atomic_load(&fallback);}
+cJSON *room_controller_learning_status(char *failure_reason,size_t reason_capacity)
+{
+    if(!io){learning_diagnostic("not_started",failure_reason,reason_capacity,false,0,0,0);return NULL;}
+    if(!room_wifi_connected()){
+        learning_diagnostic("room_wifi_offline",failure_reason,reason_capacity,false,0,0,0);
+        return NULL;
+    }
     char origin[256]={0};
-    if(xSemaphoreTake(io,pdMS_TO_TICKS(150))!=pdTRUE)return NULL;
+    if(xSemaphoreTake(io,pdMS_TO_TICKS(150))!=pdTRUE){
+        learning_diagnostic("controller_io_busy",failure_reason,reason_capacity,false,0,0,150);
+        return NULL;
+    }
     const char *selected=controller_origin();
     if(selected&&*selected)snprintf(origin,sizeof(origin),"%s",selected);
     xSemaphoreGive(io);
-    if(!*origin)return NULL;
-    char *body=malloc(8192);if(!body)return NULL;
+    if(!*origin){
+        learning_diagnostic("controller_origin_missing",failure_reason,reason_capacity,false,0,0,0);
+        return NULL;
+    }
+    char *body=malloc(8192);
+    if(!body){
+        learning_diagnostic("out_of_memory",failure_reason,reason_capacity,false,ESP_ERR_NO_MEM,0,0);
+        return NULL;
+    }
     int code=0,length=0;
+    int64_t start=esp_timer_get_time();
     esp_err_t err=room_http(origin,NULL,NULL,"/api/status",NULL,body,8192,2500,&code,&length);
-    cJSON *j=(err==ESP_OK&&code==200&&length>0)?
-        cJSON_ParseWithLengthOpts(body,length+1,NULL,true):NULL;
+    uint32_t elapsed=(uint32_t)((esp_timer_get_time()-start)/1000);
+    if(err!=ESP_OK || code!=200 || length<=0){
+        free(body);
+        learning_diagnostic(err!=ESP_OK?"http_transport_error":code!=200?"http_non_200":"empty_response",
+                            failure_reason,reason_capacity,false,err,code,elapsed);
+        return NULL;
+    }
+    cJSON *j=cJSON_ParseWithLengthOpts(body,length+1,NULL,true);
     free(body);
+    if(!j){
+        learning_diagnostic("invalid_json",failure_reason,reason_capacity,false,0,code,elapsed);
+        return NULL;
+    }
     cJSON *network=cJSON_GetObjectItemCaseSensitive(j,"network");
     cJSON *host=cJSON_GetObjectItemCaseSensitive(network,"hostname");
     if(!cJSON_IsString(host)||strcmp(host->valuestring,"CottageThermoController")){
-        cJSON_Delete(j);return NULL;
+        cJSON_Delete(j);
+        learning_diagnostic("controller_identity_mismatch",failure_reason,reason_capacity,false,0,code,elapsed);
+        return NULL;
     }
+    learning_diagnostic("ok",failure_reason,reason_capacity,true,0,code,elapsed);
     return j;
 }
 cJSON *room_controller_test(void)
