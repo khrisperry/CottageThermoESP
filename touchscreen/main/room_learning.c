@@ -58,7 +58,7 @@ static uint64_t last_probe_ms;
 static uint64_t unchanged_from_ms, last_persist_ms;
 static float unchanged_level=NAN, unchanged_target=NAN;
 static unsigned persist_count;
-static bool running;
+static bool summary_dirty, running;
 
 static cJSON *field(const cJSON *j,const char *name)
 { return cJSON_GetObjectItemCaseSensitive(j,name); }
@@ -223,18 +223,24 @@ static void observe(void)
         if(b->count<10000000U) {++b->count;b->sum_f+=e.room_f;
             if(e.room_f<b->min_f)b->min_f=e.room_f;
             if(e.room_f>b->max_f)b->max_f=e.room_f;
-            if(model.total_candidates<UINT32_MAX)++model.total_candidates;}
+            if(model.total_candidates<UINT32_MAX)++model.total_candidates;
+            summary_dirty=true;}
     }
     append_locked(&e);
     ++total_rows;
-    if(model.total_candidates && now>=last_persist_ms &&
+    if(summary_dirty && now>=last_persist_ms &&
        now-last_persist_ms>=RL_PERSIST_MS){
-        to_save=model;pending_persist=true;last_persist_ms=now;
+        to_save=model;pending_persist=true;
     }
     xSemaphoreGive(lock);
     if(pending_persist){
-        if(persist_summary(&to_save))++persist_count;
-        else ESP_LOGW(TAG,"Summary checkpoint failed; observations continue in RAM");
+        if(persist_summary(&to_save)){
+            ++persist_count;last_persist_ms=now;
+            xSemaphoreTake(lock,portMAX_DELAY);
+            /* Only this observer task mutates the model. */
+            summary_dirty=false;
+            xSemaphoreGive(lock);
+        }else ESP_LOGW(TAG,"Summary checkpoint failed; observations continue in RAM");
     }
     ESP_LOGI(TAG,"read-only observation room=%.1f dial_command=%.2f stage=%s flags=0x%02x",
              e.room_f,e.commanded_level,e.stage,e.flags);
@@ -321,7 +327,7 @@ esp_err_t room_learning_csv(httpd_req_t *r)
       "room_fresh,controller_lan,live,encoder_valid,power_fresh,weather_fresh,"
       "dial_settled,review_candidate\n");
     xSemaphoreTake(lock,portMAX_DELAY);
-    unsigned snapshot_count=count,begin=(next+capacity-count)%capacity;
+    unsigned snapshot_count=count,begin=capacity?(next+capacity-count)%capacity:0;
     xSemaphoreGive(lock);
     for(unsigned i=0;i<snapshot_count&&err==ESP_OK;++i){
         rl_entry_t e;
