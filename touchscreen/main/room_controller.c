@@ -2,6 +2,7 @@
 #include "room_transport.h"
 #include "room_discovery_probe.h"
 #include "room_link_policy.h"
+#include "room_link_diagnostic.h"
 #include "room_settings.h"
 #include "wifi_setup.h"
 #include "thermo_radio.h"
@@ -19,7 +20,8 @@
 #include <strings.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
-static SemaphoreHandle_t io;
+static SemaphoreHandle_t io,diag_lock;
+static rld_log_t link_trace;
 static room_http_session_t *http_session;
 static uint64_t client,sequence;
 static tl_packet_t latest;
@@ -34,6 +36,64 @@ static esp_err_t discovery_last_error;
 static int discovery_last_http_status;
 static unsigned discovery_failed_checks,radio_failed_probes;
 static void sync_task(void *arg);
+/* The diagnostic lock is separate from the control IO lock. Diagnostic
+ * endpoints never hold the controller control lock while rendering JSON. */
+static void diag_note(rld_kind_t kind,const char *operation,const char *reason,
+                      int error,int http_status,uint32_t elapsed_ms,bool keep_event)
+{
+    if(!diag_lock)return;
+    wifi_ap_record_t ap={0};
+    bool associated=esp_wifi_sta_get_ap_info(&ap)==ESP_OK;
+    rld_event_t e={.uptime_ms=(uint64_t)(esp_timer_get_time()/1000),
+        .error=error,.http_status=http_status,.duration_ms=(int32_t)elapsed_ms,
+        .rssi=associated?ap.rssi:0,.channel=associated?ap.primary:0,
+        .room_wifi=room_wifi_connected(),.station_associated=associated,
+        .espnow_selected=atomic_load(&fallback)};
+    snprintf(e.operation,sizeof(e.operation),"%s",operation);
+    snprintf(e.reason,sizeof(e.reason),"%s",reason);
+    if(xSemaphoreTake(diag_lock,pdMS_TO_TICKS(25))==pdTRUE){
+        rld_record(&link_trace,kind,&e,keep_event);
+        xSemaphoreGive(diag_lock);
+    }
+}
+cJSON *room_controller_link_diagnostics(void)
+{
+    cJSON *j=cJSON_CreateObject();if(!j)return NULL;
+    cJSON_AddStringToObject(j,"mode","read_only_diagnostic");
+    cJSON_AddBoolToObject(j,"automatic_fallback_unchanged",true);
+    cJSON_AddStringToObject(j,"selected_transport",atomic_load(&fallback)?"ESP-NOW":"LAN");
+    cJSON_AddBoolToObject(j,"room_wifi_connected",room_wifi_connected());
+    cJSON_AddBoolToObject(j,"espnow_online",tl_radio_online());
+    if(!diag_lock||xSemaphoreTake(diag_lock,pdMS_TO_TICKS(100))!=pdTRUE){
+        cJSON_AddStringToObject(j,"status","busy");return j;
+    }
+    cJSON *counts=cJSON_AddObjectToObject(j,"counters");
+    for(int k=0;k<RLD_COUNT;++k)
+        cJSON_AddNumberToObject(counts,rld_kind_name((rld_kind_t)k),link_trace.counters[k]);
+    cJSON *events=cJSON_AddArrayToObject(j,"events");
+    unsigned start=(link_trace.next+RLD_CAPACITY-link_trace.count)%RLD_CAPACITY;
+    for(unsigned i=0;i<link_trace.count;++i){
+        const rld_event_t *e=&link_trace.events[(start+i)%RLD_CAPACITY];
+        cJSON *item=cJSON_CreateObject();
+        cJSON_AddNumberToObject(item,"uptime_ms",(double)e->uptime_ms);
+        cJSON_AddStringToObject(item,"operation",e->operation);
+        cJSON_AddStringToObject(item,"reason",e->reason);
+        cJSON_AddNumberToObject(item,"error",e->error);
+        cJSON_AddNumberToObject(item,"http_status",e->http_status);
+        cJSON_AddNumberToObject(item,"elapsed_ms",e->duration_ms);
+        cJSON_AddBoolToObject(item,"room_wifi_connected",e->room_wifi);
+        cJSON_AddBoolToObject(item,"station_associated",e->station_associated);
+        cJSON_AddBoolToObject(item,"espnow_selected",e->espnow_selected);
+        if(e->station_associated){
+            cJSON_AddNumberToObject(item,"rssi_dbm",e->rssi);
+            cJSON_AddNumberToObject(item,"ap_channel",e->channel);
+        }
+        cJSON_AddItemToArray(events,item);
+    }
+    xSemaphoreGive(diag_lock);
+    return j;
+}
+
 static bool fresh(void){return received_at&&esp_timer_get_time()-received_at<4000000;}
 
 static bool controller_is_auto(void)
@@ -128,7 +188,8 @@ cJSON *room_controller_discovery_status(void)
 
 void room_controller_start(void)
 {
-    io=xSemaphoreCreateMutex();ESP_ERROR_CHECK(io?ESP_OK:ESP_ERR_NO_MEM);
+    io=xSemaphoreCreateMutex();diag_lock=xSemaphoreCreateMutex();
+    ESP_ERROR_CHECK(io&&diag_lock?ESP_OK:ESP_ERR_NO_MEM);
     client=((uint64_t)esp_random()<<32)|esp_random();if(!client)client=1;
     if(room_settings_radio_managed()){
         const cottage_integration_t *p=room_settings_integrations();tl_radio_start_config(NULL,p->radio_enabled,p->peer,p->key);
