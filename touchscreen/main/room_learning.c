@@ -317,7 +317,7 @@ static const char *csv_number(float f,char *b,size_t n)
 }
 esp_err_t room_learning_csv(httpd_req_t *r)
 {
-    if(!lock)return httpd_resp_send_err(r,HTTPD_503_SERVICE_UNAVAILABLE,"Learning not started");
+    if(!lock)return httpd_resp_send_err(r,HTTPD_500_INTERNAL_SERVER_ERROR,"Learning not started");
     httpd_resp_set_type(r,"text/csv");
     httpd_resp_set_hdr(r,"Cache-Control","no-store");
     httpd_resp_set_hdr(r,"Content-Disposition","attachment; filename=cottage-thermostat-learning.csv");
@@ -340,7 +340,7 @@ esp_err_t room_learning_csv(httpd_req_t *r)
         for(unsigned k=0;k<9;++k)csv_number(nums[k],a[k],sizeof(a[k]));
         snprintf(line,sizeof(line),
           "%lld,%u,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%u,%u,%u,%u,%u,%u,%u,%u\n",
-          (long long)e.unix_s,e.uptime_s,
+          (long long)e.unix_s,(unsigned)e.uptime_s,
           a[0],a[1],a[2],a[3],a[4],a[5],a[6],a[7],a[8],
           e.mode,e.stage,
           !!(e.flags&RL_ROOM),!!(e.flags&RL_CONTROLLER),!!(e.flags&RL_LIVE),
