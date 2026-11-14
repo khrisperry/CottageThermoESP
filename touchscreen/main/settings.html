@@ -194,11 +194,11 @@ function renderLearning(){
  for(const b of l.provisional_bins||[]){
   if(!b.samples)continue;
   const row=el('div',undefined,'status-row');
-  row.append(el('span','Dial '+b.dial_level+' ('+b.samples+' reviewed points)'),
+  row.append(el('span','Dial ~'+b.dial_level+' (actual mean '+Number(b.mean_commanded_level??b.dial_level).toFixed(3)+', '+b.samples+' points)'),
     el('span',Number(b.mean_temperature_f).toFixed(1)+' °F'));
   table.append(row);
  }
- n.append(table,el('small','Provisional averages require 90-minute stable command, 30-minute steady room temperature, healthy controller encoder, onsite furnace-power telemetry, and outside temperature. These are candidates, not confirmed equilibrium readings.'));
+ n.append(table,el('small','Provisional averages require 90-minute stable command, 30-minute steady room temperature, healthy controller encoder, enabled/onsite furnace-power telemetry, and outside temperature. These are candidates, not confirmed equilibrium readings.'));
 }
 function renderMetrics(){const m=$('metrics');if(!m||!lastStatus)return;m.replaceChildren();const p=lastStatus.performance||{};
  metric(m,'Corrected room temperature',typeof lastStatus.temperature_f==='number'?lastStatus.temperature_f.toFixed(1)+' °F':'No fresh sample');
