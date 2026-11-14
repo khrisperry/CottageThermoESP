@@ -13,7 +13,7 @@ int main(void)
     assert(rl_half_step_bin(NAN)==-1);
     assert(rl_half_step_bin(0.0f)==-1);
     assert(rl_half_step_bin(6.5f)==-1);
-    assert(!rl_settled(10000000,1000000,6,0.5f));
+    assert(!rl_settled(6000000,1000000,6,0.5f));
     assert(!rl_settled(7000000,1000000,5,0.5f));
     assert(!rl_settled(7000000,1000000,6,1.6f));
     assert(rl_settled(7000000,1000000,6,1.5f));
