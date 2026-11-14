@@ -26,6 +26,9 @@ CSV columns include timestamp, raw/corrected room temperature, target,
 **commanded** dial level, AS5600 encoder angle and validity, actual Live/mode,
 furnace stage and electrical watts/amps, outdoor temperature/cloud cover,
 freshness flags, furnace monitoring enabled/installed settings and review eligibility.
+V1.0.3 adds `learning_lan_reason` and `selected_control_transport` in the CSV.
+The latter reflects the selected control transport, not the independent learning GET.
+Check `/api/controller/diagnostics` for actual transport switches.
 Raw watt/current values are recorded when available, even if monitoring is not
 marked installed; that setting only gates the provisional summaries. An empty numeric field indicates
 missing/unverified data. Missing LAN details are **not** inferred from ESP-NOW.
