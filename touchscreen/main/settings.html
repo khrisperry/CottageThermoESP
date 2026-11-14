@@ -5,7 +5,7 @@
 <section class="card" id="content"></section><section class="card"><p id="message" role="status" aria-live="polite"></p><small>Tokens, keys and passwords are never returned after saving.</small></section></main></div>
 <script>
 'use strict';const $=id=>document.getElementById(id);let config=null,lastStatus=null,page='Overview',timer=null,uploading=false,reconnecting=false,reconnectBoot=null,restartBusy=false;
-const pages=['Overview','Temperature','Furnace power','Weather','Learning','Wi-Fi','Home Assistant','MQTT thermostat','Controller','ESP-NOW','Ship tracking','Sound & display','System'];
+const pages=['Overview','Temperature','Furnace power','Weather','Learning','Wi-Fi','Home Assistant','MQTT thermostat','Controller','Link diagnostics','ESP-NOW','Ship tracking','Sound & display','System'];
 function el(tag,text,cls){const n=document.createElement(tag);if(text!==undefined)n.textContent=String(text);if(cls)n.className=cls;return n;}
 function badge(text,kind){return el('span',text,'badge '+(['ok','offline','unconfigured','standby','fallback'].includes(kind)?kind:'standby'));}
 function field(parent,label,id,value='',type='text',placeholder=''){const wrap=el('div');const l=el('label',label);l.htmlFor=id;const i=el('input');i.id=id;i.type=type;i.value=value||'';i.placeholder=placeholder;i.autocomplete=type==='password'?'new-password':'off';if(type==='password'){const secret=el('div',undefined,'secret');const show=el('button','Show');show.type='button';show.onclick=()=>{i.type=i.type==='password'?'text':'password';show.textContent=i.type==='password'?'Show':'Hide'};secret.append(i,show);wrap.append(l,secret);}else wrap.append(l,i);parent.append(wrap);return i;}
@@ -23,6 +23,15 @@ function render(){
  if(page==='Overview'){c.append(el('p','The display remains the local thermostat. Ship data and Home Assistant run in background tasks.'));
   const metrics=el('div',undefined,'metrics');metrics.id='metrics';c.append(metrics);renderMetrics();return;}
  if(page==='Weather'){const n=el('div');n.id='weatherStatus';c.append(n);renderWeather();return;}
+ if(page==='Link diagnostics'){
+  c.append(el('p','Wi-Fi remains preferred; ESP-NOW fallback behavior is unchanged. This page distinguishes a read-only learning GET failure from a real controller transport switch.'));
+  const row=el('div',undefined,'actions');
+  const b=el('button','Refresh link diagnostics');b.type='button';
+  b.onclick=()=>loadLinkDiagnostics();row.append(b);
+  const link=el('a','Save diagnostics JSON');link.href='/api/controller/diagnostics';link.download='cottage-link-diagnostics.json';
+  row.append(link);c.append(row);
+  const n=el('div');n.id='diagPanel';c.append(n);loadLinkDiagnostics();return;
+ }
  if(page==='Learning'){
   c.append(el('p','Passive collection only: a 5-minute room/controller/HA snapshot. Data is for manual review; it never changes the dial map or PWM.'));
   const link=el('a','Download learning CSV');link.href='/api/learning.csv';link.download='cottage-thermostat-learning.csv';
@@ -179,6 +188,40 @@ function renderFurnacePower(){
  n.append(el('small','Stage changes require distinct fresh source reports spanning at least 10 seconds. Stale/missing data becomes Unknown. Cooldown requires a preceding likely-heating stage; restarting or changing monitoring settings resets the observation session.'));
 
 }
+async function loadLinkDiagnostics(){
+ const n=$('diagPanel');if(!n)return;
+ n.replaceChildren(el('p','Reading link diagnostics...'));
+ try{
+  const r=await fetch('/api/controller/diagnostics',{cache:'no-store'});
+  if(!r.ok)throw Error('HTTP '+r.status);
+  const j=await r.json();if(!$('diagPanel'))return;
+  n.replaceChildren(el('p','Selected controller transport: '+(j.selected_transport||'unknown')+
+    ' | Room Wi-Fi: '+(j.room_wifi_connected?'connected':'offline')+
+    ' | ESP-NOW peer: '+(j.espnow_online?'online':'not confirmed')));
+  const c=j.counters||{},summary=el('div',undefined,'statuses');
+  for(const [key,label] of [['link_http_ok','LAN control HTTP successes'],['link_http_fail','LAN control HTTP failures'],
+      ['switched_to_espnow','Actual switches to ESP-NOW'],['returned_to_lan','Actual returns to LAN'],
+      ['learning_lan_ok','Learning GET successes'],['learning_lan_fail','Learning GET failures'],
+      ['discovery_fail','Controller discovery failures'],['espnow_probe_ok','ESP-NOW successful probes']]){
+    const row=el('div',undefined,'status-row');
+    row.append(el('span',label),el('strong',c[key]??0));summary.append(row);
+  }
+  n.append(summary,el('h3','Recent diagnostic events (oldest first)'));
+  const events=el('div',undefined,'statuses');
+  for(const e of j.events||[]){
+    const row=el('div',undefined,'status-row');
+    row.append(el('span',(e.uptime_ms/1000).toFixed(0)+'s · '+e.operation+
+      ' · '+e.reason),el('small','HTTP '+e.http_status+'; err '+e.error+
+      '; '+e.elapsed_ms+'ms; Wi-Fi '+(e.room_wifi_connected?'up':'down')+
+      '; STA '+(e.station_associated?'yes':'no')+
+      (e.station_associated?'; RSSI '+e.rssi_dbm+' dBm; ch '+e.ap_channel:'')+
+      '; selected '+(e.espnow_selected?'ESP-NOW':'LAN')));
+    events.append(row);
+  }
+  if(!(j.events||[]).length)events.append(el('p','No link errors or diagnostic events captured yet.'));
+  n.append(events,el('small','Counters and event history reset on thermostat restart. Download JSON before reflashing or restarting. Missing LAN learning GET does not imply an ESP-NOW switch.'));
+ }catch(err){if($('diagPanel'))n.replaceChildren(el('p','Diagnostics request failed: '+err.message));}
+}
 function renderLearning(){
  const n=$('learningStatus');if(!n)return;
  const l=lastStatus?.learning;
@@ -187,6 +230,7 @@ function renderLearning(){
    ' | Samples in RAM: '+(l.samples_in_ram||0)+
    ' | Review candidates: '+(l.candidate_samples_total||0)));
  const recent=l.latest;
+ if(recent)n.append(el('p','Latest LAN read: '+(recent.learning_lan_reason||'unknown')+' | Control transport: '+(recent.selected_control_transport||'unknown')));
  if(recent)n.append(el('p','Latest: commanded dial '+(recent.commanded_level??'unavailable')+
    ', room '+(recent.room_f??'unavailable')+' °F, electrical stage '+
    (recent.stage||'unknown')+', eligible '+(recent.review_candidate?'yes':'no')));
