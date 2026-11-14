@@ -23,16 +23,17 @@
 #define RL_RING_FALLBACK 288U     /* 24 hours */
 #define RL_PERSIST_MS 21600000ULL /* 6 hours; modest flash wear */
 #define RL_MODEL_MAGIC 0x524C4D31U
-#define RL_MODEL_SCHEMA 1U
+#define RL_MODEL_SCHEMA 2U
 #define RL_PROBE_MAX_AGE_MS 45000ULL
 
 enum {
     RL_ROOM=1U, RL_CONTROLLER=2U, RL_LIVE=4U, RL_ENCODER=8U,
-    RL_POWER=16U, RL_WEATHER=32U, RL_STABLE=64U, RL_CANDIDATE=128U
+    RL_POWER=16U, RL_WEATHER=32U, RL_STABLE=64U, RL_CANDIDATE=128U,
+    RL_INSTALLED=256U, RL_MONITOR=512U, RL_CURRENT=1024U
 };
 typedef struct {
     uint32_t count;
-    float sum_f, min_f, max_f;
+    float sum_f, sum_level, min_f, max_f;
 } rl_bin_t;
 typedef struct {
     uint32_t magic, schema, total_candidates;
@@ -43,7 +44,7 @@ typedef struct {
     uint32_t uptime_s;
     float room_f, raw_f, target_f, commanded_level, encoder_deg;
     float outside_f, cloud_pct, power_w, current_a;
-    uint8_t flags;
+    uint16_t flags;
     char stage[24];
     char mode[16];
 } rl_entry_t;
@@ -90,7 +91,8 @@ static void load_model(void)
         bool valid=true;
         for(unsigned i=0;i<RL_BINS;++i){
             const rl_bin_t *b=&previous.bins[i];
-            if((b->count && (!isfinite(b->sum_f)||!isfinite(b->min_f)||!isfinite(b->max_f)||
+            if((b->count && (!isfinite(b->sum_f)||!isfinite(b->sum_level)||
+                              !isfinite(b->min_f)||!isfinite(b->max_f)||
                               b->min_f>b->max_f||b->min_f<32||b->max_f>110)) ||
                b->count>10000000U)valid=false;
         }
@@ -168,12 +170,17 @@ static void observe(void)
         for(unsigned i=0;i<sizeof(known)/sizeof(known[0]);++i)
             if(!strcmp(stage,known[i]))safe_word(e.stage,sizeof(e.stage),known[i]);
         cJSON *power=field(furnace,"power"),*current=field(furnace,"current");
-        bool good=yes(furnace,"enabled")&&yes(furnace,"installed")&&
-                  yes(power,"available")&&yes(power,"source_fresh")&&
-                  number(power,"value",&e.power_w);
-        if(good)e.flags|=RL_POWER;
-        if(yes(current,"available")&&yes(current,"source_fresh"))
-            (void)number(current,"value",&e.current_a);
+        /* Record numeric wattage independently of site eligibility.
+         * Otherwise a valid HA reading disappears when the Installed flag
+         * is off, making missing learning candidates impossible to debug. */
+        if(yes(furnace,"enabled"))e.flags|=RL_MONITOR;
+        if(yes(furnace,"installed"))e.flags|=RL_INSTALLED;
+        bool watts_available=yes(power,"available")&&
+                             number(power,"value",&e.power_w);
+        if(watts_available&&yes(power,"source_fresh"))e.flags|=RL_POWER;
+        bool amps_available=yes(current,"available")&&
+                            number(current,"value",&e.current_a);
+        if(amps_available&&yes(current,"source_fresh"))e.flags|=RL_CURRENT;
         cJSON_Delete(furnace);
     }
     cJSON *weather=room_ha_weather_status();
@@ -214,13 +221,14 @@ static void observe(void)
     if(normal&&rl_settled(now,unchanged_from_ms,consecutive,high-low))
         e.flags|=RL_STABLE;
     /* These are *review candidates* only, not equilibrium proofs or motion. */
-    int bin=rl_half_step_bin(e.commanded_level);
-    if(bin>=0&&(e.flags&(RL_STABLE|RL_POWER|RL_WEATHER))==
-                 (RL_STABLE|RL_POWER|RL_WEATHER)){
+    int bin=rl_quarter_step_bin(e.commanded_level);
+    if(bin>=0&&(e.flags&(RL_STABLE|RL_POWER|RL_WEATHER|RL_MONITOR|RL_INSTALLED))==
+                 (RL_STABLE|RL_POWER|RL_WEATHER|RL_MONITOR|RL_INSTALLED)){
         e.flags|=RL_CANDIDATE;
         rl_bin_t *b=&model.bins[bin];
         if(b->count==0)b->min_f=b->max_f=e.room_f;
         if(b->count<10000000U) {++b->count;b->sum_f+=e.room_f;
+            b->sum_level+=e.commanded_level;
             if(e.room_f<b->min_f)b->min_f=e.room_f;
             if(e.room_f>b->max_f)b->max_f=e.room_f;
             if(model.total_candidates<UINT32_MAX)++model.total_candidates;
@@ -243,7 +251,7 @@ static void observe(void)
         }else ESP_LOGW(TAG,"Summary checkpoint failed; observations continue in RAM");
     }
     ESP_LOGI(TAG,"read-only observation room=%.1f dial_command=%.2f stage=%s flags=0x%02x",
-             e.room_f,e.commanded_level,e.stage,e.flags);
+             e.room_f,e.commanded_level,e.stage,(unsigned)e.flags);
 }
 static void task(void *unused)
 {
@@ -286,10 +294,11 @@ cJSON *room_learning_status(void)
     cJSON *bins=cJSON_AddArrayToObject(j,"provisional_bins");
     for(unsigned i=0;i<RL_BINS;++i){
         cJSON *b=cJSON_CreateObject();
-        cJSON_AddNumberToObject(b,"dial_level",1.0f+0.5f*i);
+        cJSON_AddNumberToObject(b,"dial_level",1.0f+0.25f*i);
         cJSON_AddNumberToObject(b,"samples",model.bins[i].count);
         if(model.bins[i].count){
             cJSON_AddNumberToObject(b,"mean_temperature_f",model.bins[i].sum_f/model.bins[i].count);
+            cJSON_AddNumberToObject(b,"mean_commanded_level",model.bins[i].sum_level/model.bins[i].count);
             cJSON_AddNumberToObject(b,"min_temperature_f",model.bins[i].min_f);
             cJSON_AddNumberToObject(b,"max_temperature_f",model.bins[i].max_f);
         }
@@ -324,8 +333,8 @@ esp_err_t room_learning_csv(httpd_req_t *r)
     esp_err_t err=httpd_resp_sendstr_chunk(r,
       "unix_s,uptime_s,room_f,raw_f,target_f,commanded_dial,encoder_angle_deg,"
       "outdoor_f,cloud_percent,power_w,current_a,controller_mode,furnace_stage,"
-      "room_fresh,controller_lan,live,encoder_valid,power_fresh,weather_fresh,"
-      "dial_settled,review_candidate\n");
+      "room_fresh,controller_lan,live,encoder_valid,power_fresh,current_fresh,weather_fresh,"
+      "monitor_enabled,installed_at_cottage,dial_settled,review_candidate\n");
     xSemaphoreTake(lock,portMAX_DELAY);
     unsigned snapshot_count=count,begin=capacity?(next+capacity-count)%capacity:0;
     xSemaphoreGive(lock);
@@ -339,12 +348,13 @@ esp_err_t room_learning_csv(httpd_req_t *r)
                             e.encoder_deg,e.outside_f,e.cloud_pct,e.power_w,e.current_a};
         for(unsigned k=0;k<9;++k)csv_number(nums[k],a[k],sizeof(a[k]));
         snprintf(line,sizeof(line),
-          "%lld,%u,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%u,%u,%u,%u,%u,%u,%u,%u\n",
+          "%lld,%u,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u\n",
           (long long)e.unix_s,(unsigned)e.uptime_s,
           a[0],a[1],a[2],a[3],a[4],a[5],a[6],a[7],a[8],
           e.mode,e.stage,
           !!(e.flags&RL_ROOM),!!(e.flags&RL_CONTROLLER),!!(e.flags&RL_LIVE),
-          !!(e.flags&RL_ENCODER),!!(e.flags&RL_POWER),!!(e.flags&RL_WEATHER),
+          !!(e.flags&RL_ENCODER),!!(e.flags&RL_POWER),!!(e.flags&RL_CURRENT),
+          !!(e.flags&RL_WEATHER),!!(e.flags&RL_MONITOR),!!(e.flags&RL_INSTALLED),
           !!(e.flags&RL_STABLE),!!(e.flags&RL_CANDIDATE));
         err=httpd_resp_sendstr_chunk(r,line);
     }
