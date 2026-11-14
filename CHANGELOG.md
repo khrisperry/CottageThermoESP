@@ -1,5 +1,9 @@
 # Changelog
 
+## V1.0.2 — fractional learning / power diagnostics field-test candidate
+
+Include normal fractional dial settings in quarter-step provisional learning bins, preserve actual mean dial positions, record electrical wattage separately from monitoring eligibility, and export monitor/installed flags. Automatic furnace adjustments remain disabled. See [V1.0.2 notes](docs/releases/V1.0.2.md).
+
 ## V1.0.1 — passive learning field-test candidate (not yet promoted)
 
 Read-only paired thermostat/controller/environment observations, advisory learning CSV and status, and unchanged furnace movement policy. Physical installed-furnace validation is required before deployment. See [V1.0.1 candidate notes](docs/releases/V1.0.1.md).
