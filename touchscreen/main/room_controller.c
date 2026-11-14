@@ -210,6 +210,32 @@ cJSON *room_controller_status(void)
 }
 /* Read-only probes prove each transport independently, even with healthy Wi-Fi.
  * Do not change the selected transport, cached lease or authoritative state. */
+/* Telemetry only: GET, never a TL mutation. Missing LAN means an
+ * incomplete observation even when ESP-NOW still handles setpoints safely.
+ * Copy the validated controller origin under io, then release it before HTTP
+ * so a slow diagnostic read cannot delay the normal thermostat link. */
+cJSON *room_controller_learning_status(void)
+{
+    if(!io||!room_wifi_connected())return NULL;
+    char origin[256]={0};
+    if(xSemaphoreTake(io,pdMS_TO_TICKS(150))!=pdTRUE)return NULL;
+    const char *selected=controller_origin();
+    if(selected&&*selected)snprintf(origin,sizeof(origin),"%s",selected);
+    xSemaphoreGive(io);
+    if(!*origin)return NULL;
+    char *body=malloc(8192);if(!body)return NULL;
+    int code=0,length=0;
+    esp_err_t err=room_http(origin,NULL,NULL,"/api/status",NULL,body,8192,2500,&code,&length);
+    cJSON *j=(err==ESP_OK&&code==200&&length>0)?
+        cJSON_ParseWithLengthOpts(body,length+1,NULL,true):NULL;
+    free(body);
+    cJSON *network=cJSON_GetObjectItemCaseSensitive(j,"network");
+    cJSON *host=cJSON_GetObjectItemCaseSensitive(network,"hostname");
+    if(!cJSON_IsString(host)||strcmp(host->valuestring,"CottageThermoController")){
+        cJSON_Delete(j);return NULL;
+    }
+    return j;
+}
 cJSON *room_controller_test(void)
 {
     if(xSemaphoreTake(io,pdMS_TO_TICKS(100))!=pdTRUE)return NULL;
