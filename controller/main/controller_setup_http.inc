@@ -4,7 +4,9 @@ static cJSON *live_checks_json(void)
     cJSON *j=cJSON_CreateObject();
     cJSON_AddBoolToObject(j,"encoder_valid",false);
     cJSON_AddBoolToObject(j,"room_fresh",live_room_fresh(now_ms()));
-    cJSON_AddBoolToObject(j,"position_recoverable",false);
+    cJSON_AddBoolToObject(j,"position_recoverable",remote_resume_ready());
+    cJSON_AddBoolToObject(j,"remote_resume_assumed",live_remote_assumed);
+    cJSON_AddBoolToObject(j,"position_measured",false);
     cJSON_AddBoolToObject(j,"position_confirmed",live_position_confirmed);
     cJSON_AddStringToObject(j,"feedback","open_loop; movement not measured");
     if(state.has_command)cJSON_AddNumberToObject(j,"commanded_level",state.commanded_level);
@@ -55,8 +57,8 @@ static esp_err_t setup_post(httpd_req_t *r)
             error="Motor stopped but could not save Service mode; do not restart unattended.";
         else event("Persistent Service/Calibration selected; PWM off; calibration retained");
     } else if(text_is(j,"action","live")) {
-        /* Persist Live intent without energizing the motor. Require an
-         * operator-observed knob position after EVERY power cycle. */
+        /* Persist Live intent without energizing the motor. Allow a guarded
+         * REMOTE rearm only from a previously checkpointed settled command. */
         if(!text_is(j,"confirm","enable_live"))
             error="Confirm persistent Live operation.";
         else if(!live_selected) {
@@ -65,7 +67,7 @@ static esp_err_t setup_post(httpd_req_t *r)
                 error="Servo stopped but could not persist Live mode in NVS. Still in Service.";
             else {
                 snprintf(live_issue,sizeof(live_issue),
-                         "Live selected: physical dial confirmation required before motion");
+                         "Live selected: recovery hold, choose physical confirmation or guarded remote resume");
                 event("Live selected; motor locked until observed dial position confirmed");
             }
         } /* Repeated Live selection cannot grant motion. */
@@ -93,11 +95,55 @@ static esp_err_t setup_post(httpd_req_t *r)
                     if(!action.move && strcmp(next.reason,"mapped_setting_reached"))
                         error="Thermostat prerequisites are not satisfied.";
                     else {
+                        /* A real physical inspection creates the only trusted
+                         * starting checkpoint. If it cannot persist, stay OFF. */
+                        if(!resume_checkpoint_write((float)value,next.commanded_us,true))
+                            error="Could not save verified starting dial position; motor remains stopped.";
+                        else {
+                            state=next;go_active=true;armed=false;
+                            live_position_confirmed=true;live_remote_assumed=false;
+                            snprintf(live_issue,sizeof(live_issue),
+                                     "Live active: observed start at dial %.2f; commands open-loop",value);
+                            event("Live enabled after physical dial confirmation; no measured position feedback");
+                        }
+                    }
+                }
+            }
+        }
+    } else if(text_is(j,"action","remote_resume")) {
+        /* Not a physical verification. Requires a complete, stable,
+         * setup-matched command checkpoint from an earlier attended alignment.
+         * Remote resume can still be wrong if somebody turned the unpowered
+         * knob or if the drive slipped. Never run automatically at boot. */
+        if(!live_selected)error="Select Live before requesting remote recovery.";
+        else if(go_active)error="Live is already active.";
+        else if(!text_is(j,"confirm","assume_unchanged_dial_without_feedback"))
+            error="Explicitly acknowledge that the knob position is NOT measured.";
+        else if(!remote_resume_ready())
+            error="Remote resume unavailable: no settled command checkpoint. Physical dial inspection required.";
+        else {
+            const char *issue=controller_setup_ready(&setup);
+            if(issue)error=issue;
+            else if(!live_room_fresh(now))error="Waiting for fresh primary thermostat reading.";
+            else {
+                th_state_t next=state;
+                next.config.mode=TH_AUTO;next.config.schedule_enabled=false;
+                next.simulated=false;
+                if(!controller_setup_map(&setup,&next.config) ||
+                   !th_sync(&next,resume_checkpoint.last_level))
+                    error="Saved command is no longer compatible with calibration.";
+                else {
+                    th_action_t action=th_tick(&next,now);
+                    if(!action.move && strcmp(next.reason,"mapped_setting_reached"))
+                        error="Thermostat prerequisites are not satisfied.";
+                    else {
+                        /* A zero-movement boot remains a hard invariant.
+                         * Future target changes may cause an open-loop move. */
                         state=next;go_active=true;armed=false;
-                        live_position_confirmed=true;
+                        live_position_confirmed=false;live_remote_assumed=true;
                         snprintf(live_issue,sizeof(live_issue),
-                                 "Live active: observed start at dial %.2f; commands open-loop",value);
-                        event("Live enabled after physical dial confirmation; no measured position feedback");
+                                 "Remote Live armed from SAVED COMMAND, not measured position; monitor furnace");
+                        event("REMOTE Live resumed from unverified saved dial command, with explicit acknowledgment");
                     }
                 }
             }
@@ -105,6 +151,8 @@ static esp_err_t setup_post(httpd_req_t *r)
     } else if(text_is(j,"action","test")) {
         if(live_selected)error="Enter Service/Calibration mode before using Test.";
         else if(!text_is(j,"confirm","unloaded_bench"))error="Confirm that this is an attended bench test.";
+        else if(!resume_checkpoint_write(0,0,false))
+            error="Cannot invalidate old automatic checkpoint. Test refused.";
         else {release();state.config.mode=TH_HOLD;armed=true;armed_until=now+900000;event("Test mode: automatic control stopped; manual movement enabled for 15 minutes");}
     } else if(text_is(j,"action","pulse") || text_is(j,"action","jog")) {
         int us=0;
