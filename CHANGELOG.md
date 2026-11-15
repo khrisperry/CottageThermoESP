@@ -1,5 +1,9 @@
 # Changelog
 
+## V1.0.5 — passive learning HTTP reliability candidate
+
+Isolate the five-minute learning controller status GET from the control HTTP session, reuse its own persistent HTTP handle, permit a bounded 6s read-only request timeout, wait up to 2.5s only to copy the controller URL, and identify connection/headers/body/JSON errors with response-byte diagnostics. Never retry writes or alter the V1.0.4 60-second LAN recovery/furnace control policy. See [V1.0.5 release notes](docs/releases/V1.0.5.md).
+
 ## V1.0.4 — 60-second LAN recovery before ESP-NOW fallback (test candidate)
 
 Allow 60 seconds of consecutive read-only LAN probe failures, asynchronously across regular status polls, before switching to ESP-NOW. Actual loss of room Wi-Fi retains immediate fallback. Reset the timer after a valid LAN reply. Reject failed/ambiguous mutations without replay, keep stale sensor values invalid, and preserve all existing controller motion and freeze-safety logic. See [V1.0.4 notes](docs/releases/V1.0.4.md).
