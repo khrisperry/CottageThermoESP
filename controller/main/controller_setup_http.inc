@@ -2,24 +2,12 @@
 static cJSON *live_checks_json(void)
 {
     cJSON *j=cJSON_CreateObject();
-    float angle=0,level=0,expected=0;
-    bool encoder_ok=live_encoder(&angle);
-    bool recovered=encoder_ok&&controller_live_recover(&setup,angle,&level);
-    cJSON_AddBoolToObject(j,"encoder_valid",encoder_ok);
+    cJSON_AddBoolToObject(j,"encoder_valid",false);
     cJSON_AddBoolToObject(j,"room_fresh",live_room_fresh(now_ms()));
-    cJSON_AddBoolToObject(j,"position_recoverable",recovered);
-    cJSON_AddNumberToObject(j,"tolerance_deg",CONTROLLER_LIVE_ANGLE_TOLERANCE_DEG);
-    if(encoder_ok)cJSON_AddNumberToObject(j,"measured_deg",angle);
-    if(recovered)cJSON_AddNumberToObject(j,"measured_level",level);
-    if(state.has_command&&controller_live_expected(&setup,state.commanded_level,&expected)){
-        cJSON_AddNumberToObject(j,"commanded_level",state.commanded_level);
-        cJSON_AddNumberToObject(j,"expected_deg",expected);
-        if(encoder_ok){
-            float delta=remainderf(angle-expected,360.0f);
-            cJSON_AddNumberToObject(j,"error_deg",delta);
-            cJSON_AddBoolToObject(j,"command_matches",controller_live_matches(&setup,state.commanded_level,angle));
-        }
-    }
+    cJSON_AddBoolToObject(j,"position_recoverable",false);
+    cJSON_AddBoolToObject(j,"position_confirmed",live_position_confirmed);
+    cJSON_AddStringToObject(j,"feedback","open_loop; movement not measured");
+    if(state.has_command)cJSON_AddNumberToObject(j,"commanded_level",state.commanded_level);
     return j;
 }
 /* Included after the local controller helpers. Host tests compile this same
@@ -37,7 +25,6 @@ static cJSON *setup_json(void)
         cJSON *p=cJSON_CreateObject();
         cJSON_AddNumberToObject(p,"index",i);
         cJSON_AddNumberToObject(p,"pulse_us",setup.pulse_us[i]);
-        if(setup.angle_mask&(1U<<i))cJSON_AddNumberToObject(p,"angle_deg",setup.angle_deg[i]);
         if(i>=1 && i<=6 && (setup.temperature_mask&(1U<<(i-1))))cJSON_AddNumberToObject(p,"temp_f",setup.temperature_f[i-1]);
         cJSON_AddItemToArray(positions,p);
     }
@@ -68,9 +55,8 @@ static esp_err_t setup_post(httpd_req_t *r)
             error="Motor stopped but could not save Service mode; do not restart unattended.";
         else event("Persistent Service/Calibration selected; PWM off; calibration retained");
     } else if(text_is(j,"action","live")) {
-        /* Mode selection records user intent. The control loop owns all
-         * motion prerequisites and recovers the actual fractional position;
-         * the Bench Go selector and previous pulse are irrelevant here. */
+        /* Persist Live intent without energizing the motor. Require an
+         * operator-observed knob position after EVERY power cycle. */
         if(!text_is(j,"confirm","enable_live"))
             error="Confirm persistent Live operation.";
         else if(!live_selected) {
@@ -79,10 +65,43 @@ static esp_err_t setup_post(httpd_req_t *r)
                 error="Servo stopped but could not persist Live mode in NVS. Still in Service.";
             else {
                 snprintf(live_issue,sizeof(live_issue),
-                         "Live selected: checking calibration, measured position and thermostat");
-                event("Persistent Live selected; control loop will recover measured dial position");
+                         "Live selected: physical dial confirmation required before motion");
+                event("Live selected; motor locked until observed dial position confirmed");
             }
-        } /* Repeated Live requests are idempotent; never reset verification. */
+        } /* Repeated Live selection cannot grant motion. */
+    } else if(text_is(j,"action","live_confirm")) {
+        /* Saved pulses do not establish actual position after restart. */
+        if(!live_selected)error="Select persistent Live before confirming a position.";
+        else if(go_active)error="Live is already active. Enter Service to re-align.";
+        else if(!text_is(j,"confirm","physically_checked_dial"))
+            error="Confirm that the attached knob was physically inspected.";
+        else if(!number(j,"position",&value) || value<1 || value>6)
+            error="Enter the visually confirmed dial position between 1 and 6.";
+        else {
+            const char *issue=controller_setup_ready(&setup);
+            if(issue)error=issue;
+            else if(!live_room_fresh(now))error="Waiting for fresh primary thermostat reading.";
+            else {
+                th_state_t next=state;
+                next.config.mode=TH_AUTO;next.config.schedule_enabled=false;
+                next.simulated=false;
+                if(!controller_setup_map(&setup,&next.config) ||
+                   !th_sync(&next,(float)value))
+                    error="The saved dial calibration cannot be used.";
+                else {
+                    th_action_t action=th_tick(&next,now);
+                    if(!action.move && strcmp(next.reason,"mapped_setting_reached"))
+                        error="Thermostat prerequisites are not satisfied.";
+                    else {
+                        state=next;go_active=true;armed=false;
+                        live_position_confirmed=true;
+                        snprintf(live_issue,sizeof(live_issue),
+                                 "Live active: observed start at dial %.2f; commands open-loop",value);
+                        event("Live enabled after physical dial confirmation; no measured position feedback");
+                    }
+                }
+            }
+        }
     } else if(text_is(j,"action","test")) {
         if(live_selected)error="Enter Service/Calibration mode before using Test.";
         else if(!text_is(j,"confirm","unloaded_bench"))error="Confirm that this is an attended bench test.";
