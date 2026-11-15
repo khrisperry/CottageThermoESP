@@ -28,8 +28,13 @@ window.fetch=async(path,opts={})=>{
      if(delayGo)await delayGo;}
    else if(data.action==='live')Object.assign(state,{operation:'stopped',operating_mode:'live',live_active:false,simulation:true,bench_armed:false,pwm_active:false,live_position_confirmed:false});
    else if(data.action==='live_confirm'){
-     Object.assign(state,{operation:'go',operating_mode:'live',live_active:true,simulation:false,pwm_active:true,live_position_confirmed:true,commanded_level:data.position});
+     Object.assign(state,{operation:'go',operating_mode:'live',live_active:true,simulation:false,pwm_active:true,live_position_confirmed:true,commanded_level:data.position,remote_resume_available:true,remote_resume_level:data.position,remote_resume_pulse_us:profile.positions[data.position].pulse_us,live_remote_assumed:false});
      state.live_checks.position_confirmed=true;
+   }
+   else if(data.action==='remote_resume'){
+     Object.assign(state,{operation:'go',operating_mode:'live',live_active:true,simulation:false,pwm_active:false,live_position_confirmed:false,live_remote_assumed:true});
+     state.live_checks.remote_resume_assumed=true;
+     state.live_checks.position_confirmed=false;
    }
    else if(data.action==='service'){Object.assign(state,{operation:'stopped',operating_mode:'service',live_active:false,simulation:true,bench_armed:false,pwm_active:false,live_position_confirmed:false});state.live_checks.position_confirmed=false;}
    else if(data.action==='temperatures')data.values.forEach((t,i)=>profile.positions[i+1].temp_f=t);
@@ -67,6 +72,21 @@ id('livePosition').value='3';id('confirmLivePosition').click();await settle();
 assert.deepEqual(posts.at(-1).data,{action:'live_confirm',position:3,confirm:'physically_checked_dial'});
 assert.equal(state.live_active,true);
 assert(!id('liveSafety').textContent.includes('Test Mode'),'Live promotion must not require returning to Test');
+/* Simulate power recovery: no API command at boot, no PWM, and remote
+ * re-arm requires an explicit button press with a stable saved command. */
+const afterAlignedPosts=posts.length;
+Object.assign(state,{operation:'stopped',live_active:false,pwm_active:false,live_position_confirmed:false});
+state.live_checks.position_confirmed=false;
+await intervals.at(-1)();
+assert.equal(posts.length,afterAlignedPosts,'power recovery page load must not energize PWM');
+assert(!id('resumeAutoRemote').disabled,'valid settled command permits explicit remote choice');
+assert(id('powerRecoveryStatus').textContent.includes('PWM OFF'));
+id('resumeAutoRemote').click();await settle();
+assert.deepEqual(posts.at(-1).data,{action:'remote_resume',confirm:'assume_unchanged_dial_without_feedback'});
+assert.equal(state.live_active,true);
+assert.equal(state.pwm_active,false,'remote rearm never sends PWM as part of the HTTP request');
+assert(id('liveComparison').textContent.includes('assumed remotely'));
+assert(!id('liveSafety').textContent.includes('Test Mode'),'Live promotion must not require returning to Test');
 id('enterService').click();await settle();
 assert.equal(posts.at(-1).data.action,'service');assert.equal(state.operation,'stopped');
 id('goTarget').value='68';id('saveTarget').click();await settle();assert.equal(posts.at(-1).data.target_f,68);
@@ -85,6 +105,16 @@ id('enterService').click();await settle();
 assert.equal(posts.at(-1).data.action,'service');
 assert.equal(state.operating_mode,'service');
 assert.equal(state.operation,'stopped');
+
+/* An unsafe checkpoint never enables the remote button, while Manual
+ * remains a one-click persistent user choice. */
+id('enableLive').click();await settle();
+state.remote_resume_available=false;await intervals.at(-1)();
+assert(id('resumeAutoRemote').disabled);
+assert(!id('stayManual').disabled);
+id('stayManual').click();await settle();
+assert.equal(posts.at(-1).data.action,'service');
+assert.equal(state.operating_mode,'service');
 
 id('tab-temperatures').click();for(let i=1;i<=6;i++)id('temp'+i).value=45+i*5;
 id('temperatureForm').dispatchEvent(new window.Event('submit',{cancelable:true}));await settle();assert.equal(posts.at(-1).data.action,'temperatures');
