@@ -216,14 +216,17 @@ async function loadLinkDiagnostics(){
     const row=el('div',undefined,'status-row');
     row.append(el('span',(e.uptime_ms/1000).toFixed(0)+'s · '+e.operation+
       ' · '+e.reason),el('small','HTTP '+e.http_status+'; err '+e.error+
-      '; '+e.elapsed_ms+'ms; Wi-Fi '+(e.room_wifi_connected?'up':'down')+
+      '; '+e.elapsed_ms+'ms'+
+      (e.operation==='learning_get'?'; body '+(e.response_bytes??0)+' B; client handle '+
+       (e.client_handle_reused?'reused':'fresh')+'; headers '+(e.response_headers_complete?'complete':'pending'):'')+
+      '; Wi-Fi '+(e.room_wifi_connected?'up':'down')+
       '; STA '+(e.station_associated?'yes':'no')+
       (e.station_associated?'; RSSI '+e.rssi_dbm+' dBm; ch '+e.ap_channel:'')+
       '; selected '+(e.espnow_selected?'ESP-NOW':'LAN')));
     events.append(row);
   }
   if(!(j.events||[]).length)events.append(el('p','No link errors or diagnostic events captured yet.'));
-  n.append(events,el('small','Counters and event history reset on thermostat restart. Download JSON before reflashing or restarting. Missing LAN learning GET does not imply an ESP-NOW switch.'));
+  n.append(events,el('small','Counters and event history reset on thermostat restart. Download JSON before reflashing or restarting. Learning events now identify HTTP connection, response-header, body and JSON failures. A reused client handle does not prove the TCP socket was reused. Missing learning GETs do not imply an ESP-NOW switch.'));
  }catch(err){if($('diagPanel'))n.replaceChildren(el('p','Diagnostics request failed: '+err.message));}
 }
 function renderLearning(){
