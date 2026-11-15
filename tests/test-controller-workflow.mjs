@@ -4,7 +4,7 @@ const {Window}=await import(process.env.HAPPY_DOM_MODULE||'happy-dom');
 const window=new Window({url:'http://controller.test',settings:{enableJavaScriptEvaluation:true}});
 const posts=[],errors=[],intervals=[];let offline=false,delayGo=null;
 const profile={start_us:600,end_us:2300,ready:true,issue:'',positions:Array.from({length:8},(_,i)=>({index:i,pulse_us:700+i*200,angle_deg:350-i*30,...(i>0&&i<7?{temp_f:45+i*5}:{})}))};
-const state={operation:'stopped',operating_mode:'service',live_active:false,live_issue:'Service',simulation:true,pwm_active:false,bench_armed:false,arm_remaining_ms:0,source:'room',temperature_f:64,target_f:65,reason:'hold',encoder:{angle_valid:true,angle_deg:228.7}};
+const state={operation:'stopped',operating_mode:'service',live_active:false,live_issue:'Service',simulation:true,pwm_active:false,bench_armed:false,arm_remaining_ms:0,source:'room',temperature_f:64,target_f:65,reason:'hold',live_checks:{room_fresh:true,position_confirmed:false}};
 window.setInterval=fn=>{intervals.push(fn);return intervals.length;};window.confirm=()=>true;
 window.addEventListener('error',e=>errors.push(e.message));
 window.fetch=async(path,opts={})=>{
@@ -21,15 +21,17 @@ window.fetch=async(path,opts={})=>{
    if(data.action==='test')Object.assign(state,{operation:'test',simulation:true,pwm_active:false,bench_armed:true,arm_remaining_ms:900000,last_command_us:-1});
    else if(data.action==='pulse'){
      Object.assign(state,{pwm_active:true,last_command_us:data.us});
-     const match=profile.positions.find(p=>p.pulse_us===data.us);
-     if(match)state.encoder.angle_deg=match.angle_deg;
+
    }
    else if(data.action==='jog')state.last_command_us+=data.delta_us;
    else if(data.action==='go'){Object.assign(state,{operation:'go',simulation:false,position_synchronized:true,commanded_level:3,pwm_active:true});
-     state.encoder.angle_deg=profile.positions[3].angle_deg;
      if(delayGo)await delayGo;}
-   else if(data.action==='live')Object.assign(state,{operation:'go',operating_mode:'live',live_active:true,simulation:false,bench_armed:false,pwm_active:true});
-   else if(data.action==='service')Object.assign(state,{operation:'stopped',operating_mode:'service',live_active:false,simulation:true,bench_armed:false,pwm_active:false});
+   else if(data.action==='live')Object.assign(state,{operation:'stopped',operating_mode:'live',live_active:false,simulation:true,bench_armed:false,pwm_active:false,live_position_confirmed:false});
+   else if(data.action==='live_confirm'){
+     Object.assign(state,{operation:'go',operating_mode:'live',live_active:true,simulation:false,pwm_active:true,live_position_confirmed:true,commanded_level:data.position});
+     state.live_checks.position_confirmed=true;
+   }
+   else if(data.action==='service'){Object.assign(state,{operation:'stopped',operating_mode:'service',live_active:false,simulation:true,bench_armed:false,pwm_active:false,live_position_confirmed:false});state.live_checks.position_confirmed=false;}
    else if(data.action==='temperatures')data.values.forEach((t,i)=>profile.positions[i+1].temp_f=t);
    else if(data.action==='edit_limit'){
      if(data.kind==='start')profile.start_us=0;else profile.end_us=0;
@@ -59,6 +61,11 @@ id('goButton').click();await settle();assert.equal(posts.at(-1).data.action,'go'
 assert(!id('enableLive').disabled,'A verified active Bench Go can be promoted directly to persistent Live');
 id('enableLive').click();await settle();
 assert.equal(posts.at(-1).data.action,'live');assert.equal(state.operating_mode,'live');
+assert.equal(state.live_active,false,'Live intent does not move before physical position confirmation');
+assert(!id('confirmLivePosition').disabled);
+id('livePosition').value='3';id('confirmLivePosition').click();await settle();
+assert.deepEqual(posts.at(-1).data,{action:'live_confirm',position:3,confirm:'physically_checked_dial'});
+assert.equal(state.live_active,true);
 assert(!id('liveSafety').textContent.includes('Test Mode'),'Live promotion must not require returning to Test');
 id('enterService').click();await settle();
 assert.equal(posts.at(-1).data.action,'service');assert.equal(state.operation,'stopped');
