@@ -28,14 +28,14 @@ PowerShell switches use one dash: `-Flash`, `-Monitor`. The existing board-speci
 
 ## Included behavior
 
-- Persistent Live, Service/Calibration, attended Test and 15-minute Bench Go.
-- Measured fractional dial recovery, encoder checks on startup and movement, and a visible calibration/expected-angle table.
+- Persistent Live intent, Service/Calibration, attended Test and 15-minute Bench Go.
+- Operator-confirmed fractional dial synchronization on every boot, open-loop PWM commands and a visible pulse/temperature calibration table. Actual dial position cannot be measured.
 - LAN/mDNS discovery, paired encrypted ESP-NOW fallback and controller link recovery.
 - SHT45 primary temperature, saved sensor offset, standalone thermostat and optional HA/MQTT Climate integration.
 - Native Climate/Home/Laundry/Camera/Ships pages, digital clock screensaver, HA furnace power stages and outdoor weather.
 - Thermostat webpage settings, restart and rollback-capable application OTA; controller USB updates.
 
-The release preserves the tested control logic. Furnace power and weather are observations; adaptive learning and automatic thermal trim remain disabled. Bench verification and final furnace installation validation are separate.
+This development branch preserves target, connectivity and thermal logic while removing AS5600 dependencies. **Unlike the existing release, automatic Live resume after reboot is intentionally disabled until a person reconfirms the physical knob position.** No physical movement verification is possible. Furnace power and weather are observations; adaptive learning and automatic thermal trim remain disabled. This branch is for supervised bench testing and must not be installed as unattended heat control.
 
 ## Repository
 
