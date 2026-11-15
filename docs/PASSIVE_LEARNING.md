@@ -29,6 +29,12 @@ freshness flags, furnace monitoring enabled/installed settings and review eligib
 V1.0.3 adds `learning_lan_reason` and `selected_control_transport` in the CSV.
 The latter reflects the selected control transport, not the independent learning GET.
 Check `/api/controller/diagnostics` for actual transport switches.
+
+In V1.0.5, the observer uses its own persistent HTTP client and up to 6 seconds
+to read controller status every five minutes. Connection, response headers,
+body, JSON and hostname failure reasons are distinct; the diagnostic JSON
+also includes response size and client-handle reuse. Normal controller
+control polling and the 60-second LAN recovery logic are unchanged.
 Raw watt/current values are recorded when available, even if monitoring is not
 marked installed; that setting only gates the provisional summaries. An empty numeric field indicates
 missing/unverified data. Missing LAN details are **not** inferred from ESP-NOW.
