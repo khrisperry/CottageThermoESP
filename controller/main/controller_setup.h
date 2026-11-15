@@ -7,6 +7,7 @@ typedef struct {
     uint32_t magic;
     int start_us, end_us;
     int pulse_us[8];
+    /* Deprecated AS5600 fields retained ONLY for backward-compatible NVS layout. */
     float angle_deg[8];
     uint32_t angle_mask;
     float temperature_f[6];
