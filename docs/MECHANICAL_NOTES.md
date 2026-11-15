@@ -24,9 +24,9 @@ ORIGINAL Williams thermostat knob (unchanged)
 
 - Splines refer to teeth on servo output shaft; *they are not the same as a gear mesh*. A matching horn/hub can transfer torque directly, 1:1.
 - Coupler is detachable axially. Remove servo and bracket without removing knob cap; turn cap manually with fingers.
-- Reserve space for physical position readout. AS5600 magnetic absolute sensing with a diametrical magnet is a **candidate**, but the shaft and magnet both want the rotational centerline. Sensor/magnet geometry requires engineering after real measurements.
+- The AS5600, magnet, encoder frame and flexible U-arm are removed. Use a compact direct servo-to-cap coupling, secured to the matching factory spline horn. Provide unobstructed axial access for the original servo output retaining screw and mechanically secure the printed coupler to the horn.
 - Motion ends must remain INSIDE the real knob's travel; hard stops are NOT calibration targets.
-- Bracket must support both torsion reaction AND lateral alignment; the knob shaft is not a servo mounting post.
+- Bracket must support both torsion reaction AND lateral alignment; the knob shaft is not a servo mounting post. Use lockable X/Y slots, adjustable axial depth and a compact tilt/rotation plate to align the servo on three axes before tightening.
 
 ## Print trials (NOT verified dimensions)
 
@@ -48,6 +48,6 @@ Do not create a very tight snap fit on the real furnace knob until materials, fo
 | Safe stationary attachment points | unknown |
 | Actual casing surface temperature during firing | unknown |
 | Clearance for straight axial removal | unknown |
-| AS5600 alignment/magnet placement | unresolved |
+| Factory spline count and servo retaining-screw geometry | unverified |\n| Mount pitch/yaw/roll and three-axis adjustment clearance | unverified |
 
 Do not attach adhesives, printed mounts or fixtures to hot surfaces, vents, access panels requiring service, or gas-safety hardware without an approved design and HVAC review.
