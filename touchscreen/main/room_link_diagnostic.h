@@ -11,7 +11,8 @@
 typedef enum {
     RLD_LINK_OK, RLD_LINK_FAIL, RLD_RADIO_OK, RLD_RADIO_FAIL,
     RLD_SWITCH_RADIO, RLD_SWITCH_LAN, RLD_LEARN_OK, RLD_LEARN_FAIL,
-    RLD_DISCOVERY_FAIL, RLD_COUNT
+    RLD_DISCOVERY_FAIL, RLD_LAN_GRACE_START, RLD_LAN_GRACE_RECOVERED,
+    RLD_LAN_GRACE_EXPIRED, RLD_COUNT
 } rld_kind_t;
 typedef struct {
     uint64_t uptime_ms;
@@ -29,7 +30,8 @@ static inline const char *rld_kind_name(rld_kind_t k)
     static const char *const names[RLD_COUNT]={
         "link_http_ok","link_http_fail","espnow_probe_ok","espnow_probe_fail",
         "switched_to_espnow","returned_to_lan","learning_lan_ok",
-        "learning_lan_fail","discovery_fail"};
+        "learning_lan_fail","discovery_fail",
+        "lan_grace_started","lan_grace_recovered","lan_grace_expired"};
     return k>=0 && k<RLD_COUNT?names[k]:"unknown";
 }
 /* Still count every attempt. Repeated identical link failures are coalesced
