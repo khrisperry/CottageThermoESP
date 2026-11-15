@@ -6,6 +6,7 @@
 #include <stdlib.h>
 #include "cJSON.h"
 #include "controller_setup.h"
+#include "../controller/main/controller_resume.h"
 typedef int esp_err_t;
 #define ESP_OK 0
 #define ESP_ERR_INVALID_ARG 1
@@ -16,7 +17,9 @@ typedef int esp_err_t;
 #define ESP_LOGE(...) ((void)0)
 typedef struct {const char *request;char response[256];} httpd_req_t;
 static th_state_t state;static controller_setup_t setup,persisted;static bool go_active,pwm,armed;
-static int last_pulse=-1,lock,store,moves;static bool fail_save,live_selected,live_fault,live_position_confirmed;
+static int last_pulse=-1,lock,store,moves;static bool fail_save,live_selected,live_fault,live_position_confirmed,live_remote_assumed;
+static controller_resume_checkpoint_t resume_checkpoint;
+static bool resume_checkpoint_loaded;
 static uint64_t armed_until,clock_ms=100000;static char live_issue[120];
 static uint64_t now_ms(void){return clock_ms;}
 static void event(const char *text){(void)text;}
@@ -39,12 +42,23 @@ static int httpd_resp_sendstr(httpd_req_t *r,const char *text){snprintf(r->respo
 static bool live_room_fresh(uint64_t now){return state.room.valid && now>=state.room.at_ms && now-state.room.at_ms<=THERMO_TTL_MS;}
 static bool save_live_mode(bool enabled){
     if(fail_save)return false;
-    live_selected=enabled;live_fault=false;live_position_confirmed=false;
+    live_selected=enabled;live_fault=false;live_position_confirmed=false;live_remote_assumed=false;
     snprintf(live_issue,sizeof(live_issue),enabled?"Live selected":"Service selected");
     return true;
 }
 static bool save_live_mode_reason(bool enabled,const char *reason)
 {assert(reason&&*reason);return save_live_mode(enabled);}
+static bool resume_checkpoint_write(float level,int us,bool stable)
+{
+    if(fail_save)return false;
+    resume_checkpoint=controller_resume_make(&setup,level,us,stable);
+    resume_checkpoint_loaded=true;
+    return true;
+}
+static bool remote_resume_ready(void)
+{
+    return resume_checkpoint_loaded && controller_resume_valid(&resume_checkpoint,&setup);
+}
 static bool number(cJSON *j,const char *key,double *out){cJSON *v=cJSON_GetObjectItemCaseSensitive(j,key);if(!cJSON_IsNumber(v)||!isfinite(v->valuedouble))return false;*out=v->valuedouble;return true;}
 static bool text_is(cJSON *j,const char *key,const char *s){cJSON *v=cJSON_GetObjectItemCaseSensitive(j,key);return cJSON_IsString(v)&&!strcmp(v->valuestring,s);}
 #include "../controller/main/controller_setup_http.inc"
@@ -150,11 +164,38 @@ int main(void)
     assert(!go_active&&moves==count);
     request("{\"action\":\"live_confirm\",\"position\":3,\"confirm\":\"physically_checked_dial\"}",NULL);
     assert(go_active&&live_position_confirmed&&state.synchronized&&moves==count);
+    assert(remote_resume_ready() && resume_checkpoint.last_level==3);
+    /* A normal reboot resets volatile synchronization without sending PWM.
+     * A saved settled command may be explicitly rearmed remotely; it is
+     * never mistaken for a measured position. */
+    release();live_position_confirmed=false;
+    assert(!go_active&&!pwm&&remote_resume_ready());
+    request("{\"action\":\"remote_resume\"}","Explicitly acknowledge");
+    request("{\"action\":\"remote_resume\",\"confirm\":\"assume_unchanged_dial_without_feedback\"}",NULL);
+    assert(go_active && live_remote_assumed && !live_position_confirmed &&
+           state.synchronized && moves==count && !pwm);
+    request("{\"action\":\"remote_resume\",\"confirm\":\"assume_unchanged_dial_without_feedback\"}","already active");
     request("{\"action\":\"live_confirm\",\"position\":3,\"confirm\":\"physically_checked_dial\"}","already active");
     request("{\"action\":\"live\",\"confirm\":\"enable_live\"}",NULL);
     assert(go_active&&live_position_confirmed&&moves==count);
     request("{\"action\":\"service\"}",NULL);
     assert(!live_selected&&!go_active&&!live_position_confirmed);
+    /* Power lost mid-command: PENDING checkpoint locks out remote Auto. */
+    assert(resume_checkpoint_write(4.0f,1400,false));
+    assert(!remote_resume_ready());
+    request("{\"action\":\"live\",\"confirm\":\"enable_live\"}",NULL);
+    request("{\"action\":\"remote_resume\",\"confirm\":\"assume_unchanged_dial_without_feedback\"}","no settled command checkpoint");
+    request("{\"action\":\"service\"}",NULL);
+    /* A mismatched calibration or a pulse inconsistent with the mapped
+     * level must also deny remote recovery. */
+    assert(resume_checkpoint_write(3.0f,setup.pulse_us[3],true));
+    assert(remote_resume_ready());
+    resume_checkpoint.last_pulse_us++;
+    assert(!remote_resume_ready());
+    assert(resume_checkpoint_write(3.0f,setup.pulse_us[3],true));
+    controller_setup_t changed=setup;
+    changed.temperature_f[0]+=0.1f;
+    assert(!controller_resume_valid(&resume_checkpoint,&changed));
     clock_ms+=THERMO_TTL_MS+1;
     request("{\"action\":\"live\",\"confirm\":\"enable_live\"}",NULL);
     assert(live_selected&&!pwm&&!go_active);
