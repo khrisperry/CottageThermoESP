@@ -5,7 +5,7 @@
 <section class="card" id="content"></section><section class="card"><p id="message" role="status" aria-live="polite"></p><small>Tokens, keys and passwords are never returned after saving.</small></section></main></div>
 <script>
 'use strict';const $=id=>document.getElementById(id);let config=null,lastStatus=null,page='Overview',timer=null,uploading=false,reconnecting=false,reconnectBoot=null,restartBusy=false;
-const pages=['Overview','Temperature','Furnace power','Weather','Wi-Fi','Home Assistant','MQTT thermostat','Controller','ESP-NOW','Ship tracking','Sound & display','System'];
+const pages=['Overview','Temperature','Furnace power','Weather','Learning','Wi-Fi','Home Assistant','MQTT thermostat','Controller','Link diagnostics','ESP-NOW','Ship tracking','Sound & display','System'];
 function el(tag,text,cls){const n=document.createElement(tag);if(text!==undefined)n.textContent=String(text);if(cls)n.className=cls;return n;}
 function badge(text,kind){return el('span',text,'badge '+(['ok','offline','unconfigured','standby','fallback'].includes(kind)?kind:'standby'));}
 function field(parent,label,id,value='',type='text',placeholder=''){const wrap=el('div');const l=el('label',label);l.htmlFor=id;const i=el('input');i.id=id;i.type=type;i.value=value||'';i.placeholder=placeholder;i.autocomplete=type==='password'?'new-password':'off';if(type==='password'){const secret=el('div',undefined,'secret');const show=el('button','Show');show.type='button';show.onclick=()=>{i.type=i.type==='password'?'text':'password';show.textContent=i.type==='password'?'Show':'Hide'};secret.append(i,show);wrap.append(l,secret);}else wrap.append(l,i);parent.append(wrap);return i;}
@@ -23,6 +23,21 @@ function render(){
  if(page==='Overview'){c.append(el('p','The display remains the local thermostat. Ship data and Home Assistant run in background tasks.'));
   const metrics=el('div',undefined,'metrics');metrics.id='metrics';c.append(metrics);renderMetrics();return;}
  if(page==='Weather'){const n=el('div');n.id='weatherStatus';c.append(n);renderWeather();return;}
+ if(page==='Link diagnostics'){
+  c.append(el('p','Wi-Fi remains preferred. During a brief LAN failure, the panel retries LAN for up to 60 seconds without blocking the UI before trying ESP-NOW. A true panel Wi-Fi disconnection permits immediate fallback. This page distinguishes learning GET errors from actual control transport changes.'));
+  const row=el('div',undefined,'actions');
+  const b=el('button','Refresh link diagnostics');b.type='button';
+  b.onclick=()=>loadLinkDiagnostics();row.append(b);
+  const link=el('a','Save diagnostics JSON');link.href='/api/controller/diagnostics';link.download='cottage-link-diagnostics.json';
+  row.append(link);c.append(row);
+  const n=el('div');n.id='diagPanel';c.append(n);loadLinkDiagnostics();return;
+ }
+ if(page==='Learning'){
+  c.append(el('p','Passive collection only: a 5-minute room/controller/HA snapshot. Data is for manual review; it never changes the dial map or PWM.'));
+  const link=el('a','Download learning CSV');link.href='/api/learning.csv';link.download='cottage-thermostat-learning.csv';
+  c.append(link,el('p','The controller dial level is commanded, not a verified physical knob position. Download CSV before a reboot; detailed history is RAM-only.'));
+  const n=el('div');n.id='learningStatus';c.append(n);renderLearning();return;
+ }
  if(page==='Furnace power'){
   if(needConfig())return;
   const f=config.furnace_monitor||{enabled:false,installed:false,max_report_age_seconds:180};
@@ -173,6 +188,69 @@ function renderFurnacePower(){
  n.append(el('small','Stage changes require distinct fresh source reports spanning at least 10 seconds. Stale/missing data becomes Unknown. Cooldown requires a preceding likely-heating stage; restarting or changing monitoring settings resets the observation session.'));
 
 }
+async function loadLinkDiagnostics(){
+ const n=$('diagPanel');if(!n)return;
+ n.replaceChildren(el('p','Reading link diagnostics...'));
+ try{
+  const r=await fetch('/api/controller/diagnostics',{cache:'no-store'});
+  if(!r.ok)throw Error('HTTP '+r.status);
+  const j=await r.json();if(!$('diagPanel'))return;
+  n.replaceChildren(el('p','Selected controller transport: '+(j.selected_transport||'unknown')+
+    ' | LAN recovery: '+(j.lan_recovery_active?
+      Math.ceil((j.lan_recovery_remaining_ms||0)/1000)+'s remaining':'inactive')+
+    ' | Room Wi-Fi: '+(j.room_wifi_connected?'connected':'offline')+
+    ' | ESP-NOW peer: '+(j.espnow_online?'online':'not confirmed')));
+  const c=j.counters||{},summary=el('div',undefined,'statuses');
+  for(const [key,label] of [['link_http_ok','LAN control HTTP successes'],['link_http_fail','LAN control HTTP failures'],
+      ['lan_grace_started','LAN grace windows started'],['lan_grace_recovered','Recovered within grace'],
+      ['lan_grace_expired','60-second grace expirations'],
+      ['switched_to_espnow','Actual switches to ESP-NOW'],['returned_to_lan','Actual returns to LAN'],
+      ['learning_lan_ok','Learning GET successes'],['learning_lan_fail','Learning GET failures'],
+      ['discovery_fail','Controller discovery failures'],['espnow_probe_ok','ESP-NOW successful probes']]){
+    const row=el('div',undefined,'status-row');
+    row.append(el('span',label),el('strong',c[key]??0));summary.append(row);
+  }
+  n.append(summary,el('h3','Recent diagnostic events (oldest first)'));
+  const events=el('div',undefined,'statuses');
+  for(const e of j.events||[]){
+    const row=el('div',undefined,'status-row');
+    row.append(el('span',(e.uptime_ms/1000).toFixed(0)+'s · '+e.operation+
+      ' · '+e.reason),el('small','HTTP '+e.http_status+'; err '+e.error+
+      '; '+e.elapsed_ms+'ms'+
+      (e.operation==='learning_get'?'; body '+(e.response_bytes??0)+' B; client handle '+
+       (e.client_handle_reused?'reused':'fresh')+'; headers '+(e.response_headers_complete?'complete':'pending'):'')+
+      '; Wi-Fi '+(e.room_wifi_connected?'up':'down')+
+      '; STA '+(e.station_associated?'yes':'no')+
+      (e.station_associated?'; RSSI '+e.rssi_dbm+' dBm; ch '+e.ap_channel:'')+
+      '; selected '+(e.espnow_selected?'ESP-NOW':'LAN')));
+    events.append(row);
+  }
+  if(!(j.events||[]).length)events.append(el('p','No link errors or diagnostic events captured yet.'));
+  n.append(events,el('small','Counters and event history reset on thermostat restart. Download JSON before reflashing or restarting. Learning events now identify HTTP connection, response-header, body and JSON failures. A reused client handle does not prove the TCP socket was reused. Missing learning GETs do not imply an ESP-NOW switch.'));
+ }catch(err){if($('diagPanel'))n.replaceChildren(el('p','Diagnostics request failed: '+err.message));}
+}
+function renderLearning(){
+ const n=$('learningStatus');if(!n)return;
+ const l=lastStatus?.learning;
+ if(!l){n.replaceChildren(el('p','Waiting for first learning status...'));return;}
+ n.replaceChildren(el('p','Collector: '+(l.collecting?'Running':'Not running')+
+   ' | Samples in RAM: '+(l.samples_in_ram||0)+
+   ' | Review candidates: '+(l.candidate_samples_total||0)));
+ const recent=l.latest;
+ if(recent)n.append(el('p','Latest LAN read: '+(recent.learning_lan_reason||'unknown')+' | Control transport: '+(recent.selected_control_transport||'unknown')));
+ if(recent)n.append(el('p','Latest: commanded dial '+(recent.commanded_level??'unavailable')+
+   ', room '+(recent.room_f??'unavailable')+' °F, electrical stage '+
+   (recent.stage||'unknown')+', eligible '+(recent.review_candidate?'yes':'no')));
+ const table=el('div',undefined,'statuses');
+ for(const b of l.provisional_bins||[]){
+  if(!b.samples)continue;
+  const row=el('div',undefined,'status-row');
+  row.append(el('span','Dial ~'+b.dial_level+' (actual mean '+Number(b.mean_commanded_level??b.dial_level).toFixed(3)+', '+b.samples+' points)'),
+    el('span',Number(b.mean_temperature_f).toFixed(1)+' °F'));
+  table.append(row);
+ }
+ n.append(table,el('small','Provisional averages require 90-minute stable command, 30-minute steady room temperature, healthy controller encoder, enabled/onsite furnace-power telemetry, and outside temperature. These are candidates, not confirmed equilibrium readings.'));
+}
 function renderMetrics(){const m=$('metrics');if(!m||!lastStatus)return;m.replaceChildren();const p=lastStatus.performance||{};
  metric(m,'Corrected room temperature',typeof lastStatus.temperature_f==='number'?lastStatus.temperature_f.toFixed(1)+' °F':'No fresh sample');
  metric(m,'Raw primary sensor',typeof lastStatus.raw_temperature_f==='number'?lastStatus.raw_temperature_f.toFixed(1)+' °F':'No fresh sample');
@@ -206,7 +284,7 @@ async function loadConfig(){const r=await fetch('/api/settings',{cache:'no-store
 async function poll(){if(uploading)return;try{const r=await fetch('/api/device/status',{cache:'no-store'});if(!r.ok)throw Error('Status unavailable');const j=await r.json();lastStatus=j;
  $('services').replaceChildren();(j.services||[]).forEach(s=>{const row=el('div',undefined,'status-row');row.append(el('span',s.name),badge(s.state,s.kind));$('services').append(row)});
  const summary=j.summary_kind||'standby';$('summary').replaceWith(Object.assign(badge(j.summary,summary),{id:'summary'}));
- $('statusAge').textContent='Live status • updated '+new Date().toLocaleTimeString();renderMetrics();renderFirmware();renderControllerDiscovery();renderFurnacePower();renderWeather();
+ $('statusAge').textContent='Live status • updated '+new Date().toLocaleTimeString();renderMetrics();renderFirmware();renderControllerDiscovery();renderFurnacePower();renderWeather();renderLearning();
  if($('temperatureRaw'))
   $('temperatureRaw').textContent='Raw sensor: '+(typeof j.raw_temperature_f==='number'?j.raw_temperature_f.toFixed(1)+' °F':'Waiting for primary sensor');
  if($('temperaturePreview')&&$('offsetNumber')){

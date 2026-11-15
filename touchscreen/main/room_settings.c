@@ -10,6 +10,7 @@
 #include "room_mqtt.h"
 #include "room_temp_cal.h"
 #include "room_ha.h"
+#include "room_learning.h"
 #include "sdkconfig.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -293,7 +294,16 @@ static esp_err_t status(httpd_req_t *r)
     if(discovery)cJSON_AddItemToObject(j,"controller_discovery",discovery);
     cJSON_AddItemToObject(j,"furnace_power",room_ha_furnace_status());
     cJSON_AddItemToObject(j,"weather",room_ha_weather_status());
+    cJSON_AddItemToObject(j,"learning",room_learning_status());
     return json_reply(r,200,j);
+}
+static esp_err_t link_diagnostics_get(httpd_req_t *r)
+{
+    return json_reply(r,200,room_controller_link_diagnostics());
+}
+static esp_err_t learning_get(httpd_req_t *r)
+{
+    return json_reply(r,200,room_learning_status());
 }
 void room_settings_register(httpd_handle_t server)
 {
@@ -301,6 +311,9 @@ void room_settings_register(httpd_handle_t server)
         {.uri="/settings",.method=HTTP_GET,.handler=page},
         {.uri="/api/settings",.method=HTTP_GET,.handler=get},
         {.uri="/api/settings",.method=HTTP_POST,.handler=save},
-        {.uri="/api/device/status",.method=HTTP_GET,.handler=status}};
+        {.uri="/api/device/status",.method=HTTP_GET,.handler=status},
+        {.uri="/api/learning",.method=HTTP_GET,.handler=learning_get},
+        {.uri="/api/learning.csv",.method=HTTP_GET,.handler=room_learning_csv},
+        {.uri="/api/controller/diagnostics",.method=HTTP_GET,.handler=link_diagnostics_get}};
     for(unsigned i=0;i<sizeof(routes)/sizeof(routes[0]);++i)ESP_ERROR_CHECK(httpd_register_uri_handler(server,&routes[i]));
 }

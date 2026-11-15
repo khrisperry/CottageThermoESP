@@ -1,5 +1,25 @@
 # Changelog
 
+## V1.0.5 — passive learning HTTP reliability candidate
+
+Isolate the five-minute learning controller status GET from the control HTTP session, reuse its own persistent HTTP handle, permit a bounded 6s read-only request timeout, wait up to 2.5s only to copy the controller URL, and identify connection/headers/body/JSON errors with response-byte diagnostics. Never retry writes or alter the V1.0.4 60-second LAN recovery/furnace control policy. See [V1.0.5 release notes](docs/releases/V1.0.5.md).
+
+## V1.0.4 — 60-second LAN recovery before ESP-NOW fallback (test candidate)
+
+Allow 60 seconds of consecutive read-only LAN probe failures, asynchronously across regular status polls, before switching to ESP-NOW. Actual loss of room Wi-Fi retains immediate fallback. Reset the timer after a valid LAN reply. Reject failed/ambiguous mutations without replay, keep stale sensor values invalid, and preserve all existing controller motion and freeze-safety logic. See [V1.0.4 notes](docs/releases/V1.0.4.md).
+
+## V1.0.3 — controller link diagnostics test build (not promoted)
+
+Capture actual LAN-to-ESP-NOW transport switches, failed controller HTTP, mDNS issues, and reasons for passive-learning LAN GET failures. Add a read-only diagnostics page and CSV failure reason. No control/fallback policy, servo, pairing, or calibration changes. See [diagnostic guide](docs/LINK_DIAGNOSTICS.md).
+
+## V1.0.2 — fractional learning / power diagnostics field-test candidate
+
+Include normal fractional dial settings in quarter-step provisional learning bins, preserve actual mean dial positions, record electrical wattage separately from monitoring eligibility, and export monitor/installed flags. Automatic furnace adjustments remain disabled. See [V1.0.2 notes](docs/releases/V1.0.2.md).
+
+## V1.0.1 — passive learning field-test candidate (not yet promoted)
+
+Read-only paired thermostat/controller/environment observations, advisory learning CSV and status, and unchanged furnace movement policy. Physical installed-furnace validation is required before deployment. See [V1.0.1 candidate notes](docs/releases/V1.0.1.md).
+
 ## V1.0.0 — 2026-10-30
 
 First coordinated production release for both devices. Shared version source, production build defaults, strict PowerShell arguments, updated documentation, consolidated CI and verified per-device release packaging. Includes the working controller 0.7.5 and thermostat 0.15.4 behavior, preserving device identities and saved settings. See [release notes](docs/releases/V1.0.0.md).
