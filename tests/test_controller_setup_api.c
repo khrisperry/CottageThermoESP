@@ -190,7 +190,7 @@ int main(void)
      * level must also deny remote recovery. */
     assert(resume_checkpoint_write(3.0f,setup.pulse_us[3],true));
     assert(remote_resume_ready());
-    resume_checkpoint.last_pulse_us++;
+    resume_checkpoint.last_pulse_us+=4;
     assert(!remote_resume_ready());
     assert(resume_checkpoint_write(3.0f,setup.pulse_us[3],true));
     controller_setup_t changed=setup;
