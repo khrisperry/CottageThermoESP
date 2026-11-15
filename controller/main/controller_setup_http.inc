@@ -157,10 +157,10 @@ static esp_err_t setup_post(httpd_req_t *r)
                     error="Capture both travel limits before the first dial marking.";
                 else {
                     int i=(int)value;next.pulse_us[i]=last_pulse;
-                    controller_encoder_sample_t e=controller_encoder_snapshot();
-                    bool valid=e.online && now>=e.at_ms && now-e.at_ms<=2000 && e.magnet_detected && !e.too_weak && !e.too_strong;
-                    next.angle_mask&=~(1U<<i);
-                    if(valid){next.angle_mask|=1U<<i;next.angle_deg[i]=e.raw_angle*360.0f/4096.0f;}
+                    /* Keep persisted struct size for old installations.
+                     * Clear unused magnetic-angle calibration on recapture. */
+                    next.angle_mask=0;
+                    memset(next.angle_deg,0,sizeof(next.angle_deg));
                 }
             } else error="Choose a travel limit or a dial marking to capture.";
             if(!error && !controller_setup_valid(&next))error="Limits must differ and contain saved dial points. Use Re-measure or recapture an out-of-range dial position before saving the limit.";
