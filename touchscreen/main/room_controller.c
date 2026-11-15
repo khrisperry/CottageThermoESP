@@ -3,6 +3,7 @@
 #include "room_discovery_probe.h"
 #include "room_link_policy.h"
 #include "room_link_diagnostic.h"
+#include "room_lan_recovery.h"
 #include "room_settings.h"
 #include "wifi_setup.h"
 #include "thermo_radio.h"
@@ -22,6 +23,8 @@
 #include "freertos/semphr.h"
 static SemaphoreHandle_t io,diag_lock;
 static rld_log_t link_trace;
+static room_lan_recovery_t lan_recovery;
+static uint32_t grace_deferred_total, grace_expired_total;
 static room_http_session_t *http_session;
 static uint64_t client,sequence;
 static tl_packet_t latest;
@@ -65,6 +68,17 @@ cJSON *room_controller_link_diagnostics(void)
     cJSON_AddStringToObject(j,"selected_transport",atomic_load(&fallback)?"ESP-NOW":"LAN");
     cJSON_AddBoolToObject(j,"room_wifi_connected",room_wifi_connected());
     cJSON_AddBoolToObject(j,"espnow_online",tl_radio_online());
+    if(io&&xSemaphoreTake(io,pdMS_TO_TICKS(25))==pdTRUE){
+        uint64_t now=(uint64_t)(esp_timer_get_time()/1000);
+        cJSON_AddNumberToObject(j,"lan_grace_seconds",60);
+        cJSON_AddBoolToObject(j,"lan_recovery_active",lan_recovery.first_failure_ms>0 &&
+                               !atomic_load(&fallback));
+        cJSON_AddNumberToObject(j,"lan_recovery_remaining_ms",
+            room_lan_recovery_remaining_ms(&lan_recovery,now));
+        cJSON_AddNumberToObject(j,"lan_deferred_fallback_probes",grace_deferred_total);
+        cJSON_AddNumberToObject(j,"lan_grace_expirations",grace_expired_total);
+        xSemaphoreGive(io);
+    }
     if(!diag_lock||xSemaphoreTake(diag_lock,pdMS_TO_TICKS(100))!=pdTRUE){
         cJSON_AddStringToObject(j,"status","busy");return j;
     }
@@ -178,6 +192,11 @@ cJSON *room_controller_discovery_status(void)
     if(esp_wifi_get_channel(&channel,&second)==ESP_OK)
         cJSON_AddNumberToObject(j,"wifi_channel",channel);
     cJSON_AddStringToObject(j,"selected_transport",fallback?"ESP-NOW":"LAN");
+    cJSON_AddBoolToObject(j,"lan_recovery_active",lan_recovery.first_failure_ms>0 &&
+                           !atomic_load(&fallback));
+    cJSON_AddNumberToObject(j,"lan_recovery_remaining_ms",
+        room_lan_recovery_remaining_ms(&lan_recovery,
+            (uint64_t)(esp_timer_get_time()/1000)));
     cJSON_AddBoolToObject(j,"espnow_online",tl_radio_online());
     cJSON_AddBoolToObject(j,"espnow_configured",tl_radio_configured());
     cJSON_AddNumberToObject(j,"espnow_failed_probes",radio_failed_probes);
@@ -251,19 +270,48 @@ static bool exchange(tl_packet_t p,tl_packet_t *r,bool probe)
         start=esp_timer_get_time();
         if(http(&p,r)&&matching(&p,r)&&r->result==TL_OK){via_radio=false;ok=true;}
         else {
-            start=esp_timer_get_time();
-            if(tl_radio_exchange(&p,r)==ESP_OK&&matching(&p,r)&&r->result==TL_OK){
-                diag_note(RLD_RADIO_OK,"espnow_probe","ok",0,0,
-                          (uint32_t)((esp_timer_get_time()-start)/1000),false);
-                via_radio=true;ok=true;radio_failed_probes=0;
-            }else{
-                diag_note(RLD_RADIO_FAIL,"espnow_probe","unavailable_or_rejected",0,0,
-                          (uint32_t)((esp_timer_get_time()-start)/1000),true);
-                if(radio_failed_probes<1000000U)++radio_failed_probes;
+            /* Do not block this status request for a full minute. The UI
+             * polls every 2 seconds; primary sensor retries every 15 seconds.
+             * Keep trying Wi-Fi until 60 seconds of consecutive LAN misses.
+             * Genuine panel Wi-Fi loss keeps immediate ESP-NOW recovery. */
+            uint64_t now=(uint64_t)(esp_timer_get_time()/1000);
+            bool had_grace=lan_recovery.first_failure_ms!=0;
+            bool radio_allowed=room_lan_recovery_should_use_radio(
+                &lan_recovery,now,room_wifi_connected(),atomic_load(&fallback));
+            if(!radio_allowed){
+                if(grace_deferred_total<UINT32_MAX)++grace_deferred_total;
+                if(!had_grace)
+                    diag_note(RLD_LAN_GRACE_START,"lan_recovery",
+                              "waiting_up_to_60s",0,0,0,true);
+            }else {
+                if(!atomic_load(&fallback)&&room_wifi_connected()&&
+                   lan_recovery.first_failure_ms&&!lan_recovery.expiry_reported){
+                    lan_recovery.expiry_reported=true;
+                    if(grace_expired_total<UINT32_MAX)++grace_expired_total;
+                    diag_note(RLD_LAN_GRACE_EXPIRED,"lan_recovery",
+                              "60s_exhausted",0,0,0,true);
+                }
+                start=esp_timer_get_time();
+                if(tl_radio_exchange(&p,r)==ESP_OK&&matching(&p,r)&&r->result==TL_OK){
+                    diag_note(RLD_RADIO_OK,"espnow_probe","ok",0,0,
+                              (uint32_t)((esp_timer_get_time()-start)/1000),false);
+                    via_radio=true;ok=true;radio_failed_probes=0;
+                }else{
+                    diag_note(RLD_RADIO_FAIL,"espnow_probe","unavailable_or_rejected",0,0,
+                              (uint32_t)((esp_timer_get_time()-start)/1000),true);
+                    if(radio_failed_probes<1000000U)++radio_failed_probes;
+                }
             }
         }
     }else ok=fallback?(tl_radio_exchange(&p,r)==ESP_OK&&matching(&p,r)):(http(&p,r)&&matching(&p,r));
     if(ok&&esp_timer_get_time()-start<3000000){
+        /* Any authenticated LAN reply restores confidence, whether it was
+         * a status probe or a single, nonreplayed temperature sample. */
+        if(!via_radio && r->result==TL_OK && lan_recovery.first_failure_ms){
+            diag_note(RLD_LAN_GRACE_RECOVERED,"lan_recovery",
+                      "lan_reply_restored",0,200,0,true);
+            room_lan_recovery_clear(&lan_recovery);
+        }
         if(probe&&via_radio!=fallback){
             if(via_radio){
                 diag_note(RLD_SWITCH_RADIO,"transport","to_espnow",0,0,0,true);
