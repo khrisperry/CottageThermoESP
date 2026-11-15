@@ -177,7 +177,7 @@ int main(void)
     request("{\"action\":\"remote_resume\",\"confirm\":\"assume_unchanged_dial_without_feedback\"}","already active");
     request("{\"action\":\"live_confirm\",\"position\":3,\"confirm\":\"physically_checked_dial\"}","already active");
     request("{\"action\":\"live\",\"confirm\":\"enable_live\"}",NULL);
-    assert(go_active&&live_position_confirmed&&moves==count);
+    assert(go_active&&live_remote_assumed&&!live_position_confirmed&&moves==count);
     request("{\"action\":\"service\"}",NULL);
     assert(!live_selected&&!go_active&&!live_position_confirmed);
     /* Power lost mid-command: PENDING checkpoint locks out remote Auto. */
