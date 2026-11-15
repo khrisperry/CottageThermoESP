@@ -31,6 +31,7 @@
 #include "controller_recovery.h"
 #include "controller_pwm_duty.h"
 #include "controller_setup.h"
+#include "controller_resume.h"
 #include "controller_integrations.h"
 #include <stdatomic.h>
 #include "network_profile.h"
@@ -53,6 +54,10 @@ static bool live_selected,live_fault;
  * Live preference persists, but new physical alignment confirmation is
  * mandatory after every reset before the motor can move automatically. */
 static bool live_position_confirmed;
+static bool live_remote_assumed; /* explicit open-loop assumption, never measured */
+static controller_resume_checkpoint_t resume_checkpoint;
+static bool resume_checkpoint_loaded;
+static uint64_t resume_checkpoint_settle_at;
 static atomic_bool restart_pending;
 static controller_recovery_t recovery;
 static char live_issue[120]="Service mode: automatic motion disabled";
@@ -140,7 +145,7 @@ static void release(void)
         esp_err_t err=ledc_stop(LEDC_LOW_SPEED_MODE,LEDC_CHANNEL_0,0);
         if (err!=ESP_OK) ESP_LOGE(TAG,"PWM stop: %s",esp_err_to_name(err));
     }
-    pwm=false; last_pulse=-1; armed=false; go_active=false; state.simulated=true; state.config.mode=TH_HOLD; th_release(&state);
+    pwm=false; last_pulse=-1; armed=false; go_active=false; live_remote_assumed=false; resume_checkpoint_settle_at=0; state.simulated=true; state.config.mode=TH_HOLD; th_release(&state);
 }
 static bool save_away(bool enabled)
 {
@@ -166,6 +171,7 @@ static bool save_live_mode_reason(bool enabled,const char *reason)
     live_selected=enabled;
     live_fault=false;
     live_position_confirmed=false;
+    live_remote_assumed=false;
     snprintf(live_issue,sizeof(live_issue),"%s",enabled?
         "Live selected: output locked until an operator confirms the physical dial position":
         "Service mode: automatic movement disabled");
@@ -174,6 +180,23 @@ static bool save_live_mode_reason(bool enabled,const char *reason)
 static bool save_live_mode(bool enabled)
 {
     return save_live_mode_reason(enabled,enabled?"none":"Service selected manually");
+}
+/* Every movement is journaled to NVS BEFORE PWM. An interrupted move
+ * leaves PENDING and cannot remotely re-arm. After four seconds of
+ * uninterrupted commanded output, mark the command stable. Neither event
+ * proves the furnace dial actually reached the requested position. */
+static bool resume_checkpoint_write(float level,int us,bool stable)
+{
+    controller_resume_checkpoint_t next=controller_resume_make(&setup,level,us,stable);
+    if(nvs_set_blob(store,"dial_resume_v1",&next,sizeof(next))!=ESP_OK ||
+       nvs_commit(store)!=ESP_OK)return false;
+    resume_checkpoint=next;
+    resume_checkpoint_loaded=true;
+    return true;
+}
+static bool remote_resume_ready(void)
+{
+    return resume_checkpoint_loaded && controller_resume_valid(&resume_checkpoint,&setup);
 }
 /* Open-loop commands must never be presented as physical angle readings. */
 static bool live_room_fresh(uint64_t now)
@@ -204,8 +227,9 @@ static void live_try_resume(uint64_t now)
                  "Live waiting: fresh primary thermostat reading and manual dial confirmation");
         return;
     }
-    snprintf(live_issue,sizeof(live_issue),
-             "Live ready for attended confirmation: inspect dial and enter its position (no encoder)");
+    snprintf(live_issue,sizeof(live_issue),"%s",remote_resume_ready()?
+        "Recovery hold: PWM OFF. Choose Manual, physically confirm the dial, or explicitly resume from an unverified saved command.":
+        "Recovery hold: PWM OFF. No trustworthy saved command; physically verify dial position to start Live.");
 }
 static esp_err_t json_send(httpd_req_t *r,cJSON *j)
 {
@@ -329,6 +353,12 @@ static esp_err_t get_api(httpd_req_t *r)
         cJSON_AddBoolToObject(j,"live_active",live_selected&&go_active&&!live_fault);
         cJSON_AddBoolToObject(j,"live_fault",live_fault);
         cJSON_AddBoolToObject(j,"live_position_confirmed",live_position_confirmed);
+        cJSON_AddBoolToObject(j,"live_remote_assumed",live_remote_assumed);
+        cJSON_AddBoolToObject(j,"remote_resume_available",remote_resume_ready());
+        if(remote_resume_ready()){
+            cJSON_AddNumberToObject(j,"remote_resume_level",resume_checkpoint.last_level);
+            cJSON_AddNumberToObject(j,"remote_resume_pulse_us",resume_checkpoint.last_pulse_us);
+        }
         cJSON_AddBoolToObject(j,"live_verifying",false);
         cJSON_AddItemToObject(j,"live_checks",live_checks_json());
         cJSON_AddStringToObject(j,"live_issue",live_issue);
@@ -356,7 +386,7 @@ static esp_err_t get_api(httpd_req_t *r)
         cJSON_AddBoolToObject(j,"position_measured",false);
         cJSON_AddStringToObject(j,"position_feedback","open_loop_command_only; physical position not measured");
         cJSON_AddBoolToObject(j,"manual_position_confirmation_required",
-            live_selected&&!live_position_confirmed);
+            live_selected&&!go_active&&!remote_resume_ready());
         cJSON *net=cJSON_AddObjectToObject(j,"network");
         cJSON_AddStringToObject(net,"hostname","CottageThermoController");
         cJSON_AddStringToObject(net,"mdns_hostname","CottageThermoController.local");
@@ -642,16 +672,29 @@ static void control_task(void *unused)
         time_t wall=time(NULL);struct tm local={0};localtime_r(&wall,&local);
         th_clock(&state,wall>=1767225600,(local.tm_wday+6)%7,local.tm_hour*60+local.tm_min);
         if(live_selected && !go_active)live_try_resume(now);
+        if(live_selected && go_active && resume_checkpoint_settle_at &&
+           now>=resume_checkpoint_settle_at) {
+            if(!resume_checkpoint_write(state.commanded_level,state.commanded_us,true))
+                live_fault_stop("Live stopped: failed to persist settled dial command");
+            else {
+                resume_checkpoint_settle_at=0;
+                event("Last command checkpointed after 4 seconds; physical position NOT measured");
+            }
+        }
         th_action_t a=th_tick(&state,now);
         if(a.move) {
             if(state.simulated) th_commit_move(&state,a,now);
             else if((live_selected && go_active && !live_fault) ||
                     (!live_selected && armed && now<armed_until)) {
-                if(pulse(a.pulse_us)==ESP_OK) {
+                if(live_selected && !resume_checkpoint_write(a.level,a.pulse_us,false)){
+                    live_fault_stop("Live stopped: could not journal pending movement before PWM");
+                } else if(pulse(a.pulse_us)==ESP_OK) {
                     th_commit_move(&state,a,now);
-                    if(live_selected)
+                    if(live_selected) {
+                        resume_checkpoint_settle_at=now+CONTROLLER_RESUME_SETTLE_MS;
                         snprintf(live_issue,sizeof(live_issue),
                                  "Live active: pulse commanded (physical knob position unverified)");
+                    }
                 } else if(live_selected) {
                     live_fault_stop("Live stopped: servo PWM failed");
                 } else {release();state.reason="pwm_error";event("PWM error; motion disabled");}
@@ -915,14 +958,17 @@ void app_main(void)
     bool simulated=true;c.mode=TH_HOLD;
     setup=controller_setup_defaults();controller_setup_t saved_setup;size=sizeof(saved_setup);
     if(nvs_get_blob(store,"dial_setup_v1",&saved_setup,&size)==ESP_OK && size==sizeof(saved_setup) && controller_setup_valid(&saved_setup))setup=saved_setup;
+    size=sizeof(resume_checkpoint);
+    if(nvs_get_blob(store,"dial_resume_v1",&resume_checkpoint,&size)==ESP_OK &&
+       size==sizeof(resume_checkpoint))resume_checkpoint_loaded=true;
     th_init(&state,&c,simulated);
     state.away=away_active;state.selected_f=NAN;state.proposed_level=NAN;
     lock=xSemaphoreCreateMutex();assert(lock);
     event(live_selected?
-        "Boot: PWM disabled; Live intent retained; physical dial confirmation required":
+        "Boot: PWM disabled; recovery hold requires manual or explicit remote selection":
         "Boot: PWM disabled; persistent Service selected; no automatic movement");
     snprintf(live_issue,sizeof(live_issue),"%s",live_selected?
-        "Live blocked after reboot: operator must confirm physical dial position":
+        "Live recovery hold after reboot: PWM OFF until explicit choice":
         "Service selected: movement disabled until attended Test");
     ESP_LOGI(TAG,"Mode from NVS: %s; Freeze Hold: %s; motor output starts OFF",
         live_selected?"LIVE (guarded)":"SERVICE",away_active?"50 F":"disabled");
