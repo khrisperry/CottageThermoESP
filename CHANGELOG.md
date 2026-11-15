@@ -1,5 +1,9 @@
 # Changelog
 
+## V1.0.4 — 60-second LAN recovery before ESP-NOW fallback (test candidate)
+
+Allow 60 seconds of consecutive read-only LAN probe failures, asynchronously across regular status polls, before switching to ESP-NOW. Actual loss of room Wi-Fi retains immediate fallback. Reset the timer after a valid LAN reply. Reject failed/ambiguous mutations without replay, keep stale sensor values invalid, and preserve all existing controller motion and freeze-safety logic. See [V1.0.4 notes](docs/releases/V1.0.4.md).
+
 ## V1.0.3 — controller link diagnostics test build (not promoted)
 
 Capture actual LAN-to-ESP-NOW transport switches, failed controller HTTP, mDNS issues, and reasons for passive-learning LAN GET failures. Add a read-only diagnostics page and CSV failure reason. No control/fallback policy, servo, pairing, or calibration changes. See [diagnostic guide](docs/LINK_DIAGNOSTICS.md).
