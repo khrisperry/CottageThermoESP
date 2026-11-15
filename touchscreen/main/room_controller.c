@@ -370,64 +370,94 @@ cJSON *room_controller_status(void)
  * incomplete observation even when ESP-NOW still handles setpoints safely.
  * Copy the validated controller origin under io, then release it before HTTP
  * so a slow diagnostic read cannot delay the normal thermostat link. */
+/* Passive collector, independent of normal authenticated /api/link control.
+ * Any read-only failure is advisory and never changes the control transport,
+ * controller lease, servo position or target. */
 static void learning_diagnostic(const char *reason,char *out,size_t n,
-                                bool success,int err,int status,uint32_t elapsed)
+                                bool success,int err,int status,uint32_t elapsed,
+                                const room_http_diagnostic_t *details)
 {
     if(out&&n)snprintf(out,n,"%s",reason);
-    diag_note(success?RLD_LEARN_OK:RLD_LEARN_FAIL,"learning_get",reason,
-              err,status,elapsed,true);
-    if(!success)ESP_LOGW("room_learning","Controller diagnostic GET unavailable: %s; error=%d HTTP=%d elapsed=%u ms",
-                          reason,err,status,(unsigned)elapsed);
+    diag_note_detailed(success?RLD_LEARN_OK:RLD_LEARN_FAIL,
+        "learning_get",reason,err,status,elapsed,true,details);
+    if(!success)
+        ESP_LOGW("room_learning",
+            "Controller read-only GET unavailable: %s error=%d HTTP=%d elapsed=%u ms body=%u reused_handle=%d headers=%d",
+            reason,err,status,(unsigned)elapsed,
+            details?(unsigned)details->response_bytes:0U,
+            details?(int)details->client_handle_reused:0,
+            details?(int)details->response_headers_complete:0);
 }
 bool room_controller_espnow_selected(void){return atomic_load(&fallback);}
 cJSON *room_controller_learning_status(char *failure_reason,size_t reason_capacity)
 {
-    if(!io){learning_diagnostic("not_started",failure_reason,reason_capacity,false,0,0,0);return NULL;}
+    if(!io){
+        learning_diagnostic("not_started",failure_reason,reason_capacity,false,0,0,0,NULL);
+        return NULL;
+    }
     if(!room_wifi_connected()){
-        learning_diagnostic("room_wifi_offline",failure_reason,reason_capacity,false,0,0,0);
+        learning_diagnostic("room_wifi_offline",failure_reason,reason_capacity,false,0,0,0,NULL);
         return NULL;
     }
     char origin[256]={0};
-    if(xSemaphoreTake(io,pdMS_TO_TICKS(150))!=pdTRUE){
-        learning_diagnostic("controller_io_busy",failure_reason,reason_capacity,false,0,0,150);
+    /* Waiting for the normal controller IO task is safe here because this
+     * low-priority observation task does not hold the IO mutex while waiting.
+     * Once acquired it copies the identity-verified address and releases it
+     * before any network operation, so it cannot delay control messages. */
+    const uint32_t lock_wait_ms=2500;
+    if(xSemaphoreTake(io,pdMS_TO_TICKS(lock_wait_ms))!=pdTRUE){
+        learning_diagnostic("controller_io_busy",failure_reason,reason_capacity,
+                            false,0,0,lock_wait_ms,NULL);
         return NULL;
     }
     const char *selected=controller_origin();
     if(selected&&*selected)snprintf(origin,sizeof(origin),"%s",selected);
     xSemaphoreGive(io);
     if(!*origin){
-        learning_diagnostic("controller_origin_missing",failure_reason,reason_capacity,false,0,0,0);
+        learning_diagnostic("controller_origin_missing",failure_reason,reason_capacity,
+                            false,0,0,0,NULL);
         return NULL;
     }
     char *body=malloc(8192);
     if(!body){
-        learning_diagnostic("out_of_memory",failure_reason,reason_capacity,false,ESP_ERR_NO_MEM,0,0);
+        learning_diagnostic("out_of_memory",failure_reason,reason_capacity,
+                            false,ESP_ERR_NO_MEM,0,0,NULL);
         return NULL;
     }
     int code=0,length=0;
-    int64_t start=esp_timer_get_time();
-    esp_err_t err=room_http(origin,NULL,NULL,"/api/status",NULL,body,8192,2500,&code,&length);
-    uint32_t elapsed=(uint32_t)((esp_timer_get_time()-start)/1000);
+    room_http_diagnostic_t details={0};
+    int64_t started=esp_timer_get_time();
+    /* This is a separate persistent GET connection, never shared with the
+     * normal 1.8s controller command session. At most one read is attempted
+     * for each five-minute sample; ambiguous writes are never replayed. */
+    esp_err_t err=room_http_keepalive_diagnostic(&learning_session,origin,NULL,NULL,
+        "/api/status",NULL,body,8192,6000,&code,&length,&details);
+    uint32_t elapsed=(uint32_t)((esp_timer_get_time()-started)/1000);
     if(err!=ESP_OK || code!=200 || length<=0){
         free(body);
-        learning_diagnostic(err!=ESP_OK?"http_transport_error":code!=200?"http_non_200":"empty_response",
-                            failure_reason,reason_capacity,false,err,code,elapsed);
+        const char *reason=err!=ESP_OK?
+            room_http_observe_reason(details.stage):
+            code!=200?"http_non_200":"http_empty_response";
+        learning_diagnostic(reason,failure_reason,reason_capacity,
+                            false,err,code,elapsed,&details);
         return NULL;
     }
     cJSON *j=cJSON_ParseWithLengthOpts(body,length+1,NULL,true);
     free(body);
     if(!j){
-        learning_diagnostic("invalid_json",failure_reason,reason_capacity,false,0,code,elapsed);
+        learning_diagnostic("http_invalid_json",failure_reason,reason_capacity,
+                            false,0,code,elapsed,&details);
         return NULL;
     }
     cJSON *network=cJSON_GetObjectItemCaseSensitive(j,"network");
     cJSON *host=cJSON_GetObjectItemCaseSensitive(network,"hostname");
     if(!cJSON_IsString(host)||strcmp(host->valuestring,"CottageThermoController")){
         cJSON_Delete(j);
-        learning_diagnostic("controller_identity_mismatch",failure_reason,reason_capacity,false,0,code,elapsed);
+        learning_diagnostic("controller_identity_mismatch",
+                            failure_reason,reason_capacity,false,0,code,elapsed,&details);
         return NULL;
     }
-    learning_diagnostic("ok",failure_reason,reason_capacity,true,0,code,elapsed);
+    learning_diagnostic("ok",failure_reason,reason_capacity,true,0,code,elapsed,&details);
     return j;
 }
 cJSON *room_controller_test(void)
