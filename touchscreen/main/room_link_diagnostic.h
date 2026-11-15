@@ -17,7 +17,9 @@ typedef enum {
 typedef struct {
     uint64_t uptime_ms;
     int32_t error, http_status, duration_ms, rssi, channel;
+    uint32_t response_bytes;
     bool room_wifi, station_associated, espnow_selected;
+    bool client_handle_reused, response_headers_complete;
     char operation[20], reason[32];
 } rld_event_t;
 typedef struct {
