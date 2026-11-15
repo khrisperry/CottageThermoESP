@@ -6,7 +6,6 @@
 #include <stdlib.h>
 #include "cJSON.h"
 #include "controller_setup.h"
-#include "controller_live.h"
 typedef int esp_err_t;
 #define ESP_OK 0
 #define ESP_ERR_INVALID_ARG 1
@@ -15,11 +14,10 @@ typedef int esp_err_t;
 #define LEDC_LOW_SPEED_MODE 0
 #define LEDC_CHANNEL_0 0
 #define ESP_LOGE(...) ((void)0)
-typedef struct {bool online,magnet_detected,too_weak,too_strong;uint64_t at_ms;int raw_angle;} controller_encoder_sample_t;
 typedef struct {const char *request;char response[256];} httpd_req_t;
 static th_state_t state;static controller_setup_t setup,persisted;static bool go_active,pwm,armed;
-static int last_pulse=-1,lock,store,moves;static bool fail_save,live_selected,live_fault,live_verifying;
-static uint64_t armed_until,clock_ms=100000;static char live_issue[120];static float fake_encoder_angle=180.0f;
+static int last_pulse=-1,lock,store,moves;static bool fail_save,live_selected,live_fault,live_position_confirmed;
+static uint64_t armed_until,clock_ms=100000;static char live_issue[120];
 static uint64_t now_ms(void){return clock_ms;}
 static void event(const char *text){(void)text;}
 static int xSemaphoreTake(int x,int y){(void)x;(void)y;return 1;}
@@ -38,12 +36,10 @@ static void release(void)
 static cJSON *body(httpd_req_t *r){return cJSON_Parse(r->request);}
 static int httpd_resp_send_err(httpd_req_t *r,const char *status,const char *error){(void)status;snprintf(r->response,sizeof(r->response),"%s",error);return 400;}
 static int httpd_resp_sendstr(httpd_req_t *r,const char *text){snprintf(r->response,sizeof(r->response),"%s",text);return 0;}
-static controller_encoder_sample_t controller_encoder_snapshot(void){return (controller_encoder_sample_t){.online=true,.magnet_detected=true,.at_ms=clock_ms,.raw_angle=2048};}
-static bool live_encoder(float *angle){*angle=fake_encoder_angle;return true;}
 static bool live_room_fresh(uint64_t now){return state.room.valid && now>=state.room.at_ms && now-state.room.at_ms<=THERMO_TTL_MS;}
 static bool save_live_mode(bool enabled){
     if(fail_save)return false;
-    live_selected=enabled;live_fault=false;live_verifying=false;
+    live_selected=enabled;live_fault=false;live_position_confirmed=false;
     snprintf(live_issue,sizeof(live_issue),enabled?"Live selected":"Service selected");
     return true;
 }
@@ -90,14 +86,14 @@ int main(void)
         char json[120];snprintf(json,sizeof(json),"{\"action\":\"pulse\",\"us\":%d}",700+i*200);request(json,NULL);
         snprintf(json,sizeof(json),"{\"action\":\"capture\",\"kind\":\"position\",\"index\":%d}",i);request(json,NULL);
     }
-    assert(setup.angle_mask==255 && setup.angle_deg[3]==180);assert(persisted.pulse_us[7]==2100);
+    assert(setup.angle_mask==0);assert(persisted.pulse_us[7]==2100);
     fail_save=true;request("{\"action\":\"temperatures\",\"values\":[45,52,59,66,73,80]}","Could not save");assert(setup.temperature_mask==0);fail_save=false;
     request("{\"action\":\"temperatures\",\"values\":[45,52,52,66,73,80]}","increase");
     request("{\"action\":\"temperatures\",\"values\":[45,52,59,66,73,80]}",NULL);assert(!controller_setup_ready(&setup));
     /* Revising the start keeps every captured point and estimated temperature. */
     request("{\"action\":\"edit_limit\",\"kind\":\"start\",\"confirm\":\"recalibrate_limit\"}",NULL);
     assert(setup.start_us==0 && setup.end_us==2450 && persisted.start_us==0);
-    assert(setup.pulse_us[7]==2100 && setup.angle_mask==255 && setup.temperature_mask==63);
+    assert(setup.pulse_us[7]==2100 && setup.angle_mask==0 && setup.temperature_mask==63);
     assert(setup.temperature_f[4]==73 && !armed && !pwm && controller_setup_ready(&setup));
     request("{\"action\":\"go\",\"position\":3,\"confirm\":\"start_bench\"}","Capture both travel limits");
     request("{\"action\":\"test\",\"confirm\":\"unloaded_bench\"}",NULL);
@@ -138,32 +134,34 @@ int main(void)
     a=th_tick(&state,clock_ms+THERMO_SETPOINT_GUARD_MS);
     assert(a.move && fabsf(a.level-(1.0f+5.0f/7.0f))<0.001f && a.pulse_us==1043);
     request("{\"action\":\"test\",\"confirm\":\"unloaded_bench\"}",NULL);assert(!go_active&&!pwm&&state.simulated);
-    /* Explicit Live records intent without a selector, Test PWM, complete
-     * calibration or fresh sample; no HTTP request may energize the motor. */
+    /* Persistent Live intent alone NEVER moves a servo. The new
+     * open-loop controller requires explicit physical position confirmation
+     * even with an otherwise complete calibration and fresh sensor. */
     request("{\"action\":\"live\"}","Confirm");
     count=moves;
     request("{\"action\":\"live\",\"confirm\":\"enable_live\"}",NULL);
     assert(live_selected&&!go_active&&!armed&&!pwm&&moves==count);
     cJSON *checks=live_checks_json();
-    assert(cJSON_IsFalse(cJSON_GetObjectItem(checks,"position_recoverable")));cJSON_Delete(checks);
-    request("{\"action\":\"service\"}",NULL);
-    for(int i=1;i<=6;i++)setup.angle_deg[i]=270.0f-(i-1)*45.0f;
-    setup.angle_mask=0x7e;fake_encoder_angle=241.7f;
-    /* The screenshot's non-integer angle must recover without matching 3. */
-    checks=live_checks_json();
-    assert(cJSON_IsTrue(cJSON_GetObjectItem(checks,"position_recoverable")));
-    assert(fabs(cJSON_GetObjectItem(checks,"measured_level")->valuedouble-1.628889)<0.001);cJSON_Delete(checks);
-    request("{\"action\":\"live\",\"position\":99,\"confirm\":\"enable_live\"}",NULL);
-    assert(live_selected&&!go_active&&!pwm&&moves==count);
-    /* Repeated request preserves active control and in-flight verification. */
-    go_active=true;pwm=true;live_verifying=true;
+    assert(cJSON_IsFalse(cJSON_GetObjectItem(checks,"position_recoverable")));
+    assert(cJSON_IsFalse(cJSON_GetObjectItem(checks,"position_confirmed")));
+    cJSON_Delete(checks);
+    request("{\"action\":\"live_confirm\",\"position\":3}","physically inspected");
+    request("{\"action\":\"live_confirm\",\"position\":99,\"confirm\":\"physically_checked_dial\"}","between 1 and 6");
+    assert(!go_active&&moves==count);
+    request("{\"action\":\"live_confirm\",\"position\":3,\"confirm\":\"physically_checked_dial\"}",NULL);
+    assert(go_active&&live_position_confirmed&&state.synchronized&&moves==count);
+    request("{\"action\":\"live_confirm\",\"position\":3,\"confirm\":\"physically_checked_dial\"}","already active");
     request("{\"action\":\"live\",\"confirm\":\"enable_live\"}",NULL);
-    assert(go_active&&pwm&&live_verifying&&moves==count);
+    assert(go_active&&live_position_confirmed&&moves==count);
     request("{\"action\":\"service\"}",NULL);
+    assert(!live_selected&&!go_active&&!live_position_confirmed);
     clock_ms+=THERMO_TTL_MS+1;
     request("{\"action\":\"live\",\"confirm\":\"enable_live\"}",NULL);
     assert(live_selected&&!pwm&&!go_active);
-    checks=live_checks_json();assert(cJSON_IsFalse(cJSON_GetObjectItem(checks,"room_fresh")));cJSON_Delete(checks);
+    checks=live_checks_json();
+    assert(cJSON_IsFalse(cJSON_GetObjectItem(checks,"room_fresh")));
+    cJSON_Delete(checks);
+    request("{\"action\":\"live_confirm\",\"position\":3,\"confirm\":\"physically_checked_dial\"}","fresh primary");
     request("{\"action\":\"service\"}",NULL);
     assert(th_sample(&state,TH_ROOM,63,0,clock_ms));
     fail_save=true;
