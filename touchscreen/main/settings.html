@@ -24,7 +24,7 @@ function render(){
   const metrics=el('div',undefined,'metrics');metrics.id='metrics';c.append(metrics);renderMetrics();return;}
  if(page==='Weather'){const n=el('div');n.id='weatherStatus';c.append(n);renderWeather();return;}
  if(page==='Link diagnostics'){
-  c.append(el('p','Wi-Fi remains preferred; ESP-NOW fallback behavior is unchanged. This page distinguishes a read-only learning GET failure from a real controller transport switch.'));
+  c.append(el('p','Wi-Fi remains preferred. During a brief LAN failure, the panel retries LAN for up to 60 seconds without blocking the UI before trying ESP-NOW. A true panel Wi-Fi disconnection permits immediate fallback. This page distinguishes learning GET errors from actual control transport changes.'));
   const row=el('div',undefined,'actions');
   const b=el('button','Refresh link diagnostics');b.type='button';
   b.onclick=()=>loadLinkDiagnostics();row.append(b);
@@ -196,10 +196,14 @@ async function loadLinkDiagnostics(){
   if(!r.ok)throw Error('HTTP '+r.status);
   const j=await r.json();if(!$('diagPanel'))return;
   n.replaceChildren(el('p','Selected controller transport: '+(j.selected_transport||'unknown')+
+    ' | LAN recovery: '+(j.lan_recovery_active?
+      Math.ceil((j.lan_recovery_remaining_ms||0)/1000)+'s remaining':'inactive')+
     ' | Room Wi-Fi: '+(j.room_wifi_connected?'connected':'offline')+
     ' | ESP-NOW peer: '+(j.espnow_online?'online':'not confirmed')));
   const c=j.counters||{},summary=el('div',undefined,'statuses');
   for(const [key,label] of [['link_http_ok','LAN control HTTP successes'],['link_http_fail','LAN control HTTP failures'],
+      ['lan_grace_started','LAN grace windows started'],['lan_grace_recovered','Recovered within grace'],
+      ['lan_grace_expired','60-second grace expirations'],
       ['switched_to_espnow','Actual switches to ESP-NOW'],['returned_to_lan','Actual returns to LAN'],
       ['learning_lan_ok','Learning GET successes'],['learning_lan_fail','Learning GET failures'],
       ['discovery_fail','Controller discovery failures'],['espnow_probe_ok','ESP-NOW successful probes']]){
