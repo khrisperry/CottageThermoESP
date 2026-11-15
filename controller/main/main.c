@@ -630,8 +630,9 @@ static esp_err_t post_api(httpd_req_t *r)
         ok=save_live_mode_reason(false,"Stop command received; persistent Service selected");
         event(ok?"PWM disabled; Service mode selected":"PWM disabled; could not persist Service mode");
     } else if(!strcmp(r->uri,"/api/arm")) {
-        if(!live_selected && text_is(j,"confirm","unloaded_bench") && state.config.mode==TH_HOLD && !go_active) {
-            armed=true;armed_until=now_ms()+900000;event("Bench output armed for 15 minutes");ok=true;
+        if(!live_selected && text_is(j,"confirm","unloaded_bench") && state.config.mode==TH_HOLD && !go_active &&
+           resume_checkpoint_write(0,0,false)) {
+            armed=true;armed_until=now_ms()+900000;event("Bench output armed for 15 minutes; saved automatic position invalidated");ok=true;
         }
     } else if(!strcmp(r->uri,"/api/sync")) {
         double l;
