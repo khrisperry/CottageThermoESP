@@ -43,13 +43,15 @@ Existing helpers remain valid:
 .\tools\build-room-4b.ps1 -Flash -Monitor -Port COM14
 ```
 
-Normal flashing preserves saved Live/Service selection, calibration, target, Wi-Fi, pairing and temperature offset. Confirm firmware version **1.0.0** in the boot log/device status, then hard-refresh the webpages. The controller remains stopped during boot until its Live prerequisites validate.
+Normal flashing preserves saved Live/Service selection, calibration, target, Wi-Fi, pairing and temperature offset. Confirm firmware version **1.0.0** in the boot log/device status, then hard-refresh the webpages. The controller remains stopped during boot until an operator reconfirms the physical dial position.
 
-## Calibration and Live
+## Calibration and Live (AS5600-free development branch)
 
-Choose Service/Calibration, then Test Mode for manual movement. Move the physical knob to each numbered marking and click Capture beside it to replace the saved pulse and AS5600 angle. Estimated temperatures are a separate mapping. The always-visible Calibration & Live checks table shows Off/1–6/Max pulse, angle and estimated temperature, plus measured position and commanded expected-angle error.
+Service/Calibration, attended Test, 15-minute Bench Go, and saved Off/1–6/Max pulse/temperature maps remain intact. Capture records servo pulse width only; no magnetic angle reading is used. Historical angle fields stay in NVS solely to avoid invalidating existing saved calibration blobs.
 
-Go Live saves persistent intent immediately. The control loop recovers the actual fractional dial position after stable encoder/calibration and fresh primary temperature checks. It does not require Test PWM or an exact selected integer marking. Waiting prerequisites are displayed. Each servo movement remains checked against the saved angle map. Bench Go is a separate attended 15-minute session and does not persist.
+Go Live saves persistent intent but does not energize PWM. After checking the **real** furnace dial, enter its observed value between 1 and 6 and use **Confirm dial & enable Live**. Fresh primary temperature and a complete valid mapping are required. The observed position is not measured by firmware, cannot be recovered automatically and is deliberately forgotten at every restart, Stop, Service transition or Live fault. The 30-minute no-sample watchdog still restarts during active Live, but after restart output stays disabled until the physical position is reconfirmed.
+
+Servo moves are open-loop: the controller cannot know whether the knob moved, slipped or bound. The web/status API calls them **commanded**, not measured. This change must be tested with an operator present and independent heat/freeze protection. Do not promote to unattended production without on-furnace validation and an agreed safety approach.
 
 ## Device names and updates
 
@@ -71,4 +73,4 @@ CI builds start with empty example credentials. A new `VERSION` merged to main r
 
 ## Validation
 
-Host checks cover thermostat policy, calibration HTTP workflow, encoder recovery, PWM updates, connection recovery, freshness, furnace stages, weather and release packaging. Embedded web tests cover both device interfaces. ESP-IDF firmware builds validate the actual hardware targets. The working baseline was reported functional on the bench; final installed furnace validation remains part of installation.
+Host checks cover thermostat policy, calibration HTTP workflow, manual position confirmation, PWM updates, connection recovery, freshness, furnace stages, weather and release packaging. Embedded web tests cover both device interfaces. ESP-IDF firmware builds validate the actual hardware targets. The working baseline was reported functional on the bench; final installed furnace validation remains part of installation.
