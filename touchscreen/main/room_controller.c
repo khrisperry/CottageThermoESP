@@ -26,6 +26,8 @@ static rld_log_t link_trace;
 static room_lan_recovery_t lan_recovery;
 static uint32_t grace_deferred_total, grace_expired_total;
 static room_http_session_t *http_session;
+/* Owned exclusively by the passive-learning task; never used for /api/link. */
+static room_http_session_t *learning_session;
 static uint64_t client,sequence;
 static tl_packet_t latest;
 static int64_t received_at;
@@ -41,8 +43,9 @@ static unsigned discovery_failed_checks,radio_failed_probes;
 static void sync_task(void *arg);
 /* The diagnostic lock is separate from the control IO lock. Diagnostic
  * endpoints never hold the controller control lock while rendering JSON. */
-static void diag_note(rld_kind_t kind,const char *operation,const char *reason,
-                      int error,int http_status,uint32_t elapsed_ms,bool keep_event)
+static void diag_note_detailed(rld_kind_t kind,const char *operation,const char *reason,
+                      int error,int http_status,uint32_t elapsed_ms,bool keep_event,
+                      const room_http_diagnostic_t *details)
 {
     if(!diag_lock)return;
     wifi_ap_record_t ap={0};
@@ -53,12 +56,23 @@ static void diag_note(rld_kind_t kind,const char *operation,const char *reason,
         .room_wifi=room_wifi_connected(),.station_associated=associated,
         .espnow_selected=kind==RLD_SWITCH_RADIO?true:
                          kind==RLD_SWITCH_LAN?false:atomic_load(&fallback)};
+    if(details){
+        e.client_handle_reused=details->client_handle_reused;
+        e.response_headers_complete=details->response_headers_complete;
+        e.response_bytes=(uint32_t)details->response_bytes;
+    }
     snprintf(e.operation,sizeof(e.operation),"%s",operation);
     snprintf(e.reason,sizeof(e.reason),"%s",reason);
     if(xSemaphoreTake(diag_lock,pdMS_TO_TICKS(25))==pdTRUE){
         rld_record(&link_trace,kind,&e,keep_event);
         xSemaphoreGive(diag_lock);
     }
+} 
+static void diag_note(rld_kind_t kind,const char *operation,const char *reason,
+                      int error,int http_status,uint32_t elapsed_ms,bool keep_event)
+{
+    diag_note_detailed(kind,operation,reason,error,http_status,elapsed_ms,
+                       keep_event,NULL);
 }
 cJSON *room_controller_link_diagnostics(void)
 {
@@ -96,6 +110,11 @@ cJSON *room_controller_link_diagnostics(void)
         cJSON_AddNumberToObject(item,"error",e->error);
         cJSON_AddNumberToObject(item,"http_status",e->http_status);
         cJSON_AddNumberToObject(item,"elapsed_ms",e->duration_ms);
+        if(!strcmp(e->operation,"learning_get")){
+            cJSON_AddNumberToObject(item,"response_bytes",e->response_bytes);
+            cJSON_AddBoolToObject(item,"client_handle_reused",e->client_handle_reused);
+            cJSON_AddBoolToObject(item,"response_headers_complete",e->response_headers_complete);
+        }
         cJSON_AddBoolToObject(item,"room_wifi_connected",e->room_wifi);
         cJSON_AddBoolToObject(item,"station_associated",e->station_associated);
         cJSON_AddBoolToObject(item,"espnow_selected",e->espnow_selected);
