@@ -5,6 +5,7 @@
  * observable phase, not the precise TCP/Wi-Fi root cause. */
 typedef enum {
     ROOM_HTTP_STAGE_OK=0,
+    ROOM_HTTP_STAGE_SETUP,
     ROOM_HTTP_STAGE_CONNECT,
     ROOM_HTTP_STAGE_HEADERS,
     ROOM_HTTP_STAGE_BODY,
@@ -28,6 +29,7 @@ static inline const char *room_http_observe_reason(room_http_stage_t stage)
 {
     switch(stage){
     case ROOM_HTTP_STAGE_OK:return "ok";
+    case ROOM_HTTP_STAGE_SETUP:return "http_setup_failure";
     case ROOM_HTTP_STAGE_CONNECT:return "http_connect_failure";
     case ROOM_HTTP_STAGE_HEADERS:return "http_headers_failure";
     case ROOM_HTTP_STAGE_BODY:return "http_body_failure";
