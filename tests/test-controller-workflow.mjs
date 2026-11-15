@@ -26,7 +26,7 @@ window.fetch=async(path,opts={})=>{
    else if(data.action==='jog')state.last_command_us+=data.delta_us;
    else if(data.action==='go'){Object.assign(state,{operation:'go',simulation:false,position_synchronized:true,commanded_level:3,pwm_active:true});
      if(delayGo)await delayGo;}
-   else if(data.action==='live')Object.assign(state,{operation:'stopped',operating_mode:'live',live_active:false,simulation:true,bench_armed:false,pwm_active:false,live_position_confirmed:false});
+   else if(data.action==='live'){Object.assign(state,{operation:'stopped',operating_mode:'live',live_active:false,simulation:true,bench_armed:false,pwm_active:false,live_position_confirmed:false,live_remote_assumed:false});state.live_checks.remote_resume_assumed=false;}
    else if(data.action==='live_confirm'){
      Object.assign(state,{operation:'go',operating_mode:'live',live_active:true,simulation:false,pwm_active:true,live_position_confirmed:true,commanded_level:data.position,remote_resume_available:true,remote_resume_level:data.position,remote_resume_pulse_us:profile.positions[data.position].pulse_us,live_remote_assumed:false});
      state.live_checks.position_confirmed=true;
@@ -36,7 +36,7 @@ window.fetch=async(path,opts={})=>{
      state.live_checks.remote_resume_assumed=true;
      state.live_checks.position_confirmed=false;
    }
-   else if(data.action==='service'){Object.assign(state,{operation:'stopped',operating_mode:'service',live_active:false,simulation:true,bench_armed:false,pwm_active:false,live_position_confirmed:false});state.live_checks.position_confirmed=false;}
+   else if(data.action==='service'){Object.assign(state,{operation:'stopped',operating_mode:'service',live_active:false,simulation:true,bench_armed:false,pwm_active:false,live_position_confirmed:false,live_remote_assumed:false});state.live_checks.position_confirmed=false;state.live_checks.remote_resume_assumed=false;}
    else if(data.action==='temperatures')data.values.forEach((t,i)=>profile.positions[i+1].temp_f=t);
    else if(data.action==='edit_limit'){
      if(data.kind==='start')profile.start_us=0;else profile.end_us=0;
