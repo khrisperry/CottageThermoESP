@@ -28,8 +28,6 @@
 #include "thermo.h"
 #include "thermo_radio.h"
 #include "controller_mqtt.h"
-#include "controller_encoder.h"
-#include "controller_live.h"
 #include "controller_recovery.h"
 #include "controller_pwm_duty.h"
 #include "controller_setup.h"
@@ -50,15 +48,13 @@ static bool go_active;
 static bool away_active;
 /* NVS-selected intent, not permission to move until all safety prerequisites
  * pass after boot. Service always starts with servo output disabled. */
-static bool live_selected,live_fault,live_verifying;
-/* Magnet removal is a recoverable PAUSE, not a persistent Service fault.
- * Preserve a measured angle (or an unverified move's target) in RAM only. */
-static bool live_encoder_paused,live_last_angle_valid,live_resume_match_target;
-static float live_last_angle,live_resume_expected_angle,live_resume_expected_level;
+static bool live_selected,live_fault;
+/* Absolute dial recovery is impossible without a position sensor.
+ * Live preference persists, but new physical alignment confirmation is
+ * mandatory after every reset before the motor can move automatically. */
+static bool live_position_confirmed;
 static atomic_bool restart_pending;
 static controller_recovery_t recovery;
-static uint64_t live_verify_at,live_candidate_since;
-static float live_verify_level,live_candidate_level;
 static char live_issue[120]="Service mode: automatic motion disabled";
 /* NVS diagnostic breadcrumb survives resets; never grants permission to move. */
 static char last_live_exit_reason[120]="unknown";
@@ -169,13 +165,9 @@ static bool save_live_mode_reason(bool enabled,const char *reason)
     snprintf(last_live_exit_reason,sizeof(last_live_exit_reason),"%s",record);
     live_selected=enabled;
     live_fault=false;
-    live_verifying=false;
-    live_encoder_paused=false;
-    live_last_angle_valid=false;
-    live_resume_match_target=false;
-    live_candidate_since=0;
+    live_position_confirmed=false;
     snprintf(live_issue,sizeof(live_issue),"%s",enabled?
-        "Waiting for calibrated encoder and fresh room temperature":
+        "Live selected: output locked until an operator confirms the physical dial position":
         "Service mode: automatic movement disabled");
     return true;
 }
@@ -183,17 +175,7 @@ static bool save_live_mode(bool enabled)
 {
     return save_live_mode_reason(enabled,enabled?"none":"Service selected manually");
 }
-/* Encoder validation is mandatory before Live starts and after every command.
- * A missing, implausible or stale magnet is NEVER treated as a known position. */
-static bool live_encoder(float *angle)
-{
-    controller_encoder_sample_t e=controller_encoder_snapshot();
-    uint64_t now=now_ms();
-    if(!e.online || now<e.at_ms || now-e.at_ms>2000 ||
-       !e.magnet_detected || e.too_weak || e.too_strong)return false;
-    *angle=e.raw_angle*360.0f/4096.0f;
-    return true;
-}
+/* Open-loop commands must never be presented as physical angle readings. */
 static bool live_room_fresh(uint64_t now)
 {
     return state.room.valid && now>=state.room.at_ms &&
@@ -209,91 +191,21 @@ static void live_fault_stop(const char *reason)
              saved?"":"; NVS FAILED: do not rely on automatic recovery");
     event(live_issue);
 }
-static void live_pause_for_encoder_loss(void)
-{
-    /* A current PWM command has not yet been verified: require its target
-     * after reattachment, rather than an earlier measured angle. */
-    if(live_verifying){
-        live_resume_match_target=true;
-        live_resume_expected_level=live_verify_level;
-    } else if(live_last_angle_valid){
-        live_resume_match_target=false;
-        live_resume_expected_angle=live_last_angle;
-    } else {
-        live_fault_stop("Live stopped: AS5600 lost with no verified angle to recover");
-        return;
-    }
-    release(); /* Stop servo PWM on FIRST invalid encoder sample, not after 12 s. */
-    live_verifying=false;
-    live_encoder_paused=true;
-    live_candidate_since=0;
-    snprintf(live_issue,sizeof(live_issue),
-             "Live paused: AS5600 magnet missing/unreadable; PWM off until angle verified");
-    event(live_issue);
-}
 static void live_try_resume(uint64_t now)
 {
     if(!live_selected || live_fault || go_active)return;
     const char *setup_error=controller_setup_ready(&setup);
     if(setup_error){
-        snprintf(live_issue,sizeof(live_issue),"Live waiting: %s",setup_error);
+        snprintf(live_issue,sizeof(live_issue),"Live blocked: %s",setup_error);
         return;
     }
     if(!live_room_fresh(now)){
-        snprintf(live_issue,sizeof(live_issue),"Live waiting: fresh primary thermostat reading");
-        live_candidate_since=0;
+        snprintf(live_issue,sizeof(live_issue),
+                 "Live waiting: fresh primary thermostat reading and manual dial confirmation");
         return;
     }
-    float angle,level=0;
-    if(!live_encoder(&angle) || !controller_live_recover(&setup,angle,&level)){
-        snprintf(live_issue,sizeof(live_issue),"%s",live_encoder_paused?
-                 "Live paused: waiting for valid calibrated AS5600 magnet angle":
-                 "Live blocked: encoder angle or saved 1-6 calibration invalid; enter Service to correct");
-        live_candidate_since=0;
-        return;
-    }
-    if(live_encoder_paused){
-        bool matches=live_resume_match_target?
-            controller_live_matches(&setup,live_resume_expected_level,angle):
-            controller_live_angle_near(live_resume_expected_angle,angle);
-        if(!matches){
-            snprintf(live_issue,sizeof(live_issue),
-                     "Live paused: restored magnet angle differs from pre-loss position; align knob or enter Service");
-            live_candidate_since=0;
-            return;
-        }
-    }
-    /* Stable position across repeated encoder samples before startup movement. */
-    if(!live_candidate_since ||
-       fabsf(level-live_candidate_level)>0.12f){
-        live_candidate_since=now;
-        live_candidate_level=level;
-        snprintf(live_issue,sizeof(live_issue),"Live: confirming stable encoder position");
-        return;
-    }
-    if(now-live_candidate_since<2500)return;
-    th_state_t next=state;
-    next.config.mode=TH_AUTO;next.config.schedule_enabled=false;
-    next.simulated=false;
-    if(!controller_setup_map(&setup,&next.config) || !th_sync(&next,level)){
-        snprintf(live_issue,sizeof(live_issue),"Live blocked: invalid temperature/servo mapping");
-        return;
-    }
-    th_action_t action=th_tick(&next,now);
-    if(!action.move && strcmp(next.reason,"mapped_setting_reached")){
-        snprintf(live_issue,sizeof(live_issue),"Live waiting: %s",next.reason);
-        return;
-    }
-    bool resumed_from_loss=live_encoder_paused;
-    state=next;go_active=true;armed=false;live_verifying=false;
-    live_encoder_paused=false;
-    live_resume_match_target=false;
-    live_last_angle=angle;
-    live_last_angle_valid=true;
-    snprintf(live_issue,sizeof(live_issue),"Live active: encoder position recovered");
-    event(resumed_from_loss?
-          "Live resumed automatically: reattached magnet matches verified position":
-          "Live restored after validated calibration, stable AS5600 and fresh thermostat sensor");
+    snprintf(live_issue,sizeof(live_issue),
+             "Live ready for attended confirmation: inspect dial and enter its position (no encoder)");
 }
 static esp_err_t json_send(httpd_req_t *r,cJSON *j)
 {
@@ -416,16 +328,16 @@ static esp_err_t get_api(httpd_req_t *r)
         cJSON_AddStringToObject(j,"operating_mode",live_selected?"live":"service");
         cJSON_AddBoolToObject(j,"live_active",live_selected&&go_active&&!live_fault);
         cJSON_AddBoolToObject(j,"live_fault",live_fault);
-        cJSON_AddBoolToObject(j,"live_encoder_paused",live_encoder_paused);
-        cJSON_AddBoolToObject(j,"live_verifying",live_verifying);
+        cJSON_AddBoolToObject(j,"live_position_confirmed",live_position_confirmed);
+        cJSON_AddBoolToObject(j,"live_verifying",false);
         cJSON_AddItemToObject(j,"live_checks",live_checks_json());
         cJSON_AddStringToObject(j,"live_issue",live_issue);
         cJSON_AddStringToObject(j,"last_live_exit_reason",last_live_exit_reason);
         cJSON_AddBoolToObject(j,"restart_pending",restart_pending);
         cJSON *reconnect=cJSON_AddObjectToObject(j,"link_recovery");
-        cJSON_AddBoolToObject(reconnect,"enabled",live_selected&&!live_fault&&!live_encoder_paused);
+        cJSON_AddBoolToObject(reconnect,"enabled",live_selected&&go_active&&!live_fault);
         cJSON_AddNumberToObject(reconnect,"timeout_ms",CONTROLLER_RECOVERY_MS);
-        if(live_selected&&!live_fault&&!live_encoder_paused)cJSON_AddNumberToObject(reconnect,"remaining_ms",
+        if(live_selected&&go_active&&!live_fault)cJSON_AddNumberToObject(reconnect,"remaining_ms",
             controller_recovery_remaining(&recovery,now_ms()));
         if(recovery.sample_received)cJSON_AddNumberToObject(reconnect,"last_sample_age_ms",
             now_ms()-recovery.last_sample_ms);
@@ -442,26 +354,9 @@ static esp_err_t get_api(httpd_req_t *r)
         cJSON_AddNumberToObject(j,"last_command_us",last_pulse);
         cJSON_AddBoolToObject(j,"position_synchronized",state.synchronized);
         cJSON_AddBoolToObject(j,"position_measured",false);
-        cJSON_AddStringToObject(j,"position_feedback","AS5600 bench telemetry only; dial position unverified");
-        controller_encoder_sample_t enc=controller_encoder_snapshot();
-        bool fresh=enc.online && now_ms()>=enc.at_ms && now_ms()-enc.at_ms<=2000;
-        bool valid=fresh && enc.magnet_detected && !enc.too_weak && !enc.too_strong;
-        cJSON *e=cJSON_AddObjectToObject(j,"encoder");
-        cJSON_AddBoolToObject(e,"online",fresh);
-        cJSON_AddBoolToObject(e,"angle_valid",valid);
-        cJSON_AddStringToObject(e,"error",enc.online && !fresh?"Stale reading":esp_err_to_name(enc.error));
-        cJSON_AddNumberToObject(e,"sda_gpio",CONFIG_THERMO_ENCODER_SDA);
-        cJSON_AddNumberToObject(e,"scl_gpio",CONFIG_THERMO_ENCODER_SCL);
-        if(fresh) {
-            cJSON_AddBoolToObject(e,"magnet_detected",enc.magnet_detected);
-            cJSON_AddBoolToObject(e,"too_weak",enc.too_weak);
-            cJSON_AddBoolToObject(e,"too_strong",enc.too_strong);
-            cJSON_AddNumberToObject(e,"age_ms",now_ms()-enc.at_ms);
-            if(valid) {
-                cJSON_AddNumberToObject(e,"raw_angle",enc.raw_angle);
-                cJSON_AddNumberToObject(e,"angle_deg",enc.raw_angle*360.0/4096.0);
-            }
-        }
+        cJSON_AddStringToObject(j,"position_feedback","open_loop_command_only; physical position not measured");
+        cJSON_AddBoolToObject(j,"manual_position_confirmation_required",
+            live_selected&&!live_position_confirmed);
         cJSON *net=cJSON_AddObjectToObject(j,"network");
         cJSON_AddStringToObject(net,"hostname","CottageThermoController");
         cJSON_AddStringToObject(net,"mdns_hostname","CottageThermoController.local");
@@ -733,7 +628,7 @@ static void control_task(void *unused)
     for(;;) {
         xSemaphoreTake(lock,portMAX_DELAY);
         uint64_t now=now_ms();
-        if(!restart_pending && controller_recovery_due(&recovery,live_selected&&!live_fault&&!live_encoder_paused,now)){
+        if(!restart_pending && controller_recovery_due(&recovery,live_selected&&go_active&&!live_fault,now)){
             if(!schedule_controller_restart("No valid thermostat sample for 30 minutes; restarting with saved mode"))
                 ESP_LOGE(TAG,"Could not schedule thermostat-link recovery restart");
         }
@@ -747,44 +642,16 @@ static void control_task(void *unused)
         time_t wall=time(NULL);struct tm local={0};localtime_r(&wall,&local);
         th_clock(&state,wall>=1767225600,(local.tm_wday+6)%7,local.tm_hour*60+local.tm_min);
         if(live_selected && !go_active)live_try_resume(now);
-        if(live_selected && go_active) {
-            float angle=0;bool encoder_ok=live_encoder(&angle);
-            if(!encoder_ok) {
-                live_pause_for_encoder_loss();
-            } else {
-                if(live_verifying && now>live_verify_at+1000 &&
-                   controller_live_matches(&setup,live_verify_level,angle)){
-                    live_verifying=false;
-                    snprintf(live_issue,sizeof(live_issue),"Live: measured servo position verified");
-                }
-                /* Never use a pre-move angle as the reattachment reference
-                 * while verification of the commanded movement is pending. */
-                if(!live_verifying){
-                    live_last_angle=angle;
-                    live_last_angle_valid=true;
-                }
-            }
-            if(live_selected && go_active && live_verifying && now-live_verify_at>16000){
-                float expected=0;controller_live_expected(&setup,live_verify_level,&expected);
-                char reason[120];
-                snprintf(reason,sizeof(reason),"Live stopped: dial %.2f measured %.1f deg expected %.1f deg (+/-12); check calibration/servo",
-                         live_verify_level,angle,expected);
-                live_fault_stop(reason);
-            }
-        }
         th_action_t a=th_tick(&state,now);
-        if(a.move && live_verifying) {
-            state.reason="verifying_encoder";
-        } else if(a.move) {
+        if(a.move) {
             if(state.simulated) th_commit_move(&state,a,now);
             else if((live_selected && go_active && !live_fault) ||
                     (!live_selected && armed && now<armed_until)) {
                 if(pulse(a.pulse_us)==ESP_OK) {
                     th_commit_move(&state,a,now);
-                    if(live_selected){
-                        live_verifying=true;live_verify_level=a.level;live_verify_at=now;
-                        snprintf(live_issue,sizeof(live_issue),"Live: verifying last servo movement");
-                    }
+                    if(live_selected)
+                        snprintf(live_issue,sizeof(live_issue),
+                                 "Live active: pulse commanded (physical knob position unverified)");
                 } else if(live_selected) {
                     live_fault_stop("Live stopped: servo PWM failed");
                 } else {release();state.reason="pwm_error";event("PWM error; motion disabled");}
@@ -909,7 +776,7 @@ static void controller_status_led_task(void *arg)
         bool fault=false;
         xSemaphoreTake(lock,portMAX_DELAY);
         http_at=last_http_link;
-        fault=live_fault || live_encoder_paused || (state.reason&&!strcmp(state.reason,"pwm_error"));
+        fault=live_fault || (state.reason&&!strcmp(state.reason,"pwm_error"));
         xSemaphoreGive(lock);
         /* ESP-NOW wraps at 2^32 ms; use the unsigned 32-bit age. */
         uint64_t radio_at=0;
@@ -1032,9 +899,8 @@ void app_main(void)
     th_config_t c=th_defaults();size_t size=sizeof(c);
     th_config_t saved;
     if(nvs_get_blob(store,CONFIG_KEY,&saved,&size)==ESP_OK && size==sizeof(saved) && th_config_valid(&saved))c=saved;
-    /* PWM always starts OFF. Selected Live is persisted, but movement only
-     * resumes when the primary sensor, complete encoder map and physical
-     * AS5600 position validate after this fresh boot. */
+    /* PWM starts OFF. Live preference persists, but every reboot requires
+     * renewed physical dial alignment confirmation before automatic motion. */
     uint32_t saved_live=0,saved_away=0;
     const esp_err_t live_read=nvs_get_u32(store,"live_mode",&saved_live);
     if(live_read==ESP_OK && saved_live==LIVE_MODE_MAGIC)live_selected=true;
@@ -1053,10 +919,10 @@ void app_main(void)
     state.away=away_active;state.selected_f=NAN;state.proposed_level=NAN;
     lock=xSemaphoreCreateMutex();assert(lock);
     event(live_selected?
-        "Boot: PWM disabled; persistent Live selected; awaiting encoder/room validation":
+        "Boot: PWM disabled; Live intent retained; physical dial confirmation required":
         "Boot: PWM disabled; persistent Service selected; no automatic movement");
     snprintf(live_issue,sizeof(live_issue),"%s",live_selected?
-        "Live waiting: stable calibrated encoder position and fresh room temperature":
+        "Live blocked after reboot: operator must confirm physical dial position":
         "Service selected: movement disabled until attended Test");
     ESP_LOGI(TAG,"Mode from NVS: %s; Freeze Hold: %s; motor output starts OFF",
         live_selected?"LIVE (guarded)":"SERVICE",away_active?"50 F":"disabled");
@@ -1079,10 +945,9 @@ void app_main(void)
     controller_status_led_start();
 #endif
     controller_mqtt_start();
-    controller_encoder_start();
 #ifdef CONFIG_THERMO_SUPERMINI
-    ESP_LOGI(TAG,"HW-747 Super Mini bench: 4 MB flash; PSRAM disabled; servo GPIO%d; encoder SDA%d/SCL%d",
-        CONFIG_THERMO_SERVO_GPIO,CONFIG_THERMO_ENCODER_SDA,CONFIG_THERMO_ENCODER_SCL);
+    ESP_LOGI(TAG,"HW-747 Super Mini: 4 MB flash; servo GPIO%d; open-loop control (no AS5600)",
+        CONFIG_THERMO_SERVO_GPIO);
 #endif
     if(strlen(network.ssid)) {
         esp_sntp_setoperatingmode(SNTP_OPMODE_POLL);esp_sntp_setservername(0,"pool.ntp.org");esp_sntp_init();
