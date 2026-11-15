@@ -63,22 +63,34 @@ struct room_http_session {
     esp_http_client_handle_t client;
     char origin[256];
 };
-typedef struct {char *out;size_t capacity,used;bool overflow;} response_t;
+typedef struct {
+    char *out;
+    size_t capacity, used;
+    bool overflow, request_headers_sent, response_headers_complete;
+    bool response_body_started;
+} response_t;
 static esp_err_t receive_response(esp_http_client_event_t *event)
 {
     response_t *r=event->user_data;
-    if(event->event_id==HTTP_EVENT_ON_DATA&&r&&event->data_len>0){
+    if(!r)return ESP_OK;
+    if(event->event_id==HTTP_EVENT_HEADERS_SENT)r->request_headers_sent=true;
+    if(event->event_id==HTTP_EVENT_ON_HEADERS_COMPLETE)
+        r->response_headers_complete=true;
+    if(event->event_id==HTTP_EVENT_ON_DATA&&event->data_len>0){
+        r->response_body_started=true;
         size_t n=(size_t)event->data_len;
         if(n>r->capacity-1-r->used)r->overflow=true;
         else if(!r->overflow){memcpy(r->out+r->used,event->data,n);r->used+=n;}
     }
     return ESP_OK;
 }
-esp_err_t room_http_keepalive(room_http_session_t **session,
+esp_err_t room_http_keepalive_diagnostic(room_http_session_t **session,
                     const char *origin,const char *header,const char *token,
                     const char *path,const char *post,void *out,size_t capacity,
-                    int timeout_ms,int *status,int *length)
+                    int timeout_ms,int *status,int *length,
+                    room_http_diagnostic_t *diagnostic)
 {
+    if(diagnostic)*diagnostic=(room_http_diagnostic_t){.stage=ROOM_HTTP_STAGE_SETUP};
     *status=0;*length=0;
     if(!session||!origin||(header&&(!token||!*token))||(!header&&token)||!path||path[0]!='/'||path[1]=='/'||
        strpbrk(path,"\r\n")||!out||capacity<2||capacity>INT_MAX)return ESP_ERR_INVALID_ARG;
@@ -101,6 +113,7 @@ esp_err_t room_http_keepalive(room_http_session_t **session,
         snprintf((*session)->origin,sizeof((*session)->origin),"%s",origin);
     }
     room_http_session_t *s=*session;
+    bool handle_reused=s->client!=NULL;
     response_t response={.out=out,.capacity=capacity};
     if(!s->client){
         esp_http_client_config_t cfg={.url=url,.timeout_ms=timeout_ms,
@@ -125,6 +138,17 @@ esp_err_t room_http_keepalive(room_http_session_t **session,
         *status=esp_http_client_get_status_code(h);
         if(err==ESP_OK&&(response.overflow||!esp_http_client_is_complete_data_received(h)))err=ESP_FAIL;
     }
+    if(diagnostic){
+        diagnostic->stage=room_http_observe_stage(
+            err!=ESP_OK,response.request_headers_sent,
+            response.response_headers_complete,response.overflow,
+            err==ESP_OK);
+        diagnostic->client_handle_reused=handle_reused;
+        diagnostic->request_headers_sent=response.request_headers_sent;
+        diagnostic->response_headers_complete=response.response_headers_complete;
+        diagnostic->response_body_started=response.response_body_started;
+        diagnostic->response_bytes=response.used;
+    }
     esp_http_client_set_user_data(h,NULL);
     if(err==ESP_OK){response.out[response.used]=0;*length=response.used;}
     else{
@@ -132,4 +156,15 @@ esp_err_t room_http_keepalive(room_http_session_t **session,
         esp_http_client_cleanup(h);s->client=NULL;
     }
     return err;
+}
+
+/* Keep normal controller control requests on their existing behavior.
+ * Only the passive-learning task opts in to phase diagnostics. */
+esp_err_t room_http_keepalive(room_http_session_t **session,
+                    const char *origin,const char *header,const char *token,
+                    const char *path,const char *post,void *out,size_t capacity,
+                    int timeout_ms,int *status,int *length)
+{
+    return room_http_keepalive_diagnostic(session,origin,header,token,
+        path,post,out,capacity,timeout_ms,status,length,NULL);
 }
