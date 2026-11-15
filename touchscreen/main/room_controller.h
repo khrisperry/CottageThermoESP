@@ -1,8 +1,14 @@
 #pragma once
 #include <stdbool.h>
+#include <stddef.h>
 #include "cJSON.h"
 void room_controller_start(void);
 cJSON *room_controller_status(void);
+/* Fetch read-only controller /api/status over LAN; null when unavailable. */
+cJSON *room_controller_learning_status(char *reason,size_t reason_capacity);
+/* Advisory read-only status; no control messages or transport changes. */
+cJSON *room_controller_link_diagnostics(void);
+bool room_controller_espnow_selected(void);
 cJSON *room_controller_discovery_status(void);
 cJSON *room_controller_target(float target,int *http_status);
 cJSON *room_controller_away(bool enabled,int *http_status);

@@ -28,6 +28,7 @@
 #include "room_temp_cal.h"
 #include "room_bmp280.h"
 #include "room_controller.h"
+#include "room_learning.h"
 #include "room_ships.h"
 #include "room_ota.h"
 #include "room_mqtt.h"
@@ -72,6 +73,7 @@ static void sensor_task(void *arg)
                 /* One correction before the reading branches to display,
                  * MQTT, and controller. No offset is added to targets. */
                 room_display_probe_sample(f,raw_f);
+                room_learning_probe(f,raw_f);
                 if(CONFIG_ROOM_SENSOR==3){
                     ESP_LOGI(TAG,"BMP/BME280 TEST raw %.2f F + offset %+.1f F = %.2f F; not sent to controller",
                              raw_f,offset/10.0f,f);
@@ -116,6 +118,7 @@ void app_main(void)
     else ESP_LOGW(TAG,"mDNS discovery unavailable: %s; explicit controller URL / ESP-NOW remain usable",esp_err_to_name(mdns_err));
     room_controller_start();
     room_ha_start();
+    room_learning_start();
     room_ships_start();
     room_display_start();
     room_audio_start();

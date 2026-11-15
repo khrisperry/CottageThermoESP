@@ -2,6 +2,8 @@
 #include "room_transport.h"
 #include "room_discovery_probe.h"
 #include "room_link_policy.h"
+#include "room_link_diagnostic.h"
+#include "room_lan_recovery.h"
 #include "room_settings.h"
 #include "wifi_setup.h"
 #include "thermo_radio.h"
@@ -19,7 +21,10 @@
 #include <strings.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
-static SemaphoreHandle_t io;
+static SemaphoreHandle_t io,diag_lock;
+static rld_log_t link_trace;
+static room_lan_recovery_t lan_recovery;
+static uint32_t grace_deferred_total, grace_expired_total;
 static room_http_session_t *http_session;
 static uint64_t client,sequence;
 static tl_packet_t latest;
@@ -34,6 +39,76 @@ static esp_err_t discovery_last_error;
 static int discovery_last_http_status;
 static unsigned discovery_failed_checks,radio_failed_probes;
 static void sync_task(void *arg);
+/* The diagnostic lock is separate from the control IO lock. Diagnostic
+ * endpoints never hold the controller control lock while rendering JSON. */
+static void diag_note(rld_kind_t kind,const char *operation,const char *reason,
+                      int error,int http_status,uint32_t elapsed_ms,bool keep_event)
+{
+    if(!diag_lock)return;
+    wifi_ap_record_t ap={0};
+    bool associated=esp_wifi_sta_get_ap_info(&ap)==ESP_OK;
+    rld_event_t e={.uptime_ms=(uint64_t)(esp_timer_get_time()/1000),
+        .error=error,.http_status=http_status,.duration_ms=(int32_t)elapsed_ms,
+        .rssi=associated?ap.rssi:0,.channel=associated?ap.primary:0,
+        .room_wifi=room_wifi_connected(),.station_associated=associated,
+        .espnow_selected=kind==RLD_SWITCH_RADIO?true:
+                         kind==RLD_SWITCH_LAN?false:atomic_load(&fallback)};
+    snprintf(e.operation,sizeof(e.operation),"%s",operation);
+    snprintf(e.reason,sizeof(e.reason),"%s",reason);
+    if(xSemaphoreTake(diag_lock,pdMS_TO_TICKS(25))==pdTRUE){
+        rld_record(&link_trace,kind,&e,keep_event);
+        xSemaphoreGive(diag_lock);
+    }
+}
+cJSON *room_controller_link_diagnostics(void)
+{
+    cJSON *j=cJSON_CreateObject();if(!j)return NULL;
+    cJSON_AddStringToObject(j,"mode","read_only_diagnostic");
+    cJSON_AddBoolToObject(j,"automatic_fallback_unchanged",true);
+    cJSON_AddStringToObject(j,"selected_transport",atomic_load(&fallback)?"ESP-NOW":"LAN");
+    cJSON_AddBoolToObject(j,"room_wifi_connected",room_wifi_connected());
+    cJSON_AddBoolToObject(j,"espnow_online",tl_radio_online());
+    if(io&&xSemaphoreTake(io,pdMS_TO_TICKS(25))==pdTRUE){
+        uint64_t now=(uint64_t)(esp_timer_get_time()/1000);
+        cJSON_AddNumberToObject(j,"lan_grace_seconds",60);
+        cJSON_AddBoolToObject(j,"lan_recovery_active",lan_recovery.first_failure_ms>0 &&
+                               !atomic_load(&fallback));
+        cJSON_AddNumberToObject(j,"lan_recovery_remaining_ms",
+            room_lan_recovery_remaining_ms(&lan_recovery,now));
+        cJSON_AddNumberToObject(j,"lan_deferred_fallback_probes",grace_deferred_total);
+        cJSON_AddNumberToObject(j,"lan_grace_expirations",grace_expired_total);
+        xSemaphoreGive(io);
+    }
+    if(!diag_lock||xSemaphoreTake(diag_lock,pdMS_TO_TICKS(100))!=pdTRUE){
+        cJSON_AddStringToObject(j,"status","busy");return j;
+    }
+    cJSON *counts=cJSON_AddObjectToObject(j,"counters");
+    for(int k=0;k<RLD_COUNT;++k)
+        cJSON_AddNumberToObject(counts,rld_kind_name((rld_kind_t)k),link_trace.counters[k]);
+    cJSON *events=cJSON_AddArrayToObject(j,"events");
+    unsigned start=(link_trace.next+RLD_CAPACITY-link_trace.count)%RLD_CAPACITY;
+    for(unsigned i=0;i<link_trace.count;++i){
+        const rld_event_t *e=&link_trace.events[(start+i)%RLD_CAPACITY];
+        cJSON *item=cJSON_CreateObject();
+        cJSON_AddNumberToObject(item,"uptime_ms",(double)e->uptime_ms);
+        cJSON_AddStringToObject(item,"operation",e->operation);
+        cJSON_AddStringToObject(item,"reason",e->reason);
+        cJSON_AddNumberToObject(item,"error",e->error);
+        cJSON_AddNumberToObject(item,"http_status",e->http_status);
+        cJSON_AddNumberToObject(item,"elapsed_ms",e->duration_ms);
+        cJSON_AddBoolToObject(item,"room_wifi_connected",e->room_wifi);
+        cJSON_AddBoolToObject(item,"station_associated",e->station_associated);
+        cJSON_AddBoolToObject(item,"espnow_selected",e->espnow_selected);
+        if(e->station_associated){
+            cJSON_AddNumberToObject(item,"rssi_dbm",e->rssi);
+            cJSON_AddNumberToObject(item,"ap_channel",e->channel);
+        }
+        cJSON_AddItemToArray(events,item);
+    }
+    xSemaphoreGive(diag_lock);
+    return j;
+}
+
 static bool fresh(void){return received_at&&esp_timer_get_time()-received_at<4000000;}
 
 static bool controller_is_auto(void)
@@ -68,6 +143,7 @@ static void discover_controller(void)
     esp_ip4_addr_t ip={0};
     esp_err_t err=mdns_query_a("CottageThermoController",1200,&ip);
     if(err!=ESP_OK){
+        diag_note(RLD_DISCOVERY_FAIL,"mdns","mdns_query_failed",err,0,1200,true);
         discovery_last_error=err;
         ++discovery_failed_checks;
         ESP_LOGW("controller_discovery","mDNS lookup CottageThermoController.local failed: %s",esp_err_to_name(err));
@@ -80,6 +156,8 @@ static void discover_controller(void)
     room_discovery_result_t result={0};
     if(!room_discovery_probe_origin(found_origin,pair->radio_enabled,
                                    pair->peer,&result)){
+        diag_note(RLD_DISCOVERY_FAIL,"mdns_probe",result.identity_mismatch?"identity_mismatch":"status_unavailable",
+                  result.http_error,result.http_status,2400,true);
         discovery_last_error=result.http_error;
         discovery_last_http_status=result.http_status;
         ++discovery_failed_checks;
@@ -114,6 +192,11 @@ cJSON *room_controller_discovery_status(void)
     if(esp_wifi_get_channel(&channel,&second)==ESP_OK)
         cJSON_AddNumberToObject(j,"wifi_channel",channel);
     cJSON_AddStringToObject(j,"selected_transport",fallback?"ESP-NOW":"LAN");
+    cJSON_AddBoolToObject(j,"lan_recovery_active",lan_recovery.first_failure_ms>0 &&
+                           !atomic_load(&fallback));
+    cJSON_AddNumberToObject(j,"lan_recovery_remaining_ms",
+        room_lan_recovery_remaining_ms(&lan_recovery,
+            (uint64_t)(esp_timer_get_time()/1000)));
     cJSON_AddBoolToObject(j,"espnow_online",tl_radio_online());
     cJSON_AddBoolToObject(j,"espnow_configured",tl_radio_configured());
     cJSON_AddNumberToObject(j,"espnow_failed_probes",radio_failed_probes);
@@ -128,7 +211,8 @@ cJSON *room_controller_discovery_status(void)
 
 void room_controller_start(void)
 {
-    io=xSemaphoreCreateMutex();ESP_ERROR_CHECK(io?ESP_OK:ESP_ERR_NO_MEM);
+    io=xSemaphoreCreateMutex();diag_lock=xSemaphoreCreateMutex();
+    ESP_ERROR_CHECK(io&&diag_lock?ESP_OK:ESP_ERR_NO_MEM);
     client=((uint64_t)esp_random()<<32)|esp_random();if(!client)client=1;
     if(room_settings_radio_managed()){
         const cottage_integration_t *p=room_settings_integrations();tl_radio_start_config(NULL,p->radio_enabled,p->peer,p->key);
@@ -140,14 +224,23 @@ bool room_controller_radio_ready(void){return tl_radio_configured();}
 bool room_controller_radio_online(void){return tl_radio_online();}
 static bool http(const tl_packet_t *p,tl_packet_t *out)
 {
-    if(!room_wifi_connected())return false;
+    if(!room_wifi_connected()){
+        diag_note(RLD_LINK_FAIL,"link_http","room_wifi_offline",0,0,0,true);
+        return false;
+    }
     const char *origin=controller_origin();
-    if(!*origin)return false;
+    if(!*origin){
+        diag_note(RLD_LINK_FAIL,"link_http","no_origin",0,0,0,true);
+        return false;
+    }
     char hex[sizeof(*p)*2+1],body[sizeof(*p)*2+20],response[512];int status=0,length=0;
+    int64_t started=esp_timer_get_time();
     tl_hex(p,hex);snprintf(body,sizeof(body),"{\"packet\":\"%s\"}",hex);
     esp_err_t err=room_http_keepalive(&http_session,origin,NULL,NULL,
        "/api/link",body,response,sizeof(response),1800,&status,&length);
     if(err!=ESP_OK||status!=200){
+        diag_note(RLD_LINK_FAIL,"link_http",err!=ESP_OK?"transport_error":"http_status",
+                  err,status,(uint32_t)((esp_timer_get_time()-started)/1000),true);
         ESP_LOGW("controller_link","Controller %s/api/link: error=%d HTTP=%d",origin,(int)err,status);
         if(origin==discovered_origin){
             discovered_origin[0]=0;discovered_address[0]=0;discovery_verified=false;
@@ -157,7 +250,11 @@ static bool http(const tl_packet_t *p,tl_packet_t *out)
     }
     if(origin!=discovered_origin)manual_failures=0;
     cJSON *j=cJSON_Parse(response),*v=cJSON_GetObjectItemCaseSensitive(j,"packet");
-    bool ok=cJSON_IsString(v)&&tl_unhex(v->valuestring,out);cJSON_Delete(j);return ok;
+    bool ok=cJSON_IsString(v)&&tl_unhex(v->valuestring,out);cJSON_Delete(j);
+    diag_note(ok?RLD_LINK_OK:RLD_LINK_FAIL,"link_http",
+              ok?"ok":"invalid_reply",err,status,
+              (uint32_t)((esp_timer_get_time()-started)/1000),!ok);
+    return ok;
 }
 static bool matching(const tl_packet_t *p,const tl_packet_t *r)
 {return tl_valid(r)&&r->operation==TL_REPLY&&r->client==p->client&&r->sequence==p->sequence;}
@@ -173,16 +270,56 @@ static bool exchange(tl_packet_t p,tl_packet_t *r,bool probe)
         start=esp_timer_get_time();
         if(http(&p,r)&&matching(&p,r)&&r->result==TL_OK){via_radio=false;ok=true;}
         else {
-            start=esp_timer_get_time();
-            if(tl_radio_exchange(&p,r)==ESP_OK&&matching(&p,r)&&r->result==TL_OK){
-                via_radio=true;ok=true;radio_failed_probes=0;
-            }else if(radio_failed_probes<1000000U)++radio_failed_probes;
+            /* Do not block this status request for a full minute. The UI
+             * polls every 2 seconds; primary sensor retries every 15 seconds.
+             * Keep trying Wi-Fi until 60 seconds of consecutive LAN misses.
+             * Genuine panel Wi-Fi loss keeps immediate ESP-NOW recovery. */
+            uint64_t now=(uint64_t)(esp_timer_get_time()/1000);
+            bool had_grace=lan_recovery.first_failure_ms!=0;
+            bool radio_allowed=room_lan_recovery_should_use_radio(
+                &lan_recovery,now,room_wifi_connected(),atomic_load(&fallback));
+            if(!radio_allowed){
+                if(grace_deferred_total<UINT32_MAX)++grace_deferred_total;
+                if(!had_grace)
+                    diag_note(RLD_LAN_GRACE_START,"lan_recovery",
+                              "waiting_up_to_60s",0,0,0,true);
+            }else {
+                if(!atomic_load(&fallback)&&room_wifi_connected()&&
+                   lan_recovery.first_failure_ms&&!lan_recovery.expiry_reported){
+                    lan_recovery.expiry_reported=true;
+                    if(grace_expired_total<UINT32_MAX)++grace_expired_total;
+                    diag_note(RLD_LAN_GRACE_EXPIRED,"lan_recovery",
+                              "60s_exhausted",0,0,0,true);
+                }
+                start=esp_timer_get_time();
+                if(tl_radio_exchange(&p,r)==ESP_OK&&matching(&p,r)&&r->result==TL_OK){
+                    diag_note(RLD_RADIO_OK,"espnow_probe","ok",0,0,
+                              (uint32_t)((esp_timer_get_time()-start)/1000),false);
+                    via_radio=true;ok=true;radio_failed_probes=0;
+                }else{
+                    diag_note(RLD_RADIO_FAIL,"espnow_probe","unavailable_or_rejected",0,0,
+                              (uint32_t)((esp_timer_get_time()-start)/1000),true);
+                    if(radio_failed_probes<1000000U)++radio_failed_probes;
+                }
+            }
         }
     }else ok=fallback?(tl_radio_exchange(&p,r)==ESP_OK&&matching(&p,r)):(http(&p,r)&&matching(&p,r));
     if(ok&&esp_timer_get_time()-start<3000000){
+        /* Any authenticated LAN reply restores confidence, whether it was
+         * a status probe or a single, nonreplayed temperature sample. */
+        if(!via_radio && r->result==TL_OK && lan_recovery.first_failure_ms){
+            diag_note(RLD_LAN_GRACE_RECOVERED,"lan_recovery",
+                      "lan_reply_restored",0,200,0,true);
+            room_lan_recovery_clear(&lan_recovery);
+        }
         if(probe&&via_radio!=fallback){
-            if(via_radio)ESP_LOGW("controller_link","Controller link switched to ESP-NOW");
-            else ESP_LOGI("controller_link","Wi-Fi controller link restored");
+            if(via_radio){
+                diag_note(RLD_SWITCH_RADIO,"transport","to_espnow",0,0,0,true);
+                ESP_LOGW("controller_link","Controller link switched to ESP-NOW");
+            }else{
+                diag_note(RLD_SWITCH_LAN,"transport","to_lan",0,0,0,true);
+                ESP_LOGI("controller_link","Wi-Fi controller link restored");
+            }
         }
         if(probe)fallback=via_radio;
         latest=*r;received_at=esp_timer_get_time();
@@ -210,6 +347,70 @@ cJSON *room_controller_status(void)
 }
 /* Read-only probes prove each transport independently, even with healthy Wi-Fi.
  * Do not change the selected transport, cached lease or authoritative state. */
+/* Telemetry only: GET, never a TL mutation. Missing LAN means an
+ * incomplete observation even when ESP-NOW still handles setpoints safely.
+ * Copy the validated controller origin under io, then release it before HTTP
+ * so a slow diagnostic read cannot delay the normal thermostat link. */
+static void learning_diagnostic(const char *reason,char *out,size_t n,
+                                bool success,int err,int status,uint32_t elapsed)
+{
+    if(out&&n)snprintf(out,n,"%s",reason);
+    diag_note(success?RLD_LEARN_OK:RLD_LEARN_FAIL,"learning_get",reason,
+              err,status,elapsed,true);
+    if(!success)ESP_LOGW("room_learning","Controller diagnostic GET unavailable: %s; error=%d HTTP=%d elapsed=%u ms",
+                          reason,err,status,(unsigned)elapsed);
+}
+bool room_controller_espnow_selected(void){return atomic_load(&fallback);}
+cJSON *room_controller_learning_status(char *failure_reason,size_t reason_capacity)
+{
+    if(!io){learning_diagnostic("not_started",failure_reason,reason_capacity,false,0,0,0);return NULL;}
+    if(!room_wifi_connected()){
+        learning_diagnostic("room_wifi_offline",failure_reason,reason_capacity,false,0,0,0);
+        return NULL;
+    }
+    char origin[256]={0};
+    if(xSemaphoreTake(io,pdMS_TO_TICKS(150))!=pdTRUE){
+        learning_diagnostic("controller_io_busy",failure_reason,reason_capacity,false,0,0,150);
+        return NULL;
+    }
+    const char *selected=controller_origin();
+    if(selected&&*selected)snprintf(origin,sizeof(origin),"%s",selected);
+    xSemaphoreGive(io);
+    if(!*origin){
+        learning_diagnostic("controller_origin_missing",failure_reason,reason_capacity,false,0,0,0);
+        return NULL;
+    }
+    char *body=malloc(8192);
+    if(!body){
+        learning_diagnostic("out_of_memory",failure_reason,reason_capacity,false,ESP_ERR_NO_MEM,0,0);
+        return NULL;
+    }
+    int code=0,length=0;
+    int64_t start=esp_timer_get_time();
+    esp_err_t err=room_http(origin,NULL,NULL,"/api/status",NULL,body,8192,2500,&code,&length);
+    uint32_t elapsed=(uint32_t)((esp_timer_get_time()-start)/1000);
+    if(err!=ESP_OK || code!=200 || length<=0){
+        free(body);
+        learning_diagnostic(err!=ESP_OK?"http_transport_error":code!=200?"http_non_200":"empty_response",
+                            failure_reason,reason_capacity,false,err,code,elapsed);
+        return NULL;
+    }
+    cJSON *j=cJSON_ParseWithLengthOpts(body,length+1,NULL,true);
+    free(body);
+    if(!j){
+        learning_diagnostic("invalid_json",failure_reason,reason_capacity,false,0,code,elapsed);
+        return NULL;
+    }
+    cJSON *network=cJSON_GetObjectItemCaseSensitive(j,"network");
+    cJSON *host=cJSON_GetObjectItemCaseSensitive(network,"hostname");
+    if(!cJSON_IsString(host)||strcmp(host->valuestring,"CottageThermoController")){
+        cJSON_Delete(j);
+        learning_diagnostic("controller_identity_mismatch",failure_reason,reason_capacity,false,0,code,elapsed);
+        return NULL;
+    }
+    learning_diagnostic("ok",failure_reason,reason_capacity,true,0,code,elapsed);
+    return j;
+}
 cJSON *room_controller_test(void)
 {
     if(xSemaphoreTake(io,pdMS_TO_TICKS(100))!=pdTRUE)return NULL;
