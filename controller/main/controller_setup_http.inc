@@ -73,8 +73,7 @@ static esp_err_t setup_post(httpd_req_t *r)
         } /* Repeated Live selection cannot grant motion. */
     } else if(text_is(j,"action","live_confirm")) {
         /* Saved pulses do not establish actual position after restart. */
-        if(!live_selected)error="Select persistent Live before confirming a position.";
-        else if(go_active)error="Live is already active. Enter Service to re-align.";
+        if(live_selected && go_active)error="Live is already active. Enter Service to re-align.";
         else if(!text_is(j,"confirm","physically_checked_dial"))
             error="Confirm that the attached knob was physically inspected.";
         else if(!number(j,"position",&value) || value<1 || value>6)
@@ -95,10 +94,12 @@ static esp_err_t setup_post(httpd_req_t *r)
                     if(!action.move && strcmp(next.reason,"mapped_setting_reached"))
                         error="Thermostat prerequisites are not satisfied.";
                     else {
-                        /* A real physical inspection creates the only trusted
-                         * starting checkpoint. If it cannot persist, stay OFF. */
+                        /* Persist the attended starting position before enabling Auto. */
+                        release();
                         if(!resume_checkpoint_write((float)value,next.commanded_us,true))
                             error="Could not save verified starting dial position; motor remains stopped.";
+                        else if(!live_selected && !save_live_mode(true))
+                            error="Could not save Live mode; motor remains stopped.";
                         else {
                             state=next;go_active=true;armed=false;
                             live_position_confirmed=true;live_remote_assumed=false;

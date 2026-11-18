@@ -162,8 +162,14 @@ int main(void)
     request("{\"action\":\"live_confirm\",\"position\":3}","physically inspected");
     request("{\"action\":\"live_confirm\",\"position\":99,\"confirm\":\"physically_checked_dial\"}","between 1 and 6");
     assert(!go_active&&moves==count);
+    request("{\"action\":\"service\"}",NULL);
+    assert(!live_selected&&!go_active);
+    fail_save=true;
+    request("{\"action\":\"live_confirm\",\"position\":3,\"confirm\":\"physically_checked_dial\"}","Could not save verified");
+    assert(!live_selected&&!go_active&&!pwm);
+    fail_save=false;
     request("{\"action\":\"live_confirm\",\"position\":3,\"confirm\":\"physically_checked_dial\"}",NULL);
-    assert(go_active&&live_position_confirmed&&state.synchronized&&moves==count);
+    assert(live_selected&&go_active&&live_position_confirmed&&state.synchronized&&moves==count&&!pwm);
     assert(remote_resume_ready() && resume_checkpoint.last_level==3);
     /* A normal reboot resets volatile synchronization without sending PWM.
      * A saved settled command may be explicitly rearmed remotely; it is

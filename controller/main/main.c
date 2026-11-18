@@ -60,7 +60,7 @@ static bool resume_checkpoint_loaded;
 static uint64_t resume_checkpoint_settle_at;
 static atomic_bool restart_pending;
 static controller_recovery_t recovery;
-static char live_issue[120]="Service mode: automatic motion disabled";
+static char live_issue[160]="Service mode: automatic motion disabled";
 /* NVS diagnostic breadcrumb survives resets; never grants permission to move. */
 static char last_live_exit_reason[120]="unknown";
 #define LIVE_MODE_MAGIC 0x4C495631U

@@ -26,7 +26,6 @@ window.fetch=async(path,opts={})=>{
    else if(data.action==='jog')state.last_command_us+=data.delta_us;
    else if(data.action==='go'){Object.assign(state,{operation:'go',simulation:false,position_synchronized:true,commanded_level:3,pwm_active:true});
      if(delayGo)await delayGo;}
-   else if(data.action==='live'){Object.assign(state,{operation:'stopped',operating_mode:'live',live_active:false,simulation:true,bench_armed:false,pwm_active:false,live_position_confirmed:false,live_remote_assumed:false});state.live_checks.remote_resume_assumed=false;}
    else if(data.action==='live_confirm'){
      Object.assign(state,{operation:'go',operating_mode:'live',live_active:true,simulation:false,pwm_active:true,live_position_confirmed:true,commanded_level:data.position,remote_resume_available:true,remote_resume_level:data.position,remote_resume_pulse_us:profile.positions[data.position].pulse_us,live_remote_assumed:false});
      state.live_checks.position_confirmed=true;
@@ -54,7 +53,7 @@ const id=x=>window.document.getElementById(x);
 async function settle(){await new Promise(r=>setTimeout(r,25));}
 await settle();assert.equal(posts.length,0,'page load must not command movement');
 const ids=[...window.document.querySelectorAll('[id]')].map(x=>x.id);assert.equal(new Set(ids).size,ids.length,'element IDs must be unique');
-assert(!id('enableLive').disabled,'Live selectable without manual alignment');
+assert(id('enableLive').disabled,'Go Live waits for the observed dial position');
 assert.equal(id('calibrationValues').children.length,8);
 assert(id('goButton').disabled);assert(id('sendPulse').disabled);assert(id('jogPlus').disabled);
 id('testButton').click();await settle();assert.equal(posts.at(-1).data.action,'test');assert(!id('sendPulse').disabled);assert(id('jogPlus').disabled);
@@ -63,12 +62,15 @@ id('jogStep').value='10';id('jogPlus').click();await settle();assert.equal(posts
 id('tab-go').click();assert(!id('panel-go').hidden);assert(id('panel-calibration').hidden);
 id('moveStart').click();await settle();assert.equal(posts.at(-1).data.us,profile.positions[3].pulse_us);assert(!id('goButton').disabled);
 id('goButton').click();await settle();assert.equal(posts.at(-1).data.action,'go');assert.equal(posts.at(-1).data.position,3);assert.equal(state.simulation,false);assert(id('jogPlus').disabled);
-assert(!id('enableLive').disabled,'A verified active Bench Go can be promoted directly to persistent Live');
+id('livePosition').value='3';
+id('livePosition').dispatchEvent(new window.Event('input'));
+assert(!id('enableLive').disabled,'Go Live is available from Bench Go');
+const postsBeforeLive=posts.length;
+const originalConfirm=window.confirm;
+window.confirm=()=>{throw Error('Go Live must not open a confirmation dialog');};
 id('enableLive').click();await settle();
-assert.equal(posts.at(-1).data.action,'live');assert.equal(state.operating_mode,'live');
-assert.equal(state.live_active,false,'Live intent does not move before physical position confirmation');
-assert(!id('confirmLivePosition').disabled);
-id('livePosition').value='3';id('confirmLivePosition').click();await settle();
+window.confirm=originalConfirm;
+assert.equal(posts.length,postsBeforeLive+1,'Go Live is a single request');
 assert.deepEqual(posts.at(-1).data,{action:'live_confirm',position:3,confirm:'physically_checked_dial'});
 assert.equal(state.live_active,true);
 assert(!id('liveSafety').textContent.includes('Test Mode'),'Live promotion must not require returning to Test');
@@ -91,14 +93,16 @@ id('enterService').click();await settle();
 assert.equal(posts.at(-1).data.action,'service');assert.equal(state.operation,'stopped');
 id('goTarget').value='68';id('saveTarget').click();await settle();assert.equal(posts.at(-1).data.target_f,68);
 id('stopButton').click();await settle();assert.equal(posts.at(-1).path,'/api/stop');assert.equal(state.operation,'stopped');assert(id('goButton').disabled);
-/* Persistent Live requires confirmed bench position; Service persists and
- * stops movement. It cannot be selected accidentally on initial page load. */
-id('testButton').click();await settle();
-id('moveStart').click();await settle();
+/* Go Live is also available from Service, without entering Test. */
+id('livePosition').value='3';
+id('livePosition').dispatchEvent(new window.Event('input'));
+state.live_checks.room_fresh=false;await intervals.at(-1)();
+assert(id('enableLive').disabled);
+assert(id('liveReadiness').textContent.includes('fresh reading'));
+state.live_checks.room_fresh=true;await intervals.at(-1)();
 assert(!id('enableLive').disabled);
 id('enableLive').click();await settle();
-assert.equal(posts.at(-1).data.action,'live');
-assert.equal(posts.at(-1).data.confirm,'enable_live');
+assert.equal(posts.at(-1).data.action,'live_confirm');
 assert.equal(state.operating_mode,'live');
 assert(id('testButton').disabled,'Test must require switching back to Service');
 id('enterService').click();await settle();
@@ -108,8 +112,8 @@ assert.equal(state.operation,'stopped');
 
 /* An unsafe checkpoint never enables the remote button, while Manual
  * remains a one-click persistent user choice. */
-id('enableLive').click();await settle();
-state.remote_resume_available=false;await intervals.at(-1)();
+Object.assign(state,{operating_mode:'live',operation:'stopped',live_active:false,pwm_active:false,remote_resume_available:false});
+await intervals.at(-1)();
 assert(id('resumeAutoRemote').disabled);
 assert(!id('stayManual').disabled);
 id('stayManual').click();await settle();
