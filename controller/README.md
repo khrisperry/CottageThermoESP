@@ -1,11 +1,13 @@
-# Super Mini furnace controller — V1.0.X
+# Super Mini furnace controller — open-loop prototype
 
-Both applications use the repository `VERSION` file. See the [production build and upgrade guide](../docs/PRODUCTION.md) and [V1.0.0 release notes](../docs/releases/V1.0.0.md).
+Both applications use the root `VERSION` file. See [production build and upgrade guide](../docs/PRODUCTION.md).
 
-Hardware: HW-747 ESP32-S3 Super Mini, 4 MB flash, servo signal GPIO5, AS5600 SDA6/SCL7. Servo power uses the separate 5 V supply. Keep the tested pin profile when upgrading.
+Hardware: HW-747 ESP32-S3 Super Mini, 4 MB flash, servo signal GPIO5, separate 5 V servo supply. **AS5600/magnet are no longer required**, and the controller firmware does not start the encoder.
 
-The controller webpage offers persistent Live, Service/Calibration, and attended Test/Bench Go. Go Live saves intent immediately; startup waits for valid calibration, a stable recovered encoder position and fresh primary room temperature. The Calibration & Live checks table shows saved pulses/angles/temperatures and the current command error. Capture replaces the selected marking's saved pulse and angle.
+The webpage retains Service/Calibration, attended Test, 15-minute Bench Go, and persistent Live intent. Calibration still stores Off/1–6/Max PWM pulses and estimated temperatures. The obsolete angle fields remain in the saved NVS binary layout for compatibility, but firmware neither samples nor validates them.
 
-Live intent, target and calibration survive normal USB flashing. A missing encoder pauses PWM; verified reattachment can resume. Movement verification/PWM faults select Service and retain their exit diagnosis. The controller application identity and NVS layout are unchanged. Controller firmware updates use USB.
+**Live never automatically moves on boot.** After a reboot, PWM is OFF even when Live intent was saved. Choose **Stay Manual · stop servo** to persistently disable automatic movement, physically inspect and confirm the dial, or explicitly select **Resume Auto remotely** using the last settled **command** checkpoint from an earlier physically confirmed setup. Firmware writes a PENDING journal to NVS before every Live movement, then marks STABLE after four seconds; an interrupted movement blocks remote resume. A saved command is **NOT a measured knob position**. Someone could have turned the dial, or the coupling could have slipped, while the servo was unpowered. Remote rearm must be tested with furnace safety precautions, authenticated trusted network access and independent heat/freeze protection. See docs/PRODUCTION.md.
 
-[Historical controller development notes](../docs/history/controller-development.md).
+Open-loop commands can never prove actual knob movement, detect a slipped coupling, or identify binding. The status page labels commanded values as *not measured*. Test only with the furnace supervised, retain manual controls, verify mechanical stops and use independent freeze/overheat protection. **Do not deploy this prototype as unattended heat control.**
+
+The room thermostat firmware, temperature algorithms, Saved target/Away settings, Home Assistant/MQTT, Wi-Fi, ESP-NOW and controller application identity are unchanged. Controller firmware is updated by USB.

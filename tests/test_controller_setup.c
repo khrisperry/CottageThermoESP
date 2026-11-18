@@ -25,7 +25,7 @@ int main(void)
     s=complete(false);s.start_us=2200;s.end_us=600;assert(!controller_setup_valid(&s));
     s=complete(false);s.start_us=2400;s.end_us=500;assert(controller_setup_valid(&s));assert(controller_setup_contains(&s,600));assert(!controller_setup_contains(&s,2450));
     s.start_us=s.end_us;assert(!controller_setup_valid(&s));
-    s=complete(false);s.angle_mask=1;s.angle_deg[0]=360;assert(!controller_setup_valid(&s));s.angle_deg[0]=359.9f;assert(controller_setup_valid(&s));
+    s=complete(false);s.angle_mask=1;s.angle_deg[0]=360;assert(controller_setup_valid(&s)); /* Legacy AS5600 data is ignored. */
     s.magic=0;assert(!controller_setup_valid(&s));
     puts("PASS: travel limits, reverse direction, ordered positions, estimated temperatures, full pulse range and Off/Max exclusion");
 }

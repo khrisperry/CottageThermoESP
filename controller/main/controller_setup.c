@@ -16,12 +16,11 @@ bool controller_setup_contains(const controller_setup_t *s,int us)
 }
 bool controller_setup_valid(const controller_setup_t *s)
 {
-    if(s->magic!=CONTROLLER_SETUP_MAGIC || s->angle_mask>255 || s->temperature_mask>63)return false;
+    if(s->magic!=CONTROLLER_SETUP_MAGIC || s->temperature_mask>63)return false;
     if((s->start_us && !pulse_valid(s->start_us)) || (s->end_us && !pulse_valid(s->end_us)))return false;
     if(s->start_us && s->end_us && s->start_us==s->end_us)return false;
     for(int i=0;i<8;i++) {
         if(s->pulse_us[i] && !controller_setup_contains(s,s->pulse_us[i]))return false;
-        if((s->angle_mask&(1U<<i)) && (!s->pulse_us[i] || !isfinite(s->angle_deg[i]) || s->angle_deg[i]<0 || s->angle_deg[i]>=360))return false;
     }
     for(int i=0;i<6;i++)if((s->temperature_mask&(1U<<i)) &&
         (!isfinite(s->temperature_f[i]) || s->temperature_f[i]<40 || s->temperature_f[i]>90))return false;

@@ -85,13 +85,6 @@ if(NOT MSVC)
 endif()
 add_test(NAME controller_status_led COMMAND test_controller_status_led)
 
-add_executable(test_controller_encoder test_controller_encoder.c ../controller/main/controller_encoder.c)
-target_include_directories(test_controller_encoder PRIVATE encoder_stubs)
-if(NOT MSVC)
-    target_compile_options(test_controller_encoder PRIVATE -Wall -Wextra -Werror)
-endif()
-add_test(NAME controller_encoder COMMAND test_controller_encoder)
-
 # Compile the EXACT production PWM update implementation with a fake ESP-IDF
 # LEDC interface. The fake header deliberately excludes fade-service methods;
 # accidental reuse of the ESP-IDF 6.0.1 fade-dependent combined call fails CI.
@@ -110,15 +103,6 @@ if(NOT MSVC)
 endif()
 add_test(NAME controller_setup COMMAND test_controller_setup)
 
-add_executable(test_controller_live test_controller_live.c ../controller/main/controller_live.c
-    ../controller/main/controller_setup.c ../shared/thermo/thermo.c)
-target_include_directories(test_controller_live PRIVATE ../controller/main ../shared/thermo)
-if(NOT MSVC)
-    target_compile_options(test_controller_live PRIVATE -Wall -Wextra -Werror)
-    target_link_libraries(test_controller_live PRIVATE m)
-endif()
-add_test(NAME controller_live COMMAND test_controller_live)
-
 # Pass -DCJSON_SOURCE_DIR=<checkout of DaveGamble/cJSON> to exercise the actual
 # controller HTTP workflow with fake hardware/NVS boundaries on a host.
 if(CJSON_SOURCE_DIR)
@@ -135,7 +119,7 @@ if(CJSON_SOURCE_DIR)
     endif()
     add_test(NAME controller_recovery COMMAND test_controller_recovery)
 
-    add_executable(test_controller_setup_api test_controller_setup_api.c ../controller/main/controller_setup.c ../controller/main/controller_live.c ../shared/thermo/thermo.c "${CJSON_SOURCE_DIR}/cJSON.c")
+    add_executable(test_controller_setup_api test_controller_setup_api.c ../controller/main/controller_setup.c ../shared/thermo/thermo.c "${CJSON_SOURCE_DIR}/cJSON.c")
     target_include_directories(test_controller_setup_api PRIVATE ../controller/main ../shared/thermo "${CJSON_SOURCE_DIR}")
     if(NOT MSVC)
         target_compile_options(test_controller_setup_api PRIVATE -Wall -Wextra -Werror)
